@@ -286,6 +286,9 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     }
 
     const DescriptorUpdateEntry* const descriptor_data{guest_descriptor_queue.UpdateData()};
+    if (!uses_descriptor_buffer && descriptor_set_layout) {
+        device.GetXclipseTelemetry().RecordDescriptorUpdate(false, uses_push_descriptor);
+    }
     VkDeviceSize descriptor_buffer_offset{};
     u32 descriptor_buffer_chunk{};
     if (uses_descriptor_buffer) {
@@ -296,6 +299,7 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             return false;
         }
         WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
+        device.GetXclipseTelemetry().RecordDescriptorUpdate(true, false);
         descriptor_buffer_offset = alloc.offset;
         descriptor_buffer_chunk = alloc.chunk;
     }
