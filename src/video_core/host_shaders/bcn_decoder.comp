@@ -1,0 +1,152 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+
+// Exact BC4/BC5 decoder for Eden's Xclipse path.
+//
+// One invocation consumes one guest 4x4 BC block directly from Tegra block-linear
+// memory and writes the decoded texels to the narrow converted destination image.
+// This fuses the old CPU unswizzle + CPU BC decode stages into one GPU dispatch.
+//
+// format:
+//   0 = BC4_UNORM
+//   1 = BC4_SNORM
+//   2 = BC5_UNORM
+//   3 = BC5_SNORM
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint format;
+    uint layer_stride;
+    uint block_size;
+    uint x_shift;
+    uint block_height;
+    uint block_height_mask;
+} pc;
+
+layout(binding = 0, std430) readonly restrict buffer InputBufferU32 {
+    uint data[];
+} input_buffer;
+
+layout(binding = 1) uniform writeonly restrict image2DArray dest_image;
+
+const uint GOB_SIZE_X_SHIFT = 6u;
+const uint GOB_SIZE_Y_SHIFT = 3u;
+const uint GOB_SIZE_SHIFT = GOB_SIZE_X_SHIFT + GOB_SIZE_Y_SHIFT;
+
+uint swizzle_offset(uvec2 pos) {
+    return ((pos.x & 32u) << 3u) |
+           ((pos.y & 6u) << 5u) |
+           ((pos.x & 16u) << 1u) |
+           ((pos.y & 1u) << 4u) |
+           (pos.x & 15u);
+}
+
+int signed_byte(uint value) {
+    int result = int(value & 0xffu);
+    return result >= 128 ? result - 256 : result;
+}
+
+uint extract_index(uvec2 block, uint texel) {
+    uint bit_offset = 16u + texel * 3u;
+    if (bit_offset < 32u) {
+        uint value = block.x >> bit_offset;
+        if (bit_offset > 29u) {
+            value |= block.y << (32u - bit_offset);
+        }
+        return value & 7u;
+    }
+    return (block.y >> (bit_offset - 32u)) & 7u;
+}
+
+int decode_channel(uvec2 block, uint texel, bool is_signed) {
+    int endpoint0 = is_signed ? signed_byte(block.x) : int(block.x & 0xffu);
+    int endpoint1 =
+        is_signed ? signed_byte(block.x >> 8u) : int((block.x >> 8u) & 0xffu);
+
+    uint index = extract_index(block, texel);
+    if (index == 0u) {
+        return endpoint0;
+    }
+    if (index == 1u) {
+        return endpoint1;
+    }
+
+    if (endpoint0 > endpoint1) {
+        int i = int(index);
+        return ((8 - i) * endpoint0 + (i - 1) * endpoint1) / 7;
+    }
+
+    if (index < 6u) {
+        int i = int(index);
+        return ((6 - i) * endpoint0 + (i - 1) * endpoint1) / 5;
+    }
+    if (index == 6u) {
+        return is_signed ? -128 : 0;
+    }
+    return is_signed ? 127 : 255;
+}
+
+float normalize_channel(int value, bool is_signed) {
+    if (!is_signed) {
+        return float(value) / 255.0;
+    }
+    if (value <= -127) {
+        return -1.0;
+    }
+    return float(value) / 127.0;
+}
+
+void main() {
+    const bool is_bc5 = pc.format >= 2u;
+    const bool is_signed = (pc.format & 1u) != 0u;
+    const uint bytes_per_block_log2 = is_bc5 ? 4u : 3u;
+
+    const ivec3 output_size = imageSize(dest_image);
+    const uvec3 block_coord = gl_GlobalInvocationID;
+    const uvec2 texel_origin = block_coord.xy * 4u;
+    if (texel_origin.x >= uint(output_size.x) ||
+        texel_origin.y >= uint(output_size.y) ||
+        block_coord.z >= uint(output_size.z)) {
+        return;
+    }
+
+    uvec3 pos = block_coord;
+    pos.x <<= bytes_per_block_log2;
+
+    uint offset = 0u;
+    offset += pos.z * pc.layer_stride;
+    const uint block_y = pos.y >> GOB_SIZE_Y_SHIFT;
+    offset += (block_y >> pc.block_height) * pc.block_size;
+    offset += (block_y & pc.block_height_mask) << GOB_SIZE_SHIFT;
+    offset += (pos.x >> GOB_SIZE_X_SHIFT) << pc.x_shift;
+    offset += swizzle_offset(pos.xy);
+
+    const uint word_offset = offset >> 2u;
+    const uvec2 red_block = uvec2(input_buffer.data[word_offset],
+                                  input_buffer.data[word_offset + 1u]);
+    uvec2 green_block = uvec2(0u);
+    if (is_bc5) {
+        green_block = uvec2(input_buffer.data[word_offset + 2u],
+                            input_buffer.data[word_offset + 3u]);
+    }
+
+    for (uint texel = 0u; texel < 16u; ++texel) {
+        const uint local_x = texel & 3u;
+        const uint local_y = texel >> 2u;
+        const uint x = texel_origin.x + local_x;
+        const uint y = texel_origin.y + local_y;
+        if (x >= uint(output_size.x) || y >= uint(output_size.y)) {
+            continue;
+        }
+
+        const int red = decode_channel(red_block, texel, is_signed);
+        const int green = is_bc5 ? decode_channel(green_block, texel, is_signed) : 0;
+        const vec4 value = vec4(normalize_channel(red, is_signed),
+                                is_bc5 ? normalize_channel(green, is_signed) : 0.0,
+                                0.0, 1.0);
+        imageStore(dest_image, ivec3(int(x), int(y), int(block_coord.z)), value);
+    }
+}
