@@ -198,6 +198,7 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.descriptor_buffer_validated);
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
+    hash.AddIntegral(policy.xclipse_memory_pressure_enabled);
 
     return hash.Value();
 }
