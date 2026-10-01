@@ -1,0 +1,39 @@
+name: Xclipse Android Debug
+
+on:
+  push:
+    branches:
+      - "feature/xclipse-*"
+  workflow_dispatch:
+
+concurrency:
+  group: xclipse-android-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-debug:
+    runs-on: [self-hosted, termux, android, arm64]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build standard debug APK
+        shell: bash
+        env:
+          CCACHE: "false"
+        run: |
+          chmod +x .ci/android/build.sh
+          .ci/android/build.sh --target standard --build-type Debug
+
+      - name: Upload debug artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-xclipse-debug-${{ github.sha }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
