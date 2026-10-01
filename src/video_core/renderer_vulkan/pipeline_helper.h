@@ -152,13 +152,13 @@ public:
             num_descriptors > device->MaxPushDescriptors()) {
             return false;
         }
-        return !device->IsExtDescriptorBufferSupported() ||
+        return !device->AllowsDescriptorBufferBackend() ||
                device->DescriptorBufferProperties().bufferlessPushDescriptors;
     }
 
     bool CanUseDescriptorBuffer() const noexcept {
         const auto& props = device->DescriptorBufferProperties();
-        if (!device->IsExtDescriptorBufferSupported() || bindings.empty() ||
+        if (!device->AllowsDescriptorBufferBackend() || bindings.empty() ||
             !props.combinedImageSamplerDescriptorSingleArray) {
             return false;
         }
