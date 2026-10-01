@@ -1148,11 +1148,15 @@ void Device::LogXclipseTelemetry() const {
              t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE DESCRIPTORS pipelines_buffer={} pipelines_push={} pipelines_sets={} "
-             "set_allocations={} buffer_allocations={} descriptor_bytes={} ring_wraps={} stalls={}",
+             "set_allocations={} buffer_allocations={} descriptor_bytes={} ring_wraps={} "
+             "frame_waits={} stalls={} updates_buffer={} updates_push={} updates_sets={} "
+             "payload_reuses={}",
              t.descriptor_buffer_pipelines, t.push_descriptor_pipelines,
              t.descriptor_set_pipelines, t.descriptor_set_allocations,
              t.descriptor_buffer_allocations, t.descriptor_bytes,
-             t.descriptor_buffer_wraps, t.descriptor_stalls);
+             t.descriptor_buffer_wraps, t.descriptor_frame_waits, t.descriptor_stalls,
+             t.descriptor_buffer_writes, t.push_descriptor_updates, t.descriptor_set_updates,
+             t.descriptor_payload_reuses);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
