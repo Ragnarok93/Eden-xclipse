@@ -653,6 +653,8 @@
     <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy Diagnostics</string>
     <string name="xclipse_pipeline_policy_description">Validate Eden graphics pipeline state against known Xclipse/Samsung driver-sensitive conditions and record telemetry. Does not rewrite arbitrary pipeline state.</string>
+    <string name="xclipse_descriptor_buffer_experimental">Xclipse Descriptor Buffer A/B</string>
+    <string name="xclipse_descriptor_buffer_experimental_description">Experimental. Allow Eden to use VK_EXT_descriptor_buffer on Xclipse for A/B performance testing. Correctness is still probed at startup; Auto otherwise prefers push descriptors or descriptor sets until telemetry proves a performance benefit.</string>
     <string name="xclipse_sync_policy">Xclipse Precise Upload Barriers</string>
     <string name="xclipse_sync_policy_description">Use dependency-specific transfer-to-render/compute barriers instead of ALL_COMMANDS for the central upload handoff on Xclipse. Disable this for A/B testing if upload-related corruption or instability appears.</string>
     <string name="fastmem">Fastmem</string>
