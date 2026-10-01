@@ -63,4 +63,9 @@ TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability ident
     policy.xclipse.allowed_wave_mask = 0x1;
     policy.xclipse.preferred_compute_wave = 32;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+    policy.xclipse.wave32_validated = false;
+    policy.xclipse.allowed_wave_mask = 0;
+    policy.xclipse.preferred_compute_wave = 0;
+    policy.use_xclipse_sync_policy = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
 }
