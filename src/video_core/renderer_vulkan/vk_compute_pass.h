@@ -141,7 +141,8 @@ class BCDecoderPass final : public ComputePass {
 public:
     explicit BCDecoderPass(const Device& device_, Scheduler& scheduler_,
                            DescriptorPool& descriptor_pool_,
-                           ComputePassDescriptorQueue& compute_pass_descriptor_queue_);
+                           ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
+                           VideoCore::Surface::PixelFormat format_);
     ~BCDecoderPass();
 
     void Assemble(Image& image, const StagingBufferRef& map,
@@ -150,6 +151,7 @@ public:
 private:
     Scheduler& scheduler;
     ComputePassDescriptorQueue& compute_pass_descriptor_queue;
+    VideoCore::Surface::PixelFormat format;
 };
 
 class BlockLinearUnswizzle3DPass final : public ComputePass {
