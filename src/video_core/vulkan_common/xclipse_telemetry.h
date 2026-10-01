@@ -36,6 +36,7 @@ struct XclipseTelemetrySnapshot {
     u64 submit_commands_17_plus{};
     u64 all_commands_barriers{};
     u64 precise_upload_barriers{};
+    u64 precise_msaa_copy_barriers{};
 
     u64 descriptor_set_allocations{};
     u64 descriptor_buffer_allocations{};
@@ -67,6 +68,7 @@ public:
     void RecordSchedulerFinish() noexcept;
     void RecordAllCommandsBarrier() noexcept;
     void RecordPreciseUploadBarrier() noexcept;
+    void RecordPreciseMsaaCopyBarrier() noexcept;
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
@@ -104,6 +106,7 @@ private:
     std::atomic<u64> submit_commands_17_plus{};
     std::atomic<u64> all_commands_barriers{};
     std::atomic<u64> precise_upload_barriers{};
+    std::atomic<u64> precise_msaa_copy_barriers{};
 
     std::atomic<u64> descriptor_set_allocations{};
     std::atomic<u64> descriptor_buffer_allocations{};
