@@ -1835,9 +1835,15 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
                 .extent = {copy.extent.width, copy.extent.height, 1},
             };
             scheduler.RequestOutsideRenderPassOperationContext();
+            const bool precise_msaa_copy_barrier =
+                device.IsXclipse() &&
+                Settings::values.xclipse_precise_msaa_copy_barriers.GetValue();
+            if (precise_msaa_copy_barrier) {
+                device.GetXclipseTelemetry().RecordPreciseMsaaCopyBarrier();
+            }
             scheduler.Record([shadow_image, dst_image, region, aspect_mask, attachment_stage,
-                              attachment_write,
-                              attachment_read_write](vk::CommandBuffer cmdbuf) {
+                              attachment_write, attachment_read_write,
+                              precise_msaa_copy_barrier](vk::CommandBuffer cmdbuf) {
                 const std::array pre_barriers{
                     VkImageMemoryBarrier{
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1901,9 +1907,11 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
                                        pre_barriers);
                 cmdbuf.CopyImage(shadow_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst_image,
                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
-                cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                       VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, nullptr, nullptr,
-                                       post_barriers);
+                cmdbuf.PipelineBarrier(
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    precise_msaa_copy_barrier ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                                              : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    0, nullptr, nullptr, post_barriers);
             });
             return;
         }
