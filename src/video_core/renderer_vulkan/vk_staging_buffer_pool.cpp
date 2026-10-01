@@ -120,11 +120,18 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
 }
 
 void StagingBufferPool::TickFrame() {
-    current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
+    const MemoryPressureClass pressure = device.UpdateXclipseMemoryPressure();
+    const size_t levels_per_frame =
+        pressure == MemoryPressureClass::Critical ? 8 :
+        pressure == MemoryPressureClass::High ? 4 :
+        pressure == MemoryPressureClass::Elevated ? 2 : 1;
 
-    ReleaseCache(MemoryUsage::DeviceLocal);
-    ReleaseCache(MemoryUsage::Upload);
-    ReleaseCache(MemoryUsage::Download);
+    for (size_t index = 0; index < levels_per_frame; ++index) {
+        current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
+        ReleaseCache(MemoryUsage::DeviceLocal, current_delete_level, pressure);
+        ReleaseCache(MemoryUsage::Upload, current_delete_level, pressure);
+        ReleaseCache(MemoryUsage::Download, current_delete_level, pressure);
+    }
 }
 
 StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
@@ -259,27 +266,32 @@ StagingBufferPool::StagingBuffersCache& StagingBufferPool::GetCache(MemoryUsage 
     }
 }
 
-void StagingBufferPool::ReleaseCache(MemoryUsage usage) {
-    ReleaseLevel(GetCache(usage), current_delete_level);
+void StagingBufferPool::ReleaseCache(MemoryUsage usage, size_t log2,
+                                     MemoryPressureClass pressure) {
+    ReleaseLevel(GetCache(usage), log2, pressure);
 }
 
-void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2) {
-    constexpr size_t deletions_per_tick = 16;
+void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2,
+                                     MemoryPressureClass pressure) {
     auto& staging = cache[log2];
     auto& entries = staging.entries;
     const size_t old_size = entries.size();
+    const size_t scan_budget =
+        pressure == MemoryPressureClass::Critical ? old_size :
+        pressure == MemoryPressureClass::High ? 64 :
+        pressure == MemoryPressureClass::Elevated ? 32 : 16;
 
     const auto is_deletable = [this](const StagingBuffer& entry) {
-        return scheduler.IsFree(entry.tick);
+        return !entry.deferred && scheduler.IsFree(entry.tick);
     };
     const size_t begin_offset = staging.delete_index;
-    const size_t end_offset = (std::min)(begin_offset + deletions_per_tick, old_size);
+    const size_t end_offset = (std::min)(begin_offset + scan_budget, old_size);
     const auto begin = entries.begin() + begin_offset;
     const auto end = entries.begin() + end_offset;
     entries.erase(std::remove_if(begin, end, is_deletable), end);
 
     const size_t new_size = entries.size();
-    staging.delete_index += deletions_per_tick;
+    staging.delete_index += scan_budget;
     if (staging.delete_index >= new_size) {
         staging.delete_index = 0;
     }
