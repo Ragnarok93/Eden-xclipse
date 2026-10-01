@@ -1309,8 +1309,12 @@ void Device::LogXclipseTelemetry() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
-    LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
-             CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE MEMORY budget={} resident={} resident_above_baseline={} pressure_level={} "
+             "pressure_samples={} pressure_transitions={}",
+             device_access_memory, CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0,
+             CanReportMemoryUsage() ? GetDeviceMemoryUsageAboveBaseline() : 0,
+             t.memory_pressure_level, t.memory_pressure_samples, t.memory_pressure_transitions);
 }
 
 Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR surface,
