@@ -600,6 +600,9 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
         VideoCore::Surface::DefaultBlockWidth(image.info.format),
         VideoCore::Surface::DefaultBlockHeight(image.info.format),
     };
+    const bool async_xclipse =
+        device.IsXclipse() && Settings::values.xclipse_async_astc_decode.GetValue();
+    device.GetXclipseTelemetry().RecordAstcDecode(async_xclipse);
     scheduler.RequestOutsideRenderPassOperationContext();
     const VkPipeline vk_pipeline = *pipeline;
     const VkImageAspectFlags aspect_mask = image.AspectMask();
@@ -665,12 +668,14 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
             cmdbuf.Dispatch(num_dispatches_x, num_dispatches_y, num_dispatches_z);
         });
     }
-    scheduler.Record([vk_image, aspect_mask](vk::CommandBuffer cmdbuf) {
+    scheduler.Record([vk_image, aspect_mask, async_xclipse](vk::CommandBuffer cmdbuf) {
         const VkImageMemoryBarrier image_barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
             .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask =
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                (async_xclipse ? VK_ACCESS_TRANSFER_READ_BIT : VkAccessFlags{}),
             .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
             .newLayout = VK_IMAGE_LAYOUT_GENERAL,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -684,10 +689,15 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
                 .layerCount = VK_REMAINING_ARRAY_LAYERS,
             },
         };
-        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                       vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, 0, image_barrier);
+        cmdbuf.PipelineBarrier(
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            async_xclipse ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                          : vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
+            0, image_barrier);
     });
-    scheduler.Finish();
+    if (!async_xclipse) {
+        scheduler.Finish();
+    }
 }
 
 BCDecoderPass::BCDecoderPass(const Device& device_, Scheduler& scheduler_,
