@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   android-debug:
-    runs-on: [self-hosted, termux, android, arm64]
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - name: Checkout
@@ -20,6 +20,22 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager             "platforms;android-36"             "build-tools;36.0.0"             "ndk;28.2.13676358"             "cmake;3.31.6"
 
       - name: Build standard debug APK
         shell: bash
