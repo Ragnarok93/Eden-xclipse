@@ -609,7 +609,8 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         caps.descriptor_buffer != CapabilityState::Advertised ||
         !extensions.descriptor_buffer ||
         features.descriptor_buffer.descriptorBuffer == VK_FALSE ||
-        !extensions.buffer_device_address) {
+        !extensions.buffer_device_address ||
+        features.buffer_device_address.bufferDeviceAddress == VK_FALSE) {
         return;
     }
 
