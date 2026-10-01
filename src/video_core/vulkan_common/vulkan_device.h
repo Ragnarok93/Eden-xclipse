@@ -991,6 +991,9 @@ FN_MAX_LIMIT_LIST
 
     u64 GetDeviceMemoryUsage() const;
 
+    /// Returns the current aggregate Vulkan heap budget for Eden-visible heaps.
+    u64 GetDeviceMemoryBudget() const;
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
