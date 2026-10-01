@@ -18,11 +18,16 @@ TEST_CASE("VulkanDeviceProfile: Xclipse detection requires device-name evidence"
     vendor_only.device_name = "Mali-G715";
     vendor_only.vendor_id = 0x144D;
     REQUIRE_FALSE(Vulkan::DetectXclipseHardware(vendor_only).detected);
+
+    Vulkan::VulkanDeviceIdentity name_only{};
+    name_only.device_name = "Xclipse 940";
+    REQUIRE_FALSE(Vulkan::DetectXclipseHardware(name_only).detected);
 }
 
 TEST_CASE("VulkanDeviceProfile: Xclipse name matching is case insensitive", "[video_core]") {
     Vulkan::VulkanDeviceIdentity identity{};
     identity.device_name = "Samsung xClIpSe-940";
+    identity.vendor_id = 0x13B5;
 
     const auto profile = Vulkan::DetectXclipseHardware(identity);
     REQUIRE(profile.detected);
