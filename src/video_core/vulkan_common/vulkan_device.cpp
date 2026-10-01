@@ -469,7 +469,7 @@ std::vector<const char*> ExtensionListForVulkan(
 }
 
 constexpr std::array<char, 8> STATIC_CACHE_MAGIC_NUMBER{'e', 'd', 'e', 'n', 's', 't', 'p', 'c'};
-constexpr u32 STATIC_CACHE_VERSION = 1;
+constexpr u32 STATIC_CACHE_VERSION = 2;
 
 std::filesystem::path StaticPipelineCacheFilename() {
     const auto shader_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir);
@@ -1230,17 +1230,26 @@ void Device::LoadStaticPipelineCache() {
         file.seekg(0, std::ios::beg);
         std::array<char, 8> magic{};
         u32 version{};
-        if (total < magic.size() + sizeof(version)) {
+        u64 policy_hash{};
+        constexpr size_t header_size =
+            STATIC_CACHE_MAGIC_NUMBER.size() + sizeof(version) + sizeof(policy_hash);
+        if (total < header_size) {
             create(0, nullptr);
             return;
         }
         file.read(magic.data(), magic.size())
-            .read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (magic != STATIC_CACHE_MAGIC_NUMBER || version != STATIC_CACHE_VERSION) {
+            .read(reinterpret_cast<char*>(&version), sizeof(version))
+            .read(reinterpret_cast<char*>(&policy_hash), sizeof(policy_hash));
+        if (magic != STATIC_CACHE_MAGIC_NUMBER || version != STATIC_CACHE_VERSION ||
+            policy_hash != device_policy.policy_hash) {
+            LOG_INFO(Render_Vulkan,
+                     "Ignoring static Vulkan pipeline cache: identity mismatch "
+                     "(version={} expected={} policy={:016x} expected_policy={:016x})",
+                     version, STATIC_CACHE_VERSION, policy_hash, device_policy.policy_hash);
             create(0, nullptr);
             return;
         }
-        data.resize(total - magic.size() - sizeof(version));
+        data.resize(total - header_size);
         file.read(data.data(), static_cast<std::streamsize>(data.size()));
     } catch (const std::ios_base::failure& e) {
         create(0, nullptr);
@@ -1271,9 +1280,11 @@ void Device::SaveStaticPipelineCache() const {
         if (!file.is_open()) {
             return;
         }
+        const u64 policy_hash = device_policy.policy_hash;
         file.write(STATIC_CACHE_MAGIC_NUMBER.data(), STATIC_CACHE_MAGIC_NUMBER.size())
             .write(reinterpret_cast<const char*>(&STATIC_CACHE_VERSION),
                    sizeof(STATIC_CACHE_VERSION))
+            .write(reinterpret_cast<const char*>(&policy_hash), sizeof(policy_hash))
             .write(data.data(), static_cast<std::streamsize>(size));
     } catch (const std::ios_base::failure& e) {
         Common::FS::RemoveFile(filename);
