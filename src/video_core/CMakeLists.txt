@@ -210,6 +210,8 @@ add_library(video_core STATIC
     vulkan_common/vulkan_device_profile.h
     vulkan_common/xclipse_telemetry.cpp
     vulkan_common/xclipse_telemetry.h
+    vulkan_common/xclipse_memory_pressure.cpp
+    vulkan_common/xclipse_memory_pressure.h
     vulkan_common/vulkan_instance.cpp
     vulkan_common/vulkan_instance.h
     vulkan_common/vulkan_library.cpp
