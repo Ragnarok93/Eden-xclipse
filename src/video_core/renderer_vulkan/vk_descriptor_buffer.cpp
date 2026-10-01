@@ -15,7 +15,7 @@ namespace Vulkan {
 DescriptorBufferRing::DescriptorBufferRing(const Device& device_,
                                            MemoryAllocator& memory_allocator)
     : device{device_} {
-    if (!device.IsExtDescriptorBufferSupported() || !device.IsBufferDeviceAddressSupported()) {
+    if (!device.CanUseDescriptorBufferForPipelines()) {
         return;
     }
     const VkPhysicalDeviceDescriptorBufferPropertiesEXT& props{device.DescriptorBufferProperties()};
