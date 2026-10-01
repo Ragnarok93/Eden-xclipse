@@ -56,4 +56,11 @@ TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability ident
     policy.capabilities.bcn[static_cast<std::size_t>(Vulkan::BcnFormat::BC7_UNORM)].image_create =
         Vulkan::CapabilityState::Validated;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+
+    policy.capabilities.bcn[static_cast<std::size_t>(Vulkan::BcnFormat::BC7_UNORM)].image_create =
+        Vulkan::CapabilityState::Unsupported;
+    policy.xclipse.wave32_validated = true;
+    policy.xclipse.allowed_wave_mask = 0x1;
+    policy.xclipse.preferred_compute_wave = 32;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
 }
