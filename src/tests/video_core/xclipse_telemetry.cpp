@@ -35,6 +35,7 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordGpuWait(false);
     telemetry.RecordSchedulerFinish();
     telemetry.RecordAllCommandsBarrier();
+    telemetry.RecordTransferConsumerBarrier();
     telemetry.RecordDescriptorSetAllocation(2);
     telemetry.RecordDescriptorBufferAllocation(96);
     telemetry.RecordDescriptorBufferWrap(false);
@@ -61,6 +62,7 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.timeline_waits == 1);
     REQUIRE(snapshot.scheduler_finishes == 1);
     REQUIRE(snapshot.all_commands_barriers == 1);
+    REQUIRE(snapshot.transfer_consumer_barriers == 1);
     REQUIRE(snapshot.descriptor_set_allocations == 2);
     REQUIRE(snapshot.descriptor_buffer_allocations == 1);
     REQUIRE(snapshot.descriptor_bytes == 96);
