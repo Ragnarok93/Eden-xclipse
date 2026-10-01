@@ -11,12 +11,16 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     telemetry.RecordPipelineCreate(true, 100, false);
     telemetry.RecordQueueSubmit(4, true);
     telemetry.RecordGpuWait(true);
+    telemetry.RecordTransferConsumerBarrier();
+    telemetry.RecordComputeConsumerBarrier();
     telemetry.RecordDescriptorBufferAllocation(64);
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE_FALSE(snapshot.enabled);
     REQUIRE(snapshot.pipeline_creates == 0);
     REQUIRE(snapshot.queue_submits == 0);
+    REQUIRE(snapshot.transfer_consumer_barriers == 0);
+    REQUIRE(snapshot.compute_consumer_barriers == 0);
     REQUIRE(snapshot.descriptor_bytes == 0);
 }
 
@@ -35,6 +39,8 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordGpuWait(false);
     telemetry.RecordSchedulerFinish();
     telemetry.RecordAllCommandsBarrier();
+    telemetry.RecordTransferConsumerBarrier();
+    telemetry.RecordComputeConsumerBarrier();
     telemetry.RecordDescriptorSetAllocation(2);
     telemetry.RecordDescriptorBufferAllocation(96);
     telemetry.RecordDescriptorBufferWrap(false);
@@ -61,6 +67,8 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.timeline_waits == 1);
     REQUIRE(snapshot.scheduler_finishes == 1);
     REQUIRE(snapshot.all_commands_barriers == 1);
+    REQUIRE(snapshot.transfer_consumer_barriers == 1);
+    REQUIRE(snapshot.compute_consumer_barriers == 1);
     REQUIRE(snapshot.descriptor_set_allocations == 2);
     REQUIRE(snapshot.descriptor_buffer_allocations == 1);
     REQUIRE(snapshot.descriptor_bytes == 96);
