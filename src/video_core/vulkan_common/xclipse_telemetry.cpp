@@ -163,6 +163,20 @@ void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordDescriptorBackend(bool descriptor_buffer,
+                                                bool push_descriptor) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    if (descriptor_buffer) {
+        descriptor_buffer_pipelines.fetch_add(1, std::memory_order_relaxed);
+    } else if (push_descriptor) {
+        push_descriptor_pipelines.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        descriptor_set_pipelines.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
     return {
         .enabled = Enabled(),
@@ -207,6 +221,12 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
             descriptor_frame_wait_requests.load(std::memory_order_relaxed),
         .descriptor_cpu_ns_total = descriptor_cpu_ns_total.load(std::memory_order_relaxed),
         .descriptor_cpu_ns_max = descriptor_cpu_ns_max.load(std::memory_order_relaxed),
+        .descriptor_buffer_pipelines =
+            descriptor_buffer_pipelines.load(std::memory_order_relaxed),
+        .push_descriptor_pipelines =
+            push_descriptor_pipelines.load(std::memory_order_relaxed),
+        .descriptor_set_pipelines =
+            descriptor_set_pipelines.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
