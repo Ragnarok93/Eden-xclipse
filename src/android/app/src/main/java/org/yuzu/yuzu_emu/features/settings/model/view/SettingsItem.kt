@@ -1030,6 +1030,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_PRECISE_UPLOAD_BARRIER,
+                    titleId = R.string.xclipse_precise_upload_barrier,
+                    descriptionId = R.string.xclipse_precise_upload_barrier_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.USE_AUTO_STUB,
                     titleId = R.string.use_auto_stub,
                     descriptionId = R.string.use_auto_stub_description
