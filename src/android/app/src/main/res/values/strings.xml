@@ -653,6 +653,8 @@
     <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy</string>
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
+    <string name="xclipse_memory_pressure">Xclipse Memory Pressure Adaptation</string>
+    <string name="xclipse_memory_pressure_description">Adapt texture-cache cleanup and free scratch retention using Vulkan memory usage, Android RAM/PSI, and Samsung GTT pressure when available. Disable for A/B testing.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
