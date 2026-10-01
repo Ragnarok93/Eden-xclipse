@@ -121,13 +121,11 @@ void ReadRamAvailability(XclipseMemoryPressureSample& sample) {
     u64 total_kib{};
     u64 available_kib{};
     while (std::getline(file, line)) {
-        u64 value{};
-        if (std::sscanf(line.c_str(), "MemTotal: %llu kB",
-                        reinterpret_cast<unsigned long long*>(&value)) == 1) {
-            total_kib = value;
-        } else if (std::sscanf(line.c_str(), "MemAvailable: %llu kB",
-                               reinterpret_cast<unsigned long long*>(&value)) == 1) {
-            available_kib = value;
+        unsigned long long parsed{};
+        if (std::sscanf(line.c_str(), "MemTotal: %llu kB", &parsed) == 1) {
+            total_kib = static_cast<u64>(parsed);
+        } else if (std::sscanf(line.c_str(), "MemAvailable: %llu kB", &parsed) == 1) {
+            available_kib = static_cast<u64>(parsed);
         }
         if (total_kib != 0 && available_kib != 0) {
             break;
@@ -163,7 +161,7 @@ XclipseMemoryPressureSample ReadSample(const Device& device) {
 
     if (device.CanReportMemoryUsage()) {
         const u64 budget = device.GetDeviceLocalMemory();
-        const u64 usage = device.GetDeviceMemoryUsage();
+        const u64 usage = device.GetDeviceMemoryUsageAboveBaseline();
         if (budget != 0) {
             sample.memory_budget_used_percent =
                 static_cast<u32>(std::min<u64>(100, usage * 100 / budget));
