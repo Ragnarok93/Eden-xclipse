@@ -655,6 +655,8 @@
     <string name="xclipse_precise_upload_barriers_description">Replace the reordered-upload transfer→ALL_COMMANDS barrier with Eden’s graphics/compute/transfer consumer stage set on Xclipse. Disable for A/B synchronization testing.</string>
     <string name="xclipse_precise_msaa_copy_barriers">Xclipse Precise MSAA Copy Barriers</string>
     <string name="xclipse_precise_msaa_copy_barriers_description">Replace the texture-cache MSAA/shadow-copy transfer→ALL_COMMANDS barrier with Eden’s graphics/compute/transfer consumer stage set on Xclipse. Disable independently for A/B testing.</string>
+    <string name="xclipse_async_astc_decode">Xclipse Async ASTC Decode</string>
+    <string name="xclipse_async_astc_decode_description">Keep GPU ASTC texture decoding ordered on the Vulkan queue instead of forcing a host wait after every decode. Staging and descriptor resources remain tick-retired. Disable independently for compatibility A/B testing.</string>
     <string name="xclipse_gpu_bcn_decode">Xclipse GPU BCn Decoder</string>
     <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="fastmem">Fastmem</string>
