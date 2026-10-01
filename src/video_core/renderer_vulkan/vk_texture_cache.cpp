@@ -1273,6 +1273,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         return;
     }
     if (aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT && !is_src_msaa && !is_dst_msaa) {
+        device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColor(dst_framebuffer, src, dst_region, src_region, filter,
                                     operation);
         return;
@@ -1303,11 +1304,13 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         // Use shader-based depth/stencil blits if hardware doesn't support the format
         // Note: MSAA resolves (MSAA->single) use vkCmdResolveImage which works fine
         if (!can_blit_depth_stencil) {
+            device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
             UNIMPLEMENTED_IF(is_src_msaa || is_dst_msaa);
             blit_image_helper.BlitDepthStencil(dst_framebuffer, src, dst_region, src_region,
                                                filter, operation);
             return;
         }
+        device.GetXclipseTelemetry().RecordDepthStencilBlit(true);
     }
     ASSERT(!(is_dst_msaa && !is_src_msaa));
     ASSERT(operation == Fermi2D::Operation::SrcCopy);
@@ -1323,6 +1326,9 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
     }
 
     const bool is_resolve = is_src_msaa && !is_dst_msaa;
+    if (is_resolve) {
+        device.GetXclipseTelemetry().RecordNativeResolve();
+    }
     if (is_resolve && !HaveSameExtent(dst_region, src_region)) {
         blit_image_helper.BlitColorMSAA(dst_framebuffer, src, dst_region, src_region);
         return;
@@ -1544,6 +1550,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
     // As per the size-compatible formats section of vulkan, copy manually via ReinterpretImage
     // these images that aren't size-compatible
     if (BytesPerBlock(src.info.format) != BytesPerBlock(dst.info.format)) {
+        device.GetXclipseTelemetry().RecordImageCopy(false);
 #ifdef _WIN32
         // On Windows, linear images cause device loss when used in image copies.
         // Tested with TitleID: 0x010067300059A00 (Mario + Rabbids Kingdom Battle)
@@ -1558,6 +1565,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
         };
         return ReinterpretImage(dst, src, std::span{&oneCopy, 1});
     }
+    device.GetXclipseTelemetry().RecordImageCopy(true);
     boost::container::small_vector<VkImageCopy, 16> vk_copies(copies.size());
     const VkImageAspectFlags aspect_mask = dst.AspectMask();
     ASSERT(aspect_mask == src.AspectMask());
