@@ -712,6 +712,8 @@ struct Values {
                                              Category::RendererDebug};
     Setting<bool> xclipse_runtime_telemetry{linkage, true, "xclipse_runtime_telemetry",
                                             Category::RendererDebug};
+    Setting<bool> xclipse_memory_pressure{linkage, true, "xclipse_memory_pressure",
+                                          Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
                                            Category::RendererDebug};
     Setting<bool> enable_nsight_aftermath{linkage, false, "nsight_aftermath",
