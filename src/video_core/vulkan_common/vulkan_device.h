@@ -977,6 +977,11 @@ FN_MAX_LIMIT_LIST
 
     u64 GetDeviceMemoryUsage() const;
 
+    u64 GetDeviceMemoryUsageAboveBaseline() const {
+        const u64 current = GetDeviceMemoryUsage();
+        return current > device_initial_usage ? current - device_initial_usage : 0;
+    }
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
@@ -1277,6 +1282,7 @@ private:
     bool supports_conditional_barriers{};      ///< Allows barriers in conditional control flow.
     mutable std::atomic<size_t> custom_border_color_samplers_used{};
     u64 device_access_memory{};                ///< Total size of device local memory in bytes.
+    u64 device_initial_usage{};                ///< Vulkan heap usage before Eden allocations.
     u32 sets_per_pool{};                       ///< Sets per Description Pool
     NvidiaArchitecture nvidia_arch{NvidiaArchitecture::Arch_AmpereOrNewer};
 
