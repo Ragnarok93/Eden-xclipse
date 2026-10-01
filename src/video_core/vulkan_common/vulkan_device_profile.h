@@ -122,6 +122,7 @@ struct VulkanDevicePolicy {
     VulkanDeviceIdentity identity;
     VulkanCapabilitySnapshot capabilities;
     XclipseHardwareProfile xclipse;
+    bool xclipse_memory_pressure_enabled{};
     std::uint64_t policy_hash{};
 };
 
