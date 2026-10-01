@@ -175,6 +175,29 @@ std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
     }
 }
 
+VkFormat BcnDecodeStorageFormat(PixelFormat format) {
+    switch (format) {
+    case PixelFormat::BC4_UNORM:
+        return VK_FORMAT_R8_UNORM;
+    case PixelFormat::BC4_SNORM:
+        return VK_FORMAT_R8_SNORM;
+    case PixelFormat::BC5_UNORM:
+        return VK_FORMAT_R8G8_UNORM;
+    case PixelFormat::BC5_SNORM:
+        return VK_FORMAT_R8G8_SNORM;
+    case PixelFormat::BC6H_UFLOAT:
+    case PixelFormat::BC6H_SFLOAT:
+        return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
+        // Storage images cannot use an sRGB format. BC7_SRGB writes encoded UNORM values through
+        // this compatible view and is sampled through the image's normal sRGB view.
+        return VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+    default:
+        return VK_FORMAT_UNDEFINED;
+    }
+}
+
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
     if (!device.IsXclipse() || !Settings::values.xclipse_gpu_bcn_decode.GetValue() ||
         device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
@@ -187,6 +210,10 @@ std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
     case PixelFormat::BC4_SNORM:
     case PixelFormat::BC5_UNORM:
     case PixelFormat::BC5_SNORM:
+    case PixelFormat::BC6H_UFLOAT:
+    case PixelFormat::BC6H_SFLOAT:
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
         break;
     default:
         return false;
@@ -196,10 +223,13 @@ std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
         return false;
     }
 
-    const auto format_info =
-        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, info.format);
-    return format_info.storage &&
-           device.IsFormatSupported(format_info.format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
+    if (info.format == PixelFormat::BC7_SRGB && !device.IsKhrImageFormatListSupported()) {
+        return false;
+    }
+
+    const VkFormat storage_format = BcnDecodeStorageFormat(info.format);
+    return storage_format != VK_FORMAT_UNDEFINED &&
+           device.IsFormatSupported(storage_format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
                                     FormatType::Optimal);
 }
 
@@ -1010,6 +1040,26 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                 bcn_decoder_passes[*index].reset();
             }
         }
+        try {
+            bptc_bc6_decoder_pass.emplace(device, scheduler, descriptor_pool,
+                                          compute_pass_descriptor_queue,
+                                          BPTCDecoderPass::Kind::BC6H);
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE BC6H GPU decoder unavailable, retaining CPU fallback: {}",
+                        exception.what());
+            bptc_bc6_decoder_pass.reset();
+        }
+        try {
+            bptc_bc7_decoder_pass.emplace(device, scheduler, descriptor_pool,
+                                          compute_pass_descriptor_queue,
+                                          BPTCDecoderPass::Kind::BC7);
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE BC7 GPU decoder unavailable, retaining CPU fallback: {}",
+                        exception.what());
+            bptc_bc7_decoder_pass.reset();
+        }
     }
     if (!device.IsKhrImageFormatListSupported()) {
         return;
@@ -1045,6 +1095,16 @@ BCDecoderPass* TextureCacheRuntime::BcnDecoderPassFor(PixelFormat format) noexce
         return nullptr;
     }
     return &*bcn_decoder_passes[*index];
+}
+
+BPTCDecoderPass* TextureCacheRuntime::BptcDecoderPassFor(PixelFormat format) noexcept {
+    if (bptc_bc6_decoder_pass && bptc_bc6_decoder_pass->Supports(format)) {
+        return &*bptc_bc6_decoder_pass;
+    }
+    if (bptc_bc7_decoder_pass && bptc_bc7_decoder_pass->Supports(format)) {
+        return &*bptc_bc7_decoder_pass;
+    }
+    return nullptr;
 }
 
 void TextureCacheRuntime::Finish() {
@@ -1976,9 +2036,8 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
         !MaxwellToVK::IsBcnNative(runtime->device, info.format)) {
         const bool wants_gpu_bcn =
             runtime->device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
-            (info.format == PixelFormat::BC4_UNORM || info.format == PixelFormat::BC4_SNORM ||
-             info.format == PixelFormat::BC5_UNORM || info.format == PixelFormat::BC5_SNORM);
-        if (runtime->BcnDecoderPassFor(info.format) &&
+            (BcnDecodeStorageFormat(info.format) != VK_FORMAT_UNDEFINED);
+        if ((runtime->BcnDecoderPassFor(info.format) || runtime->BptcDecoderPassFor(info.format)) &&
             WillUseAcceleratedBcnDecode(runtime->device, info)) {
             flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
         } else if (wants_gpu_bcn) {
@@ -2000,14 +2059,13 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
                 MakeStorageView(device, level, *original_image, storage_format);
         }
     }
-    if (runtime->BcnDecoderPassFor(info.format) &&
+    if ((runtime->BcnDecoderPassFor(info.format) || runtime->BptcDecoderPassFor(info.format)) &&
         WillUseAcceleratedBcnDecode(runtime->device, info)) {
         const auto& device = runtime->device.GetLogical();
-        const auto format_info =
-            MaxwellToVK::SurfaceFormat(runtime->device, FormatType::Optimal, false, info.format);
+        const VkFormat storage_format = BcnDecodeStorageFormat(info.format);
         for (s32 level = 0; level < info.resources.levels; ++level) {
             storage_image_views[level] =
-                MakeStorageView(device, level, *original_image, format_info.format);
+                MakeStorageView(device, level, *original_image, storage_format);
         }
     }
 }
@@ -3235,6 +3293,11 @@ void TextureCacheRuntime::AccelerateImageUpload(
     }
 
     if (BCDecoderPass* pass = BcnDecoderPassFor(image.info.format);
+        pass && WillUseAcceleratedBcnDecode(device, image.info)) {
+        return pass->Assemble(image, map, swizzles);
+    }
+
+    if (BPTCDecoderPass* pass = BptcDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
         return pass->Assemble(image, map, swizzles);
     }
