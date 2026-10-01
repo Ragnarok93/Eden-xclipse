@@ -152,13 +152,17 @@ public:
             num_descriptors > device->MaxPushDescriptors()) {
             return false;
         }
-        return !device->IsExtDescriptorBufferSupported() ||
-               device->DescriptorBufferProperties().bufferlessPushDescriptors;
+        // If descriptor buffers are not validated/selected on Xclipse, choose the best
+        // non-descriptor-buffer backend exactly as though the extension were unavailable.
+        if (!device->CanUseDescriptorBufferForPipelines()) {
+            return true;
+        }
+        return device->DescriptorBufferProperties().bufferlessPushDescriptors;
     }
 
     bool CanUseDescriptorBuffer() const noexcept {
         const auto& props = device->DescriptorBufferProperties();
-        if (!device->IsExtDescriptorBufferSupported() || bindings.empty() ||
+        if (!device->CanUseDescriptorBufferForPipelines() || bindings.empty() ||
             !props.combinedImageSamplerDescriptorSingleArray) {
             return false;
         }
