@@ -869,12 +869,14 @@ void Device::RunXclipseSubgroupValidationProbes() {
                 .pushConstantRangeCount = 0,
                 .pPushConstantRanges = nullptr,
             });
+            const std::span<const u32> subgroup_probe_code{
+                XCLIPSE_SUBGROUP_PROBE_COMP_SPV};
             auto shader = logical.CreateShaderModule({
                 .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                 .pNext = nullptr,
                 .flags = 0,
-                .codeSize = XCLIPSE_SUBGROUP_PROBE_COMP_SPV.size_bytes(),
-                .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV.data(),
+                .codeSize = subgroup_probe_code.size_bytes(),
+                .pCode = subgroup_probe_code.data(),
             });
 
             const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
