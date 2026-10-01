@@ -217,6 +217,14 @@ bool SupportsAdvertisedNativeBcnPath(const FormatCapabilitySnapshot& format) {
 
 bool SupportsValidatedNativeBcnPath(const FormatCapabilitySnapshot& format) {
     return format.image_create == CapabilityState::Validated &&
+           format.sampled == CapabilityState::Validated &&
+           format.linear_filter == CapabilityState::Validated &&
+           format.transfer_src == CapabilityState::Validated &&
+           format.transfer_dst == CapabilityState::Validated;
+}
+
+bool HasValidatedImageCreation(const FormatCapabilitySnapshot& format) {
+    return format.image_create == CapabilityState::Validated &&
            SupportsAdvertisedNativeBcnPath(format);
 }
 
@@ -781,6 +789,14 @@ void Device::LogDevicePolicy() const {
         });
         if (validated) {
             return "native";
+        }
+        const bool image_create_validated =
+            std::ranges::all_of(formats, [&caps](BcnFormat format) {
+                return HasValidatedImageCreation(
+                    caps.bcn[static_cast<std::size_t>(format)]);
+            });
+        if (image_create_validated) {
+            return "image-create-validated/ops-unvalidated";
         }
         const bool advertised = std::ranges::all_of(formats, [&caps](BcnFormat format) {
             return SupportsAdvertisedNativeBcnPath(
