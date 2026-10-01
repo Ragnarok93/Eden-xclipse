@@ -23,6 +23,7 @@ add_executable(tests
     video_core/xclipse_bcn_decode.cpp
     video_core/xclipse_telemetry.cpp
     video_core/xclipse_pipeline_policy.cpp
+    video_core/xclipse_sync_policy.cpp
     input_common/calibration_configuration_job.cpp
 )
 
