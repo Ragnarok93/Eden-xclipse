@@ -572,6 +572,8 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    device_policy.xclipse_memory_pressure_enabled =
+        device_policy.xclipse.detected && Settings::values.xclipse_memory_pressure.GetValue();
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -857,8 +859,13 @@ void Device::LogXclipseTelemetry() const {
              "ring_wraps={} stalls={}",
              t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
              t.descriptor_buffer_wraps, t.descriptor_stalls);
-    LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
-             CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE MEMORY budget={} resident={} pressure={} pressure_samples={} "
+             "pressure_transitions={}",
+             CanReportMemoryUsage() ? GetDeviceMemoryBudget() : device_access_memory,
+             CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0,
+             MemoryPressureClassName(static_cast<MemoryPressureClass>(t.memory_pressure_class)),
+             t.memory_pressure_samples, t.memory_pressure_transitions);
 }
 
 Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR surface,
@@ -2041,6 +2048,44 @@ u64 Device::GetDeviceMemoryUsage() const {
         result += budget.heapUsage[heap];
     }
     return result;
+}
+
+u64 Device::GetDeviceMemoryBudget() const {
+    if (!extensions.memory_budget) {
+        return device_access_memory;
+    }
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT,
+        .pNext = nullptr,
+    };
+    physical.GetMemoryProperties(&budget);
+    u64 result{};
+    for (const size_t heap : valid_heap_memory) {
+        result += budget.heapBudget[heap];
+    }
+    return result;
+}
+
+MemoryPressureClass Device::UpdateXclipseMemoryPressure() const {
+    const auto snapshot =
+        xclipse_memory_pressure.Tick(*this, device_policy.xclipse_memory_pressure_enabled);
+    if (snapshot.sampled) {
+        xclipse_telemetry.RecordMemoryPressure(static_cast<u32>(snapshot.pressure),
+                                               snapshot.changed);
+        if (snapshot.changed) {
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE MEMORY pressure={} budget_pct={} ram_available_pct={} gtt_pct={} "
+                     "psi_some10={} psi_full10={} psi_trending_up={}",
+                     MemoryPressureClassName(snapshot.pressure),
+                     snapshot.sample.memory_budget_percent.value_or(0),
+                     snapshot.sample.ram_available_percent.value_or(0),
+                     snapshot.sample.gtt_percent.value_or(0),
+                     snapshot.sample.psi_some_avg10.value_or(0.0f),
+                     snapshot.sample.psi_full_avg10.value_or(0.0f),
+                     snapshot.psi_trending_up);
+        }
+    }
+    return snapshot.pressure;
 }
 
 void Device::CollectPhysicalMemoryInfo() {
