@@ -61,4 +61,8 @@ TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability ident
         Vulkan::CapabilityState::Unsupported;
     policy.use_xclipse_sync_policy = true;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+
+    policy.use_xclipse_sync_policy = false;
+    policy.allow_unvalidated_descriptor_buffer = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
 }
