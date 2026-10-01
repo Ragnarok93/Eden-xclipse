@@ -649,6 +649,8 @@
     <string name="renderer_debug_description">Sets the graphics API to a slow debugging mode.</string>
     <string name="patch_old_qcom_drivers">BCn Texture Patching</string>
     <string name="patch_old_qcom_drivers_description">Override automatic BCn texture format detection on Adreno GPUs. Normally auto-detected based on Android version (enabled on API 28+).</string>
+    <string name="xclipse_descriptor_buffer_experimental">Xclipse Descriptor Buffer Experiment</string>
+    <string name="xclipse_descriptor_buffer_experimental_description">Allow VK_EXT_descriptor_buffer on Xclipse before Eden has behaviorally validated it. For A/B testing only; Auto otherwise uses push descriptors or descriptor sets until validation succeeds.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
