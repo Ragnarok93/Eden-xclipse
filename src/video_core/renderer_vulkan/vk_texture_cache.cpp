@@ -162,8 +162,8 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
 
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
     if (!device.IsXclipse() || !Settings::values.xclipse_gpu_bcn_decode.GetValue() ||
-        device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
-        MaxwellToVK::IsBcnNative(device, info.format)) {
+        device.HasBrokenCompute() || !device.IsFormatlessImageWriteSupported() ||
+        !IsPixelFormatBCn(info.format) || MaxwellToVK::IsBcnNative(device, info.format)) {
         return false;
     }
 
