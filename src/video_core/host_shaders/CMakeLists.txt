@@ -24,6 +24,7 @@ set(SHADER_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/block_linear_unswizzle_3d.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/block_linear_unswizzle_3d_bcn.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_descriptor_buffer_probe.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_subgroup_probe.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/convert_abgr8_to_d24s8.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/convert_abgr8_to_d32f.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/convert_d32f_to_abgr8.frag
@@ -267,6 +268,39 @@ foreach(VARIANT IN ITEMS ${BPTC_DECODER_VARIANTS})
     set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
 endforeach()
 
+# Compile subgroup operation probes independently so a broken Samsung path
+# cannot invalidate unrelated wave/subgroup capabilities.
+set(XCLIPSE_SUBGROUP_OP_PROBE_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_subgroup_op_probe.comp)
+set(XCLIPSE_SUBGROUP_OP_PROBE_VARIANTS
+    "ballot|XCLIPSE_PROBE_BALLOT|XCLIPSE_SUBGROUP_OP_PROBE_BALLOT_COMP_SPV"
+    "shuffle|XCLIPSE_PROBE_SHUFFLE|XCLIPSE_SUBGROUP_OP_PROBE_SHUFFLE_COMP_SPV"
+    "arithmetic|XCLIPSE_PROBE_ARITHMETIC|XCLIPSE_SUBGROUP_OP_PROBE_ARITHMETIC_COMP_SPV"
+    "quad|XCLIPSE_PROBE_QUAD|XCLIPSE_SUBGROUP_OP_PROBE_QUAD_COMP_SPV"
+)
+
+foreach(VARIANT IN ITEMS ${XCLIPSE_SUBGROUP_OP_PROBE_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS ${VARIANT})
+    list(GET VARIANT_PARTS 0 VARIANT_SUFFIX)
+    list(GET VARIANT_PARTS 1 VARIANT_DEFINE)
+    list(GET VARIANT_PARTS 2 VARIANT_VARIABLE_NAME)
+    set(VARIANT_HEADER_FILE
+        ${SHADER_DIR}/xclipse_subgroup_op_probe_${VARIANT_SUFFIX}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${VARIANT_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -I"${FIDELITYFX_INCLUDE_DIR}" ${GLSL_FLAGS}
+            -D${VARIANT_DEFINE}=1
+            --variable-name ${VARIANT_VARIABLE_NAME}
+            -o ${VARIANT_HEADER_FILE} ${XCLIPSE_SUBGROUP_OP_PROBE_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${XCLIPSE_SUBGROUP_OP_PROBE_SOURCE}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
+endforeach()
+
 foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
     get_filename_component(FILENAME ${FILEPATH} NAME)
     string(REPLACE "." "_" HEADER_NAME ${FILENAME})
@@ -290,6 +324,7 @@ set(SHADER_SOURCES ${SHADER_FILES})
 list(APPEND SHADER_SOURCES ${BCN_DECODER_SOURCE})
 list(APPEND SHADER_SOURCES ${BPTC_DECODER_SOURCE})
 list(APPEND SHADER_SOURCES ${GLSL_INCLUDES})
+list(APPEND SHADER_SOURCES ${XCLIPSE_SUBGROUP_OP_PROBE_SOURCE})
 
 add_custom_target(host_shaders
     DEPENDS
