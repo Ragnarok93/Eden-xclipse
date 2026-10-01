@@ -17,7 +17,10 @@
 #include "common/div_ceil.h"
 #include "common/vector_math.h"
 #include "video_core/host_shaders/astc_decoder_comp_spv.h"
-#include "video_core/host_shaders/bcn_decoder_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_r8_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_r8_snorm_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_rg8_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_rg8_snorm_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_nosubgroups_comp_spv.h"
 #include "video_core/host_shaders/resolve_conditional_render_comp_spv.h"
@@ -209,6 +212,22 @@ std::optional<u32> BcnDecoderFormat(VideoCore::Surface::PixelFormat format) {
         return 3;
     default:
         return std::nullopt;
+    }
+}
+
+std::span<const u32> BcnDecoderCode(VideoCore::Surface::PixelFormat format) {
+    using VideoCore::Surface::PixelFormat;
+    switch (format) {
+    case PixelFormat::BC4_UNORM:
+        return BCN_DECODER_R8_COMP_SPV;
+    case PixelFormat::BC4_SNORM:
+        return BCN_DECODER_R8_SNORM_COMP_SPV;
+    case PixelFormat::BC5_UNORM:
+        return BCN_DECODER_RG8_COMP_SPV;
+    case PixelFormat::BC5_SNORM:
+        return BCN_DECODER_RG8_SNORM_COMP_SPV;
+    default:
+        return {};
     }
 }
 
@@ -645,11 +664,16 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
 
 BCDecoderPass::BCDecoderPass(const Device& device_, Scheduler& scheduler_,
                                  DescriptorPool& descriptor_pool_,
-                                 ComputePassDescriptorQueue& compute_pass_descriptor_queue_)
+                                 ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
+                                 VideoCore::Surface::PixelFormat format_)
     : ComputePass(device_, scheduler_, descriptor_pool_, ASTC_DESCRIPTOR_SET_BINDINGS,
                   ASTC_PASS_DESCRIPTOR_UPDATE_TEMPLATE_ENTRY, ASTC_BANK_INFO,
-                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcnPushConstants)>, BCN_DECODER_COMP_SPV),
-      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_} {}
+                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcnPushConstants)>,
+                  BcnDecoderCode(format_)),
+      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_},
+      format{format_} {
+    ASSERT(!BcnDecoderCode(format_).empty());
+}
 
 BCDecoderPass::~BCDecoderPass() = default;
 
@@ -657,7 +681,8 @@ void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
                              std::span<const VideoCommon::SwizzleParameters> swizzles) {
     using namespace VideoCommon::Accelerated;
 
-    const auto decoder_format = BcnDecoderFormat(image.info.format);
+    ASSERT(image.info.format == format);
+    const auto decoder_format = BcnDecoderFormat(format);
     ASSERT(decoder_format.has_value());
 
     device.GetXclipseTelemetry().RecordBcnGpuDecode(image.guest_size_bytes);
