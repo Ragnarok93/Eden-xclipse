@@ -857,6 +857,12 @@ void Device::LogXclipseTelemetry() const {
              "ring_wraps={} stalls={}",
              t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
              t.descriptor_buffer_wraps, t.descriptor_stalls);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE RENDER color_shader_blits={} ds_native_blits={} ds_shader_blits={} "
+             "native_resolves={} native_image_copies={} reinterpret_copies={}",
+             t.color_shader_blits, t.depth_stencil_native_blits,
+             t.depth_stencil_shader_blits, t.native_resolves, t.native_image_copies,
+             t.reinterpret_copies);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
