@@ -1314,6 +1314,9 @@ void Device::LogXclipseTelemetry() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE ASTC async_decodes={} forced_finishes={}",
+             t.astc_async_decodes, t.astc_forced_finishes);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
