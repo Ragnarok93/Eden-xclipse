@@ -18,6 +18,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/vulkan_common/vulkan_device_profile.h"
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
 #include "video_core/vulkan_common/xclipse_telemetry.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
@@ -973,6 +974,16 @@ FN_MAX_LIMIT_LIST
 
     u64 GetDeviceMemoryUsage() const;
 
+    /// Returns the current summed VK_EXT_memory_budget budget for usable heaps.
+    u64 GetDeviceMemoryBudget() const;
+
+    /// Samples Xclipse memory pressure at most once per second and returns the stable class.
+    MemoryPressureClass UpdateXclipseMemoryPressure() const;
+
+    MemoryPressureClass GetXclipseMemoryPressure() const noexcept {
+        return xclipse_memory_pressure.Current();
+    }
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
@@ -1237,6 +1248,7 @@ private:
 
     VulkanDevicePolicy device_policy{};
     mutable XclipseTelemetry xclipse_telemetry{};
+    mutable XclipseMemoryPressureController xclipse_memory_pressure{};
 
     VkPhysicalDeviceFeatures2 features2{};
     VkPhysicalDeviceProperties2 properties2{};
