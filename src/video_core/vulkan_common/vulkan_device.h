@@ -521,6 +521,11 @@ FN_MAX_LIMIT_LIST
         return extensions.descriptor_buffer;
     }
 
+    /// Returns true if descriptor buffers are eligible for pipeline use.
+    /// Non-Xclipse preserves upstream behavior; Xclipse stays opt-in until A/B telemetry proves
+    /// a performance advantage even after behavioral correctness is validated.
+    bool CanUseDescriptorBufferForPipelines() const noexcept;
+
     /// Returns the descriptor buffer properties of the device.
     const VkPhysicalDeviceDescriptorBufferPropertiesEXT& DescriptorBufferProperties() const {
         return properties.descriptor_buffer;
@@ -1137,6 +1142,9 @@ private:
 
     /// Runs bounded device-level probes before pipeline caches are loaded.
     void RunXclipseValidationProbes();
+
+    /// Executes a real descriptor-buffer-backed compute dispatch and readback.
+    void RunXclipseDescriptorBufferValidationProbe();
 
     /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
     void RunXclipseSubgroupValidationProbes();
