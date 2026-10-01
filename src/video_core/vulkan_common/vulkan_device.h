@@ -532,6 +532,11 @@ FN_MAX_LIMIT_LIST
         return features.features.shaderStorageImageReadWithoutFormat;
     }
 
+    /// Returns true if formatless storage image writes are supported.
+    bool IsFormatlessImageWriteSupported() const {
+        return features.features.shaderStorageImageWriteWithoutFormat;
+    }
+
     /// Returns true if shader int64 is supported.
     bool IsShaderInt64Supported() const {
         return features.features.shaderInt64;
