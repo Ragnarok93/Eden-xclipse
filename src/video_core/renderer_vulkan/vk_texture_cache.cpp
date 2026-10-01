@@ -1814,6 +1814,10 @@ bool TextureCacheRuntime::CanReportMemoryUsage() const {
     return device.CanReportMemoryUsage();
 }
 
+u32 TextureCacheRuntime::GetMemoryPressureLevel() const {
+    return static_cast<u32>(device.UpdateXclipseMemoryPressure());
+}
+
 void TextureCacheRuntime::FlushDeferredClear() {
     scheduler.FlushDeferredClear();
 }
@@ -1859,13 +1863,17 @@ void TextureCacheRuntime::ReleaseMsaaScratchImage(VkImage image) {
 }
 
 void TextureCacheRuntime::TickFrame() {
-    static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
-    std::erase_if(msaa_scratch_images, [this](MsaaScratchImage& scratch) {
+    const MemoryPressureClass pressure = device.UpdateXclipseMemoryPressure();
+    const u32 max_unused_scratch_frames =
+        pressure == MemoryPressureClass::Critical ? 2 :
+        pressure == MemoryPressureClass::High ? 10 :
+        pressure == MemoryPressureClass::Elevated ? 30 : 60;
+    std::erase_if(msaa_scratch_images, [this, max_unused_scratch_frames](MsaaScratchImage& scratch) {
         if (!scheduler.IsFree(scratch.tick)) {
             scratch.unused_frames = 0;
             return false;
         }
-        return ++scratch.unused_frames > MAX_UNUSED_SCRATCH_FRAMES;
+        return ++scratch.unused_frames > max_unused_scratch_frames;
     });
     std::erase_if(pending_resolve_shadows, [this](const auto& pending) {
         return scheduler.IsFree(pending.first);
