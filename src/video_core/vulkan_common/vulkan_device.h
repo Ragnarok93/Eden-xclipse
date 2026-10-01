@@ -17,6 +17,7 @@
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "video_core/vulkan_common/vulkan_device_profile.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 VK_DEFINE_HANDLE(VmaAllocator)
@@ -275,6 +276,15 @@ public:
 
     VkPipelineCache StaticPipelineCache() const noexcept {
         return *static_pipeline_cache;
+    }
+
+    /// Returns the immutable startup capability/policy snapshot for this device.
+    const VulkanDevicePolicy& GetDevicePolicy() const noexcept {
+        return device_policy;
+    }
+
+    bool IsXclipse() const noexcept {
+        return device_policy.xclipse.detected;
     }
 
     /// Returns the main graphics queue.
@@ -1104,6 +1114,12 @@ private:
     /// with all necessary info about its properties.
     bool GetSuitability(bool requires_swapchain);
 
+    /// Captures driver-advertised capabilities before vendor workarounds mutate feature state.
+    void BuildDevicePolicy();
+
+    /// Emits the structured Xclipse startup capability block.
+    void LogDevicePolicy() const;
+
     // Remove extensions which have incomplete feature support.
     void RemoveUnsuitableExtensions();
 
@@ -1204,6 +1220,8 @@ private:
     Extensions extensions{};
     Features features{};
     Properties properties{};
+
+    VulkanDevicePolicy device_policy{};
 
     VkPhysicalDeviceFeatures2 features2{};
     VkPhysicalDeviceProperties2 properties2{};
