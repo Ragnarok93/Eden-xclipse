@@ -108,6 +108,7 @@ private:
 };
 
 void HashFormat(StableHash& hash, const FormatCapabilitySnapshot& format) noexcept {
+    hash.AddIntegral(format.image_create);
     hash.AddIntegral(format.sampled);
     hash.AddIntegral(format.linear_filter);
     hash.AddIntegral(format.storage_image);

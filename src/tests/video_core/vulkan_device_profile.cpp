@@ -51,4 +51,9 @@ TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability ident
     policy.identity.driver_version = 100;
     policy.capabilities.timeline = Vulkan::CapabilityState::Validated;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+
+    policy.capabilities.timeline = Vulkan::CapabilityState::Advertised;
+    policy.capabilities.bcn[static_cast<std::size_t>(Vulkan::BcnFormat::BC7_UNORM)].image_create =
+        Vulkan::CapabilityState::Validated;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
 }

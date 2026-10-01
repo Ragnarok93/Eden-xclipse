@@ -18,6 +18,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/vulkan_common/vulkan_device_profile.h"
+#include "video_core/vulkan_common/xclipse_telemetry.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 VK_DEFINE_HANDLE(VmaAllocator)
@@ -285,6 +286,10 @@ public:
 
     bool IsXclipse() const noexcept {
         return device_policy.xclipse.detected;
+    }
+
+    XclipseTelemetry& GetXclipseTelemetry() const noexcept {
+        return xclipse_telemetry;
     }
 
     /// Returns the main graphics queue.
@@ -914,7 +919,7 @@ FN_MAX_LIMIT_LIST
 
     /// Returns true if the device supports VK_KHR_synchronization2.
     bool HasSynchronization2() const {
-        return extensions.synchronization2;
+        return features.synchronization2.synchronization2 != VK_FALSE;
     }
 
     /// Returns the minimum supported version of SPIR-V.
@@ -1117,8 +1122,17 @@ private:
     /// Captures driver-advertised capabilities before vendor workarounds mutate feature state.
     void BuildDevicePolicy();
 
+    /// Runs bounded device-level probes before pipeline caches are loaded.
+    void RunXclipseValidationProbes();
+
+    /// Recomputes family-level BCn native readiness from exact per-format state.
+    void UpdateXclipseBcnProfile();
+
     /// Emits the structured Xclipse startup capability block.
     void LogDevicePolicy() const;
+
+    /// Emits the runtime Xclipse telemetry summary.
+    void LogXclipseTelemetry() const;
 
     // Remove extensions which have incomplete feature support.
     void RemoveUnsuitableExtensions();
@@ -1222,6 +1236,7 @@ private:
     Properties properties{};
 
     VulkanDevicePolicy device_policy{};
+    mutable XclipseTelemetry xclipse_telemetry{};
 
     VkPhysicalDeviceFeatures2 features2{};
     VkPhysicalDeviceProperties2 properties2{};

@@ -83,6 +83,7 @@ void MasterSemaphore::Wait(u64 tick) {
             return;
         }
 
+        device.GetXclipseTelemetry().RecordGpuWait(false);
         u64 last_tick = gpu_tick.load(std::memory_order_relaxed);
         while (gpu_tick.load(std::memory_order_acquire) < tick) {
             gpu_tick.wait(last_tick, std::memory_order_acquire);
@@ -104,6 +105,7 @@ void MasterSemaphore::Wait(u64 tick) {
     }
 
     // If none of the above is hit, fallback to a regular wait
+    device.GetXclipseTelemetry().RecordGpuWait(true);
     while (!semaphore.Wait(tick)) {
     }
 

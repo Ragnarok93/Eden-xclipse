@@ -708,6 +708,10 @@ struct Values {
                                                        "vertex_input_dynamic_state", Category::RendererExtensions};
 
     Setting<bool> renderer_debug{linkage, false, "debug", Category::RendererDebug};
+    Setting<bool> xclipse_validation_probes{linkage, true, "xclipse_validation_probes",
+                                             Category::RendererDebug};
+    Setting<bool> xclipse_runtime_telemetry{linkage, true, "xclipse_runtime_telemetry",
+                                            Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
                                            Category::RendererDebug};
     Setting<bool> enable_nsight_aftermath{linkage, false, "nsight_aftermath",

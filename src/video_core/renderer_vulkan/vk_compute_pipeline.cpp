@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
@@ -110,9 +111,15 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             .basePipelineHandle = 0,
             .basePipelineIndex = 0,
         };
+        const auto compile_start = std::chrono::steady_clock::now();
         try {
             pipeline = device.GetLogical().CreateComputePipeline(compute_ci, *pipeline_cache);
         } catch (const vk::Exception& exception) {
+            const auto compile_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - compile_start)
+                    .count());
+            device.GetXclipseTelemetry().RecordPipelineCreate(false, compile_ns, false);
             LOG_CRITICAL(Render_Vulkan, "Adreno rejected compute shader {:016X}: {}", shader_hash,
                          exception.what());
             std::scoped_lock lock{build_mutex};
@@ -123,6 +130,12 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             }
             return;
         }
+
+        const auto compile_ns = static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - compile_start)
+                .count());
+        device.GetXclipseTelemetry().RecordPipelineCreate(false, compile_ns, true);
 
         // Log compute pipeline creation
         if (GPU::Logging::IsActive()) {

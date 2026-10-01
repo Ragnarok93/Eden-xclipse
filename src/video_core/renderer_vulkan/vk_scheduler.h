@@ -230,6 +230,7 @@ private:
                 first = last;
             }
             command_offset += sizeof(FuncType);
+            ++command_count;
             return true;
         }
 
@@ -245,11 +246,16 @@ private:
             return submit;
         }
 
+        u64 CommandCount() const {
+            return command_count;
+        }
+
     private:
         Command* first = nullptr;
         Command* last = nullptr;
 
         size_t command_offset = 0;
+        u64 command_count = 0;
         bool submit = false;
         alignas(std::max_align_t) std::array<u8, 0x8000> data{};
     };
