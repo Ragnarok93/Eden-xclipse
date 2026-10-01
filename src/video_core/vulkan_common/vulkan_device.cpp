@@ -35,7 +35,6 @@
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_shuffle_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_arithmetic_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_quad_comp_spv.h"
-#include "video_core/host_shaders/xclipse_wave_probe_comp_spv.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -610,15 +609,21 @@ void Device::RunXclipseSubgroupValidationProbes() {
     auto& caps = device_policy.capabilities;
     auto& xclipse = device_policy.xclipse;
 
-    const bool compute_stage_supported =
+    const bool compute_stage_advertised =
         (caps.subgroup_supported_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
-    const bool subgroup_basic_supported =
+    const bool subgroup_basic_advertised =
         (caps.subgroup_supported_operations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0;
     const bool required_size_supported =
         caps.required_subgroup_size != CapabilityState::Unsupported &&
         (caps.required_subgroup_size_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
-    if (!compute_stage_supported || !subgroup_basic_supported || !required_size_supported) {
+    if (!required_size_supported) {
         return;
+    }
+    if (!compute_stage_advertised || !subgroup_basic_advertised) {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE subgroup properties are internally inconsistent "
+                 "(stages=0x{:x} ops=0x{:x}); attempting bounded execution validation",
+                 caps.subgroup_supported_stages, caps.subgroup_supported_operations);
     }
 
     constexpr u32 ProbeInvocations = 64;
