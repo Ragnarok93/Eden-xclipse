@@ -21,6 +21,7 @@
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
+#include "video_core/renderer_vulkan/vk_pipeline_policy.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -959,7 +960,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .logicOpEnable = dynamic.logic_op_enable != 0,
         .logicOp = static_cast<VkLogicOp>(dynamic.logic_op.Value()),
         .attachmentCount = static_cast<u32>(cb_attachments.size()),
-        .pAttachments = cb_attachments.data(),
+        .pAttachments = cb_attachments.empty() ? nullptr : cb_attachments.data(),
         .blendConstants = {}
     };
     static_vector<VkDynamicState, 34> dynamic_states{
@@ -1085,7 +1086,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
-    pipeline = device.GetLogical().CreateGraphicsPipeline({
+    const VkGraphicsPipelineCreateInfo pipeline_ci{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
         .flags = flags,
@@ -1105,7 +1106,18 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .subpass = 0,
         .basePipelineHandle = nullptr,
         .basePipelineIndex = 0,
-    }, *pipeline_cache);
+    };
+    if (device.IsXclipse() && Settings::values.xclipse_pipeline_policy.GetValue()) {
+        const auto report = InspectGraphicsPipeline(device.GetDevicePolicy(), pipeline_ci);
+        if (!report.Clean()) {
+            device.GetXclipseTelemetry().RecordPipelinePolicyViolations(report.issue_count);
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PIPELINE policy violations={} mask=0x{:x}",
+                        report.issue_count, static_cast<u32>(report.issues));
+        }
+    }
+
+    pipeline = device.GetLogical().CreateGraphicsPipeline(pipeline_ci, *pipeline_cache);
 
     // Log graphics pipeline creation
     if (GPU::Logging::IsActive()) {
