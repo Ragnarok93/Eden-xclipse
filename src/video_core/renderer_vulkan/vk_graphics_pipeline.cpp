@@ -311,6 +311,11 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
 
+    if (num_descriptor_entries != 0) {
+        device.GetXclipseTelemetry().RecordDescriptorBackend(uses_push_descriptor,
+                                                             uses_descriptor_buffer);
+    }
+
     auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
@@ -588,6 +593,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             std::memcmp(last_descriptor_payload.data(), entries,
                         num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0;
         if (reuse_allocation) {
+            device.GetXclipseTelemetry().RecordDescriptorReuse();
             descriptor_buffer_offset = last_descriptor_buffer_offset;
             descriptor_buffer_chunk = last_descriptor_buffer_chunk;
             descriptor_buffer_ring.TouchFrame(scheduler);
@@ -639,6 +645,8 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                         num_descriptor_entries * sizeof(DescriptorUpdateEntry)) != 0;
         if (update_descriptors) {
             last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
+        } else {
+            device.GetXclipseTelemetry().RecordDescriptorReuse();
         }
     }
     scheduler.Record([this, descriptor_data, bind_pipeline, update_descriptors,
@@ -680,11 +688,13 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
+            device.GetXclipseTelemetry().RecordPushDescriptorUpdate();
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else if (update_descriptors) {
             const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
             const vk::Device& dev{device.GetLogical()};
+            device.GetXclipseTelemetry().RecordDescriptorSetUpdate();
             dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
             cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
                                       descriptor_set, nullptr);
