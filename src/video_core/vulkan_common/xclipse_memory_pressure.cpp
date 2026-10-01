@@ -204,7 +204,8 @@ bool XclipseMemoryPressureController::PushPsiAndCheckTrend(
     }
     psi_full_window[psi_window_head] = *sample.psi_full_avg10;
     psi_window_head = (psi_window_head + 1) % psi_full_window.size();
-    psi_window_count = std::min<u32>(psi_window_count + 1, psi_full_window.size());
+    psi_window_count =
+        std::min<u32>(psi_window_count + 1, static_cast<u32>(psi_full_window.size()));
     if (psi_window_count < psi_full_window.size()) {
         return false;
     }
