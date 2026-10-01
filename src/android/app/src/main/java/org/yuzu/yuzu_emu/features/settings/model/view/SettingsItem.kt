@@ -1023,6 +1023,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_NARROW_UPLOAD_BARRIER,
+                    titleId = R.string.xclipse_narrow_upload_barrier,
+                    descriptionId = R.string.xclipse_narrow_upload_barrier_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
