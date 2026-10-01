@@ -47,6 +47,9 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_frame_wait_requests{};
     u64 descriptor_cpu_ns_total{};
     u64 descriptor_cpu_ns_max{};
+    u64 descriptor_buffer_pipelines{};
+    u64 push_descriptor_pipelines{};
+    u64 descriptor_set_pipelines{};
 
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
@@ -80,6 +83,7 @@ public:
     void RecordDescriptorBufferUse(bool reused, u64 cpu_ns) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordDescriptorFrameWaitRequest() noexcept;
+    void RecordDescriptorBackend(bool descriptor_buffer, bool push_descriptor) noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
 
@@ -125,6 +129,9 @@ private:
     std::atomic<u64> descriptor_frame_wait_requests{};
     std::atomic<u64> descriptor_cpu_ns_total{};
     std::atomic<u64> descriptor_cpu_ns_max{};
+    std::atomic<u64> descriptor_buffer_pipelines{};
+    std::atomic<u64> push_descriptor_pipelines{};
+    std::atomic<u64> descriptor_set_pipelines{};
 
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
