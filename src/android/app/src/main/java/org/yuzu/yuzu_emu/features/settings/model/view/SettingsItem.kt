@@ -1030,6 +1030,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_DESCRIPTOR_BUFFER_EXPERIMENTAL,
+                    titleId = R.string.xclipse_descriptor_buffer_experimental,
+                    descriptionId = R.string.xclipse_descriptor_buffer_experimental_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
