@@ -124,6 +124,7 @@ struct VulkanDevicePolicy {
     VulkanDeviceIdentity identity;
     VulkanCapabilitySnapshot capabilities;
     XclipseHardwareProfile xclipse;
+    bool use_xclipse_sync_policy{};
     std::uint64_t policy_hash{};
 };
 
