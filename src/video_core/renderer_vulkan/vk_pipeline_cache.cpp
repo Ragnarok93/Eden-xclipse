@@ -561,6 +561,7 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
     if (current_pipeline) {
         GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
         if (next) {
+            device.GetXclipseTelemetry().RecordPipelineCacheLookup(true);
             current_pipeline = next;
             return BuiltPipeline(current_pipeline);
         }
@@ -581,6 +582,7 @@ ComputePipeline* PipelineCache::CurrentComputePipeline() {
         .workgroup_size{qmd.block_dim_x, qmd.block_dim_y, qmd.block_dim_z},
     };
     const auto [pair, is_new]{compute_cache.try_emplace(key)};
+    device.GetXclipseTelemetry().RecordPipelineCacheLookup(!is_new);
     auto& pipeline{pair->second};
     if (!is_new) {
         return pipeline.get();
@@ -754,6 +756,7 @@ void PipelineCache::QueueVulkanPipelineCacheFlush() {
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipelineSlowPath() {
     const auto [pair, is_new]{graphics_cache.try_emplace(graphics_key)};
+    device.GetXclipseTelemetry().RecordPipelineCacheLookup(!is_new);
     auto& pipeline{pair->second};
     if (is_new) {
         pipeline = CreateGraphicsPipeline();
