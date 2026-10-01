@@ -35,6 +35,7 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_bytes{};
     u64 descriptor_buffer_wraps{};
     u64 descriptor_stalls{};
+    u64 descriptor_frame_waits{};
     u64 descriptor_buffer_pipelines{};
     u64 push_descriptor_pipelines{};
     u64 descriptor_set_pipelines{};
@@ -63,6 +64,7 @@ public:
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
+    void RecordDescriptorFrameWait() noexcept;
     void RecordDescriptorBackend(bool descriptor_buffer, bool push_descriptor) noexcept;
     void RecordDescriptorUpdate(bool descriptor_buffer, bool push_descriptor) noexcept;
     void RecordDescriptorPayloadReuse() noexcept;
@@ -97,6 +99,7 @@ private:
     std::atomic<u64> descriptor_bytes{};
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
+    std::atomic<u64> descriptor_frame_waits{};
     std::atomic<u64> descriptor_buffer_pipelines{};
     std::atomic<u64> push_descriptor_pipelines{};
     std::atomic<u64> descriptor_set_pipelines{};
