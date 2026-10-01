@@ -355,8 +355,7 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         };
-        const bool precise_upload_barrier =
-            device.IsXclipse() && Settings::values.xclipse_sync_policy.GetValue();
+        const bool precise_upload_barrier = device.UseXclipseSyncPolicy();
         const VkPipelineStageFlags upload_consumer_stages =
             precise_upload_barrier ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
                                    : VkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
