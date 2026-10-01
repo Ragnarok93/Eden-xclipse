@@ -591,12 +591,20 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
             cmdbuf.Dispatch(num_dispatches_x, num_dispatches_y, num_dispatches_z);
         });
     }
-    scheduler.Record([vk_image, aspect_mask](vk::CommandBuffer cmdbuf) {
+    const bool precise_completion = device.UseXclipseSyncPolicy();
+    if (precise_completion) {
+        device.GetXclipseTelemetry().RecordComputeConsumerBarrier();
+    }
+    scheduler.Record([vk_image, aspect_mask, precise_completion](vk::CommandBuffer cmdbuf) {
         const VkImageMemoryBarrier image_barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
             .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask =
+                VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                (precise_completion
+                     ? VkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT)
+                     : VkAccessFlags{}),
             .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
             .newLayout = VK_IMAGE_LAYOUT_GENERAL,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -610,10 +618,15 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
                 .layerCount = VK_REMAINING_ARRAY_LAYERS,
             },
         };
+        const VkPipelineStageFlags consumer_stages =
+            precise_completion ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                               : vk::PIPELINE_STAGE_GRAPHICS_COMPUTE;
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                       vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, 0, image_barrier);
+                               consumer_stages, 0, image_barrier);
     });
-    scheduler.Finish();
+    if (!precise_completion) {
+        scheduler.Finish();
+    }
 }
 
 constexpr u32 BL3D_BINDING_INPUT_BUFFER  = 0;

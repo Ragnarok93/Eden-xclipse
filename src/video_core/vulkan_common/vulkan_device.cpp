@@ -572,6 +572,8 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    device_policy.use_xclipse_sync_policy =
+        device_policy.xclipse.detected && Settings::values.xclipse_sync_policy.GetValue();
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -849,9 +851,11 @@ void Device::LogXclipseTelemetry() const {
              average_compile_ms, static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} sync2_submits={} legacy_submits={} "
-             "host_waits={} timeline_waits={} scheduler_finishes={} all_commands_barriers={}",
+             "host_waits={} timeline_waits={} scheduler_finishes={} all_commands_barriers={} "
+             "transfer_consumer_barriers={}",
              t.queue_submits, commands_per_submit, t.sync2_submits, t.legacy_submits, t.host_waits,
-             t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers);
+             t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers,
+             t.transfer_consumer_barriers);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE DESCRIPTORS set_allocations={} buffer_allocations={} descriptor_bytes={} "
              "ring_wraps={} stalls={}",
