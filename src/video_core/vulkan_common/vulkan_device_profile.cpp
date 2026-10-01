@@ -188,6 +188,8 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.model);
     hash.AddIntegral(xclipse.wave32_validated);
     hash.AddIntegral(xclipse.wave64_validated);
+    hash.AddIntegral(xclipse.allowed_wave_mask);
+    hash.AddIntegral(xclipse.preferred_compute_wave);
     hash.AddIntegral(xclipse.bc1_native);
     hash.AddIntegral(xclipse.bc2_native);
     hash.AddIntegral(xclipse.bc3_native);
