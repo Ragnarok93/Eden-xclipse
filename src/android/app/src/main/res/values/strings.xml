@@ -655,6 +655,8 @@
     <string name="xclipse_pipeline_policy_description">Validate Eden graphics pipeline state against known Xclipse/Samsung driver-sensitive conditions and record telemetry. Does not rewrite arbitrary pipeline state.</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy</string>
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
+    <string name="xclipse_sync_policy">Xclipse Precise Upload Barriers</string>
+    <string name="xclipse_sync_policy_description">Use dependency-specific transfer-to-render/compute barriers instead of ALL_COMMANDS for the central upload handoff on Xclipse. Disable this for A/B testing if upload-related corruption or instability appears.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
