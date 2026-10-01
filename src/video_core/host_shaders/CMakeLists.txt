@@ -237,6 +237,35 @@ foreach(VARIANT IN ITEMS ${BCN_DECODER_VARIANTS})
     set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
 endforeach()
 
+# Typed BC6H/BC7 BPTC decoder variants. Keep these separate from the lightweight
+# BC4/BC5 shader so Samsung's compiler does not carry the BPTC mode tables into RGTC pipelines.
+set(BPTC_DECODER_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bcn_bptc_decoder.comp)
+set(BPTC_DECODER_VARIANTS
+    "rgba16f|rgba16f|BCN_BPTC_DECODER_RGBA16F_COMP_SPV"
+    "rgba8|rgba8|BCN_BPTC_DECODER_RGBA8_COMP_SPV"
+)
+
+foreach(VARIANT IN ITEMS ${BPTC_DECODER_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS ${VARIANT})
+    list(GET VARIANT_PARTS 0 VARIANT_SUFFIX)
+    list(GET VARIANT_PARTS 1 VARIANT_FORMAT)
+    list(GET VARIANT_PARTS 2 VARIANT_VARIABLE_NAME)
+    set(VARIANT_HEADER_FILE ${SHADER_DIR}/bcn_bptc_decoder_${VARIANT_SUFFIX}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${VARIANT_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -I"${FIDELITYFX_INCLUDE_DIR}" ${GLSL_FLAGS}
+            -DBPTC_DST_FORMAT=${VARIANT_FORMAT}
+            --variable-name ${VARIANT_VARIABLE_NAME}
+            -o ${VARIANT_HEADER_FILE} ${BPTC_DECODER_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${BPTC_DECODER_SOURCE}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
+endforeach()
+
 foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
     get_filename_component(FILENAME ${FILEPATH} NAME)
     string(REPLACE "." "_" HEADER_NAME ${FILENAME})
@@ -258,6 +287,7 @@ endforeach()
 
 set(SHADER_SOURCES ${SHADER_FILES})
 list(APPEND SHADER_SOURCES ${BCN_DECODER_SOURCE})
+list(APPEND SHADER_SOURCES ${BPTC_DECODER_SOURCE})
 list(APPEND SHADER_SOURCES ${GLSL_INCLUDES})
 
 add_custom_target(host_shaders
