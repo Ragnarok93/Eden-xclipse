@@ -310,6 +310,11 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
 
+    if (descriptor_set_layout) {
+        device.GetXclipseTelemetry().RecordDescriptorBackend(uses_descriptor_buffer,
+                                                             uses_push_descriptor);
+    }
+
     auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
