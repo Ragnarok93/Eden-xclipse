@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
