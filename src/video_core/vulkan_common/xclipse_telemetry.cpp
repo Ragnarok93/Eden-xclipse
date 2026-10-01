@@ -103,6 +103,26 @@ void XclipseTelemetry::RecordDescriptorBackend(bool descriptor_buffer,
     }
 }
 
+void XclipseTelemetry::RecordDescriptorUpdate(bool descriptor_buffer,
+                                               bool push_descriptor) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    if (descriptor_buffer) {
+        descriptor_buffer_writes.fetch_add(1, std::memory_order_relaxed);
+    } else if (push_descriptor) {
+        push_descriptor_updates.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        descriptor_set_updates.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorPayloadReuse() noexcept {
+    if (Enabled()) {
+        descriptor_payload_reuses.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
     return {
         .enabled = Enabled(),
@@ -138,6 +158,14 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
             push_descriptor_pipelines.load(std::memory_order_relaxed),
         .descriptor_set_pipelines =
             descriptor_set_pipelines.load(std::memory_order_relaxed),
+        .descriptor_set_updates =
+            descriptor_set_updates.load(std::memory_order_relaxed),
+        .push_descriptor_updates =
+            push_descriptor_updates.load(std::memory_order_relaxed),
+        .descriptor_buffer_writes =
+            descriptor_buffer_writes.load(std::memory_order_relaxed),
+        .descriptor_payload_reuses =
+            descriptor_payload_reuses.load(std::memory_order_relaxed),
     };
 }
 
