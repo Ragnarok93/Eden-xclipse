@@ -13,6 +13,7 @@
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 
 #include "common/assert.h"
+#include "common/settings.h"
 #include "common/common_types.h"
 #include "common/div_ceil.h"
 #include "common/vector_math.h"
