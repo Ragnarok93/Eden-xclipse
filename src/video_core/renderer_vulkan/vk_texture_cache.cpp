@@ -160,10 +160,25 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
           info.size.depth == 1;
 }
 
+std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
+    switch (format) {
+    case PixelFormat::BC4_UNORM:
+        return 0;
+    case PixelFormat::BC4_SNORM:
+        return 1;
+    case PixelFormat::BC5_UNORM:
+        return 2;
+    case PixelFormat::BC5_SNORM:
+        return 3;
+    default:
+        return std::nullopt;
+    }
+}
+
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
     if (!device.IsXclipse() || !Settings::values.xclipse_gpu_bcn_decode.GetValue() ||
-        device.HasBrokenCompute() || !device.IsFormatlessImageWriteSupported() ||
-        !IsPixelFormatBCn(info.format) || MaxwellToVK::IsBcnNative(device, info.format)) {
+        device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
+        MaxwellToVK::IsBcnNative(device, info.format)) {
         return false;
     }
 
@@ -976,14 +991,24 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
     }
     if (device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
         !device.HasBrokenCompute()) {
-        try {
-            bcn_decoder_pass.emplace(device, scheduler, descriptor_pool,
-                                     compute_pass_descriptor_queue);
-        } catch (const vk::Exception& exception) {
-            LOG_WARNING(Render_Vulkan,
-                        "XCLIPSE BC GPU decoder unavailable, retaining CPU fallback: {}",
-                        exception.what());
-            bcn_decoder_pass.reset();
+        constexpr std::array formats{
+            PixelFormat::BC4_UNORM,
+            PixelFormat::BC4_SNORM,
+            PixelFormat::BC5_UNORM,
+            PixelFormat::BC5_SNORM,
+        };
+        for (const PixelFormat format : formats) {
+            const auto index = BcnDecoderIndex(format);
+            ASSERT(index.has_value());
+            try {
+                bcn_decoder_passes[*index].emplace(device, scheduler, descriptor_pool,
+                                                   compute_pass_descriptor_queue, format);
+            } catch (const vk::Exception& exception) {
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE BC GPU decoder format={} unavailable, retaining CPU fallback: {}",
+                            static_cast<u32>(format), exception.what());
+                bcn_decoder_passes[*index].reset();
+            }
         }
     }
     if (!device.IsKhrImageFormatListSupported()) {
@@ -1012,6 +1037,14 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
 
 bool TextureCacheRuntime::CanAccelerateImageUpload(Image& image) const noexcept {
     return True(image.flags & VideoCommon::ImageFlagBits::AcceleratedUpload);
+}
+
+BCDecoderPass* TextureCacheRuntime::BcnDecoderPassFor(PixelFormat format) noexcept {
+    const auto index = BcnDecoderIndex(format);
+    if (!index || !bcn_decoder_passes[*index]) {
+        return nullptr;
+    }
+    return &*bcn_decoder_passes[*index];
 }
 
 void TextureCacheRuntime::Finish() {
@@ -1945,7 +1978,8 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
             runtime->device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
             (info.format == PixelFormat::BC4_UNORM || info.format == PixelFormat::BC4_SNORM ||
              info.format == PixelFormat::BC5_UNORM || info.format == PixelFormat::BC5_SNORM);
-        if (runtime->bcn_decoder_pass && WillUseAcceleratedBcnDecode(runtime->device, info)) {
+        if (runtime->BcnDecoderPassFor(info.format) &&
+            WillUseAcceleratedBcnDecode(runtime->device, info)) {
             flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
         } else if (wants_gpu_bcn) {
             runtime->device.GetXclipseTelemetry().RecordBcnGpuDecodeFallback();
@@ -1966,7 +2000,8 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
                 MakeStorageView(device, level, *original_image, storage_format);
         }
     }
-    if (runtime->bcn_decoder_pass && WillUseAcceleratedBcnDecode(runtime->device, info)) {
+    if (runtime->BcnDecoderPassFor(info.format) &&
+        WillUseAcceleratedBcnDecode(runtime->device, info)) {
         const auto& device = runtime->device.GetLogical();
         const auto format_info =
             MaxwellToVK::SurfaceFormat(runtime->device, FormatType::Optimal, false, info.format);
@@ -3199,8 +3234,9 @@ void TextureCacheRuntime::AccelerateImageUpload(
         return astc_decoder_pass->Assemble(image, map, swizzles);
     }
 
-    if (bcn_decoder_pass && WillUseAcceleratedBcnDecode(device, image.info)) {
-        return bcn_decoder_pass->Assemble(image, map, swizzles);
+    if (BCDecoderPass* pass = BcnDecoderPassFor(image.info.format);
+        pass && WillUseAcceleratedBcnDecode(device, image.info)) {
+        return pass->Assemble(image, map, swizzles);
     }
 
     if (!Settings::values.gpu_unswizzle_enabled.GetValue() || !bl3d_unswizzle_pass) {
