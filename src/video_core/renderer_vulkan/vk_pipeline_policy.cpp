@@ -112,7 +112,7 @@ PipelinePolicyReport InspectGraphicsPipeline(const VulkanDevicePolicy& policy,
         auto* current = static_cast<const VkBaseInStructure*>(create_info.pStages[stage].pNext);
         for (u32 depth = 0; current && depth < 32; ++depth) {
             if (current->sType ==
-                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO) {
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT) {
                 const auto* required =
                     reinterpret_cast<const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo*>(
                         current);
