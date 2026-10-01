@@ -653,6 +653,8 @@
     <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy Diagnostics</string>
     <string name="xclipse_pipeline_policy_description">Validate Eden graphics pipeline state against known Xclipse/Samsung driver-sensitive conditions and record telemetry. Does not rewrite arbitrary pipeline state.</string>
+    <string name="xclipse_precise_upload_barrier">Xclipse Precise Upload Barrier</string>
+    <string name="xclipse_precise_upload_barrier_description">Use a graphics, compute, and transfer destination-stage barrier for upload writes instead of ALL_COMMANDS on Xclipse. Disable to restore Eden’s conservative barrier for A/B testing.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
