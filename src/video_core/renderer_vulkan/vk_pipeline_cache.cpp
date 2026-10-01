@@ -62,7 +62,7 @@ using VideoCommon::FileEnvironment;
 using VideoCommon::GenericEnvironment;
 using VideoCommon::GraphicsEnvironment;
 
-constexpr u32 CACHE_VERSION = 18;
+constexpr u32 CACHE_VERSION = 19;
 constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 128;
 constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 30;
 constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
@@ -1031,8 +1031,10 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
                   Common::FS::PathToUTF8String(filename));
         return;
     }
+    const u64 policy_hash = device.GetDevicePolicy().policy_hash;
     file.write(VULKAN_CACHE_MAGIC_NUMBER.data(), VULKAN_CACHE_MAGIC_NUMBER.size())
-        .write(reinterpret_cast<const char*>(&cache_version), sizeof(cache_version));
+        .write(reinterpret_cast<const char*>(&cache_version), sizeof(cache_version))
+        .write(reinterpret_cast<const char*>(&policy_hash), sizeof(policy_hash));
 
     size_t cache_size = 0;
     std::vector<char> cache_data;
@@ -1074,11 +1076,23 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
         const auto end{file.tellg()};
         file.seekg(0, std::ios::beg);
 
-        std::array<char, 8> magic_number;
-        u32 cache_version;
+        std::array<char, 8> magic_number{};
+        u32 cache_version{};
+        u64 policy_hash{};
+        constexpr size_t header_size =
+            VULKAN_CACHE_MAGIC_NUMBER.size() + sizeof(cache_version) + sizeof(policy_hash);
+        if (static_cast<size_t>(end) < header_size) {
+            file.close();
+            Common::FS::RemoveFile(filename);
+            return create_pipeline_cache(0, nullptr);
+        }
         file.read(magic_number.data(), magic_number.size())
-            .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version));
-        if (magic_number != VULKAN_CACHE_MAGIC_NUMBER || cache_version != expected_cache_version) {
+            .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version))
+            .read(reinterpret_cast<char*>(&policy_hash), sizeof(policy_hash));
+        const u64 expected_policy_hash = device.GetDevicePolicy().policy_hash;
+        if (magic_number != VULKAN_CACHE_MAGIC_NUMBER ||
+            cache_version != expected_cache_version ||
+            policy_hash != expected_policy_hash) {
             file.close();
             if (Common::FS::RemoveFile(filename)) {
                 if (magic_number != VULKAN_CACHE_MAGIC_NUMBER) {
@@ -1086,6 +1100,12 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
                 }
                 if (cache_version != expected_cache_version) {
                     LOG_INFO(Common_Filesystem, "Deleting old Vulkan driver pipeline cache");
+                }
+                if (policy_hash != expected_policy_hash) {
+                    LOG_INFO(Common_Filesystem,
+                             "Deleting Vulkan driver pipeline cache for old device policy "
+                             "{:016x} (current {:016x})",
+                             policy_hash, expected_policy_hash);
                 }
             } else {
                 LOG_ERROR(Common_Filesystem,
@@ -1095,7 +1115,6 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
             return create_pipeline_cache(0, nullptr);
         }
 
-        static constexpr size_t header_size = magic_number.size() + sizeof(cache_version);
         const size_t cache_size = static_cast<size_t>(end) - header_size;
         std::vector<char> cache_data(cache_size);
         file.read(cache_data.data(), cache_size);
