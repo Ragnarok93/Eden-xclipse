@@ -23,7 +23,6 @@ set(SHADER_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/blit_depth_stencil_msaa.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/block_linear_unswizzle_3d.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/block_linear_unswizzle_3d_bcn.comp
-    ${CMAKE_CURRENT_SOURCE_DIR}/bcn_decoder.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/convert_abgr8_to_d24s8.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/convert_abgr8_to_d32f.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/convert_d32f_to_abgr8.frag
@@ -207,6 +206,37 @@ foreach(VARIANT IN ITEMS ${SHADER_TYPE_VARIANTS})
     set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
 endforeach()
 
+# Typed BC4/BC5 decoder variants. Samsung's Xclipse compiler gets an exact storage
+# format and Eden does not need shaderStorageImageWriteWithoutFormat for this path.
+set(BCN_DECODER_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bcn_decoder.comp)
+set(BCN_DECODER_VARIANTS
+    "r8|r8|BCN_DECODER_R8_COMP_SPV"
+    "r8_snorm|r8_snorm|BCN_DECODER_R8_SNORM_COMP_SPV"
+    "rg8|rg8|BCN_DECODER_RG8_COMP_SPV"
+    "rg8_snorm|rg8_snorm|BCN_DECODER_RG8_SNORM_COMP_SPV"
+)
+
+foreach(VARIANT IN ITEMS ${BCN_DECODER_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS ${VARIANT})
+    list(GET VARIANT_PARTS 0 VARIANT_SUFFIX)
+    list(GET VARIANT_PARTS 1 VARIANT_FORMAT)
+    list(GET VARIANT_PARTS 2 VARIANT_VARIABLE_NAME)
+    set(VARIANT_HEADER_FILE ${SHADER_DIR}/bcn_decoder_${VARIANT_SUFFIX}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${VARIANT_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -I"${FIDELITYFX_INCLUDE_DIR}" ${GLSL_FLAGS}
+            -DBCN_DST_FORMAT=${VARIANT_FORMAT}
+            --variable-name ${VARIANT_VARIABLE_NAME}
+            -o ${VARIANT_HEADER_FILE} ${BCN_DECODER_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${BCN_DECODER_SOURCE}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
+endforeach()
+
 foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
     get_filename_component(FILENAME ${FILEPATH} NAME)
     string(REPLACE "." "_" HEADER_NAME ${FILENAME})
@@ -227,6 +257,7 @@ foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
 endforeach()
 
 set(SHADER_SOURCES ${SHADER_FILES})
+list(APPEND SHADER_SOURCES ${BCN_DECODER_SOURCE})
 list(APPEND SHADER_SOURCES ${GLSL_INCLUDES})
 
 add_custom_target(host_shaders
