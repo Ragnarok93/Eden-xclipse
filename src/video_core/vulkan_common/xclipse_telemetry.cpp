@@ -89,6 +89,17 @@ void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordMemoryPressure(u32 pressure_class, bool changed) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    memory_pressure_samples.fetch_add(1, std::memory_order_relaxed);
+    memory_pressure_class.store(pressure_class, std::memory_order_relaxed);
+    if (changed) {
+        memory_pressure_transitions.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
     return {
         .enabled = Enabled(),
@@ -118,6 +129,10 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .descriptor_bytes = descriptor_bytes.load(std::memory_order_relaxed),
         .descriptor_buffer_wraps = descriptor_buffer_wraps.load(std::memory_order_relaxed),
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
+        .memory_pressure_samples = memory_pressure_samples.load(std::memory_order_relaxed),
+        .memory_pressure_transitions =
+            memory_pressure_transitions.load(std::memory_order_relaxed),
+        .memory_pressure_class = memory_pressure_class.load(std::memory_order_relaxed),
     };
 }
 
