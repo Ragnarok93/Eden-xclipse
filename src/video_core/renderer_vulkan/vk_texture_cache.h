@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 namespace Settings {
@@ -68,6 +69,14 @@ public:
     u64 GetDeviceMemoryUsage() const;
 
     bool CanReportMemoryUsage() const;
+
+    u32 GetMemoryPressureLevel() const noexcept {
+        return static_cast<u32>(memory_pressure_controller.Current());
+    }
+
+    const XclipseMemoryPressureSnapshot& GetMemoryPressureSnapshot() const noexcept {
+        return memory_pressure_controller.LastSnapshot();
+    }
 
     bool CanDownloadMsaa(const VideoCommon::ImageInfo& info) const;
 
@@ -159,6 +168,7 @@ public:
     StagingBufferPool& staging_buffer_pool;
     BlitImageHelper& blit_image_helper;
     RenderPassCache& render_pass_cache;
+    XclipseMemoryPressureController memory_pressure_controller;
     std::optional<ASTCDecoderPass> astc_decoder_pass;
     std::array<std::optional<BCDecoderPass>, 4> bcn_decoder_passes;
     std::optional<BPTCDecoderPass> bptc_bc6_decoder_pass;
