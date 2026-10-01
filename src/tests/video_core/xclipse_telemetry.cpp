@@ -35,10 +35,17 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordGpuWait(false);
     telemetry.RecordSchedulerFinish();
     telemetry.RecordAllCommandsBarrier();
+    telemetry.RecordFrame();
+    telemetry.RecordFrame();
     telemetry.RecordDescriptorSetAllocation(2);
+    telemetry.RecordDescriptorSetUpdate(100);
+    telemetry.RecordDescriptorPushUpdate(200);
     telemetry.RecordDescriptorBufferAllocation(96);
+    telemetry.RecordDescriptorBufferUse(false, 300);
+    telemetry.RecordDescriptorBufferUse(true, 50);
     telemetry.RecordDescriptorBufferWrap(false);
     telemetry.RecordDescriptorBufferWrap(true);
+    telemetry.RecordDescriptorFrameWaitRequest();
     telemetry.RecordBcnGpuDecode(4096);
     telemetry.RecordBcnGpuDecodeFallback();
 
@@ -61,11 +68,19 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.timeline_waits == 1);
     REQUIRE(snapshot.scheduler_finishes == 1);
     REQUIRE(snapshot.all_commands_barriers == 1);
+    REQUIRE(snapshot.frame_count == 2);
     REQUIRE(snapshot.descriptor_set_allocations == 2);
+    REQUIRE(snapshot.descriptor_set_updates == 1);
+    REQUIRE(snapshot.descriptor_push_updates == 1);
     REQUIRE(snapshot.descriptor_buffer_allocations == 1);
+    REQUIRE(snapshot.descriptor_buffer_uses == 2);
+    REQUIRE(snapshot.descriptor_buffer_reuses == 1);
     REQUIRE(snapshot.descriptor_bytes == 96);
     REQUIRE(snapshot.descriptor_buffer_wraps == 2);
     REQUIRE(snapshot.descriptor_stalls == 1);
+    REQUIRE(snapshot.descriptor_frame_wait_requests == 1);
+    REQUIRE(snapshot.descriptor_cpu_ns_total == 650);
+    REQUIRE(snapshot.descriptor_cpu_ns_max == 300);
     REQUIRE(snapshot.bcn_gpu_decode_dispatches == 1);
     REQUIRE(snapshot.bcn_gpu_decode_bytes == 4096);
     REQUIRE(snapshot.bcn_gpu_decode_fallbacks == 1);
