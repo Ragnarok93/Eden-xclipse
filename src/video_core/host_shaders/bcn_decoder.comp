@@ -30,7 +30,11 @@ layout(binding = 0, std430) readonly restrict buffer InputBufferU32 {
     uint data[];
 } input_buffer;
 
-layout(binding = 1) uniform writeonly restrict image2DArray dest_image;
+#ifndef BCN_DST_FORMAT
+#define BCN_DST_FORMAT rgba8
+#endif
+
+layout(binding = 1, BCN_DST_FORMAT) uniform writeonly restrict image2DArray dest_image;
 
 const uint GOB_SIZE_X_SHIFT = 6u;
 const uint GOB_SIZE_Y_SHIFT = 3u;
