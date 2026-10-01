@@ -1197,13 +1197,16 @@ void Device::LogXclipseTelemetry() const {
              "XCLIPSE DESCRIPTORS frames={} updates_per_frame={:.2f} set_allocations={} "
              "set_updates={} push_updates={} buffer_uses={} buffer_allocations={} "
              "buffer_reuses={} buffer_reuse_rate={:.3f} descriptor_bytes={} ring_wraps={} "
-             "stalls={} frame_wait_requests={} cpu_avg_us={:.3f} cpu_max_us={:.3f}",
+             "stalls={} frame_wait_requests={} cpu_avg_us={:.3f} cpu_max_us={:.3f} "
+             "backend_pipelines(buffer/push/set)={}/{}/{}",
              t.frame_count, descriptor_updates_per_frame, t.descriptor_set_allocations,
              t.descriptor_set_updates, t.descriptor_push_updates, t.descriptor_buffer_uses,
              t.descriptor_buffer_allocations, t.descriptor_buffer_reuses,
              descriptor_buffer_reuse_rate, t.descriptor_bytes, t.descriptor_buffer_wraps,
              t.descriptor_stalls, t.descriptor_frame_wait_requests, descriptor_cpu_us_per_update,
-             static_cast<double>(t.descriptor_cpu_ns_max) / 1'000.0);
+             static_cast<double>(t.descriptor_cpu_ns_max) / 1'000.0,
+             t.descriptor_buffer_pipelines, t.push_descriptor_pipelines,
+             t.descriptor_set_pipelines);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
