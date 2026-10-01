@@ -653,6 +653,8 @@
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
     <string name="xclipse_sync_policy">Xclipse Precise Upload Barriers</string>
     <string name="xclipse_sync_policy_description">Use dependency-specific GPU barriers instead of broad ALL_COMMANDS or host-finish synchronization on validated Xclipse upload/decode paths. Disable for A/B testing if upload-related corruption or instability appears.</string>
+    <string name="xclipse_descriptor_buffer_experimental">Xclipse Descriptor Buffer Experiment</string>
+    <string name="xclipse_descriptor_buffer_experimental_description">Allow VK_EXT_descriptor_buffer on Xclipse before Eden has behaviorally validated it. For A/B testing only; Auto otherwise uses push descriptors or descriptor sets until validation succeeds.</string>
     <string name="xclipse_gpu_bcn_decode">Xclipse GPU BCn Decoder</string>
     <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="fastmem">Fastmem</string>
