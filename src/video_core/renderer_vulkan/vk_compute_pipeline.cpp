@@ -285,7 +285,10 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
         GPU::Logging::GPULogger::GetInstance().LogPipelineBind(true, "compute pipeline");
     }
 
-    const auto descriptor_prepare_start = std::chrono::steady_clock::now();
+    const bool measure_descriptors = device.GetXclipseTelemetry().Enabled();
+    const auto descriptor_prepare_start =
+        measure_descriptors ? std::chrono::steady_clock::now()
+                            : std::chrono::steady_clock::time_point{};
     const DescriptorUpdateEntry* const descriptor_data{guest_descriptor_queue.UpdateData()};
     VkDeviceSize descriptor_buffer_offset{};
     u32 descriptor_buffer_chunk{};
@@ -299,11 +302,13 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
         WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
         descriptor_buffer_offset = alloc.offset;
         descriptor_buffer_chunk = alloc.chunk;
-        const auto descriptor_cpu_ns = static_cast<u64>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - descriptor_prepare_start)
-                .count());
-        device.GetXclipseTelemetry().RecordDescriptorBufferUse(false, descriptor_cpu_ns);
+        if (measure_descriptors) {
+            const auto descriptor_cpu_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - descriptor_prepare_start)
+                    .count());
+            device.GetXclipseTelemetry().RecordDescriptorBufferUse(false, descriptor_cpu_ns);
+        }
     }
 
     const bool bind_descriptor_buffer{
@@ -335,26 +340,41 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
-            const auto start = std::chrono::steady_clock::now();
-            cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
-                                                    0, descriptor_data);
-            const auto cpu_ns = static_cast<u64>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - start)
-                    .count());
-            device.GetXclipseTelemetry().RecordDescriptorPushUpdate(cpu_ns);
+            if (device.GetXclipseTelemetry().Enabled()) {
+                const auto start = std::chrono::steady_clock::now();
+                cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template,
+                                                        *pipeline_layout, 0, descriptor_data);
+                const auto cpu_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count());
+                device.GetXclipseTelemetry().RecordDescriptorPushUpdate(cpu_ns);
+            } else {
+                cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template,
+                                                        *pipeline_layout, 0, descriptor_data);
+            }
         } else {
-            const auto start = std::chrono::steady_clock::now();
-            const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
-            const vk::Device& dev{device.GetLogical()};
-            dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
-            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
-                                      descriptor_set, nullptr);
-            const auto cpu_ns = static_cast<u64>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - start)
-                    .count());
-            device.GetXclipseTelemetry().RecordDescriptorSetUpdate(cpu_ns);
+            if (device.GetXclipseTelemetry().Enabled()) {
+                const auto start = std::chrono::steady_clock::now();
+                const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
+                const vk::Device& dev{device.GetLogical()};
+                dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template,
+                                        descriptor_data);
+                cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
+                                          descriptor_set, nullptr);
+                const auto cpu_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count());
+                device.GetXclipseTelemetry().RecordDescriptorSetUpdate(cpu_ns);
+            } else {
+                const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
+                const vk::Device& dev{device.GetLogical()};
+                dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template,
+                                        descriptor_data);
+                cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
+                                          descriptor_set, nullptr);
+            }
         }
     });
     return true;
