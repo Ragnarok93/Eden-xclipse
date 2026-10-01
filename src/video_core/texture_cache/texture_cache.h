@@ -114,18 +114,40 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
 }
 
 template <class P>
-void TextureCache<P>::RunGarbageCollector() {
+void TextureCache<P>::RunGarbageCollector(u32 memory_pressure_level) {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
+
+    const bool pressure_elevated = memory_pressure_level >= 1;
+    const bool pressure_high = memory_pressure_level >= 2;
+    const bool pressure_critical = memory_pressure_level >= 3;
+
     const auto Configure = [&](bool allow_aggressive) {
-        high_priority_mode = total_used_memory >= expected_memory;
-        aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
-        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
-        num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
+        high_priority_mode = total_used_memory >= expected_memory || pressure_high;
+        aggressive_mode =
+            allow_aggressive && (total_used_memory >= critical_memory || pressure_critical);
+
+        if (aggressive_mode) {
+            ticks_to_destroy = 10;
+            num_iterations = 40;
+        } else if (high_priority_mode) {
+            ticks_to_destroy = 20;
+            num_iterations = 24;
+        } else if (pressure_elevated) {
+            // Under mild Android/PSI pressure, only age out old resources that Eden already
+            // considers cheap to release. Downloadable and CostlyLoad images remain protected.
+            ticks_to_destroy = 35;
+            num_iterations = 16;
+        } else {
+            ticks_to_destroy = 50;
+            num_iterations = 10;
+        }
     };
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
+    const auto Cleanup =
+        [this, &num_iterations, &high_priority_mode, &aggressive_mode, pressure_high,
+         pressure_critical](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -134,8 +156,10 @@ void TextureCache<P>::RunGarbageCollector() {
         if (True(image.flags & ImageFlagBits::IsDecoding)) {
             return false;
         }
-        const bool must_download = IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
-        if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) || (!high_priority_mode && must_download)) {
+        const bool must_download =
+            IsDownloadable(image) && False(image.flags & ImageFlagBits::BadOverlap);
+        if ((!aggressive_mode && True(image.flags & ImageFlagBits::CostlyLoad)) ||
+            (!high_priority_mode && must_download)) {
             return false;
         }
         if (must_download) {
@@ -143,25 +167,29 @@ void TextureCache<P>::RunGarbageCollector() {
             const auto copies = FixSmallVectorADL(FullDownloadCopies(image.info));
             image.DownloadMemory(map, copies);
             runtime.Finish();
-            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span, swizzle_data_buffer);
+            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span,
+                         swizzle_data_buffer);
         }
         if (True(image.flags & ImageFlagBits::Tracked)) {
             UntrackImage(image, image_id);
         }
         UnregisterImage(image_id);
         DeleteImage(image_id, image.scale_tick > frame_tick + 5);
-        if (aggressive_mode && total_used_memory < critical_memory) {
+
+        if (aggressive_mode && !pressure_critical && total_used_memory < critical_memory) {
             num_iterations >>= 2;
             aggressive_mode = false;
-        } else if (high_priority_mode && total_used_memory < expected_memory) {
+        } else if (high_priority_mode && !pressure_high &&
+                   total_used_memory < expected_memory) {
             num_iterations >>= 1;
             high_priority_mode = false;
         }
         return false;
     };
+
     Configure(false);
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
-    if (total_used_memory >= critical_memory) {
+    if (total_used_memory >= critical_memory || pressure_critical) {
         Configure(true);
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     }
@@ -173,8 +201,15 @@ void TextureCache<P>::TickFrame() {
     if (runtime.CanReportMemoryUsage()) {
         total_used_memory = runtime.GetDeviceMemoryUsage();
     }
-    if (total_used_memory > minimum_memory) {
-        RunGarbageCollector();
+    const u32 memory_pressure_level = [&]() -> u32 {
+        if constexpr (requires { runtime.GetMemoryPressureLevel(); }) {
+            return static_cast<u32>(runtime.GetMemoryPressureLevel());
+        } else {
+            return 0;
+        }
+    }();
+    if (total_used_memory > minimum_memory || memory_pressure_level != 0) {
+        RunGarbageCollector(memory_pressure_level);
     }
     sentenced_images.Tick();
     sentenced_framebuffers.Tick();
