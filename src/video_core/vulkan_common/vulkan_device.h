@@ -517,6 +517,9 @@ FN_MAX_LIMIT_LIST
         return extensions.descriptor_buffer;
     }
 
+    /// Returns true when the descriptor-buffer backend is allowed by runtime policy.
+    bool AllowsDescriptorBufferBackend() const;
+
     /// Returns the descriptor buffer properties of the device.
     const VkPhysicalDeviceDescriptorBufferPropertiesEXT& DescriptorBufferProperties() const {
         return properties.descriptor_buffer;
