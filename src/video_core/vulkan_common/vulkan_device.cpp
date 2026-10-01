@@ -1426,13 +1426,7 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
 
 bool Device::IsOptimalBcnSupported(VkFormat format) const {
     if (!device_policy.xclipse.detected) {
-        return features.features.textureCompressionBC &&
-               IsFormatSupported(format,
-                                 VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                                     VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-                                     VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
-                                     VK_FORMAT_FEATURE_TRANSFER_DST_BIT,
-                                 FormatType::Optimal);
+        return features.features.textureCompressionBC;
     }
 
     const auto it = std::ranges::find(BCN_FORMATS, format);
