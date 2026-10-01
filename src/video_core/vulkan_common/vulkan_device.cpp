@@ -1302,9 +1302,13 @@ void Device::LogXclipseTelemetry() const {
              t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers,
              t.precise_upload_barriers);
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE DESCRIPTORS set_allocations={} buffer_allocations={} descriptor_bytes={} "
-             "ring_wraps={} stalls={}",
-             t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
+             "XCLIPSE DESCRIPTORS backend_pipelines[set={} push={} buffer={}] "
+             "set_allocations={} set_updates={} push_updates={} buffer_allocations={} "
+             "descriptor_bytes={} reuse={} ring_wraps={} stalls={}",
+             t.descriptor_set_pipelines, t.push_descriptor_pipelines,
+             t.descriptor_buffer_pipelines, t.descriptor_set_allocations,
+             t.descriptor_set_updates, t.push_descriptor_updates,
+             t.descriptor_buffer_allocations, t.descriptor_bytes, t.descriptor_reuses,
              t.descriptor_buffer_wraps, t.descriptor_stalls);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
