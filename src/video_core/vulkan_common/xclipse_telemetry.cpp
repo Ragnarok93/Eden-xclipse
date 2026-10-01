@@ -136,6 +136,14 @@ void XclipseTelemetry::RecordBcnGpuDecodeFallback() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordAstcDecode(bool async) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (async ? astc_async_decodes : astc_forced_finishes)
+        .fetch_add(1, std::memory_order_relaxed);
+}
+
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
     return {
         .enabled = Enabled(),
@@ -180,6 +188,8 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
         .bcn_gpu_decode_fallbacks =
             bcn_gpu_decode_fallbacks.load(std::memory_order_relaxed),
+        .astc_async_decodes = astc_async_decodes.load(std::memory_order_relaxed),
+        .astc_forced_finishes = astc_forced_finishes.load(std::memory_order_relaxed),
     };
 }
 
