@@ -12,6 +12,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <thread>
 #include "common/container/unordered_map.h"
 #include "common/container/unordered_set.h"
@@ -776,6 +777,7 @@ void Device::RunXclipseSubgroupValidationProbes() {
 
     if (!xclipse.detected || !Settings::values.xclipse_validation_probes.GetValue() ||
         caps.required_subgroup_size == CapabilityState::Unsupported ||
+        (caps.subgroup_supported_stages & VK_SHADER_STAGE_COMPUTE_BIT) == 0 ||
         (caps.required_subgroup_size_stages & VK_SHADER_STAGE_COMPUTE_BIT) == 0) {
         device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
         return;
