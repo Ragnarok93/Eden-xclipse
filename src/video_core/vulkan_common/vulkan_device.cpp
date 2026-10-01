@@ -601,6 +601,285 @@ void Device::UpdateXclipseBcnProfile() {
     xclipse.bc7_native = native({BcnFormat::BC7_UNORM, BcnFormat::BC7_SRGB});
 }
 
+void Device::RunXclipseSubgroupValidationProbes() {
+    auto& caps = device_policy.capabilities;
+    auto& xclipse = device_policy.xclipse;
+
+    const bool compute_stage_supported =
+        (caps.subgroup_supported_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
+    const bool subgroup_basic_supported =
+        (caps.subgroup_supported_operations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0;
+    const bool required_size_supported =
+        caps.required_subgroup_size != CapabilityState::Unsupported &&
+        (caps.required_subgroup_size_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
+    if (!compute_stage_supported || !subgroup_basic_supported || !required_size_supported) {
+        return;
+    }
+
+    constexpr VkDeviceSize ProbeBytes = sizeof(u32) * 4;
+    constexpr u64 ProbeTimeoutNs = 1'000'000'000ULL;
+
+    VkBuffer raw_buffer = VK_NULL_HANDLE;
+    const VkBufferCreateInfo buffer_ci{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .size = ProbeBytes,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+    vk::Check(dld.vkCreateBuffer(*logical, &buffer_ci, nullptr, &raw_buffer));
+    vk::Handle<VkBuffer, VkDevice, vk::DeviceDispatch> probe_buffer{raw_buffer, *logical, dld};
+
+    const VkMemoryRequirements requirements =
+        logical.GetBufferMemoryRequirements(*probe_buffer);
+    const VkPhysicalDeviceMemoryProperties memory_properties =
+        physical.GetMemoryProperties().memoryProperties;
+
+    u32 memory_type = VK_MAX_MEMORY_TYPES;
+    constexpr VkMemoryPropertyFlags RequiredMemoryFlags =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+        const bool compatible = (requirements.memoryTypeBits & (1U << index)) != 0;
+        const VkMemoryPropertyFlags flags = memory_properties.memoryTypes[index].propertyFlags;
+        if (compatible && (flags & RequiredMemoryFlags) == RequiredMemoryFlags) {
+            memory_type = index;
+            break;
+        }
+    }
+    if (memory_type == VK_MAX_MEMORY_TYPES) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE subgroup validation skipped: no coherent host-visible memory");
+        return;
+    }
+
+    auto memory = logical.AllocateMemory({
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memory_type,
+    });
+    vk::Check(dld.vkBindBufferMemory(*logical, *probe_buffer, *memory, 0));
+    u32* const output = reinterpret_cast<u32*>(memory.Map(0, ProbeBytes));
+
+    const VkDescriptorSetLayoutBinding binding{
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+    const auto descriptor_layout = logical.CreateDescriptorSetLayout({
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .bindingCount = 1,
+        .pBindings = &binding,
+    });
+    const VkDescriptorPoolSize pool_size{
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+    };
+    const auto descriptor_pool = logical.CreateDescriptorPool({
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .maxSets = 1,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    });
+    const VkDescriptorSetLayout raw_layout = *descriptor_layout;
+    const auto descriptor_sets = descriptor_pool.Allocate({
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .descriptorPool = *descriptor_pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &raw_layout,
+    });
+    if (descriptor_sets.IsOutOfPoolMemory()) {
+        memory.Unmap();
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE subgroup validation skipped: descriptor allocation failed");
+        return;
+    }
+    const VkDescriptorSet descriptor_set = descriptor_sets[0];
+    const VkDescriptorBufferInfo buffer_info{
+        .buffer = *probe_buffer,
+        .offset = 0,
+        .range = ProbeBytes,
+    };
+    const VkWriteDescriptorSet descriptor_write{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = descriptor_set,
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pImageInfo = nullptr,
+        .pBufferInfo = &buffer_info,
+        .pTexelBufferView = nullptr,
+    };
+    dld.vkUpdateDescriptorSets(*logical, 1, &descriptor_write, 0, nullptr);
+
+    const auto pipeline_layout = logical.CreatePipelineLayout({
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &raw_layout,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = nullptr,
+    });
+    const auto shader = logical.CreateShaderModule({
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = XCLIPSE_SUBGROUP_PROBE_COMP_SPV.size_bytes(),
+        .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV.data(),
+    });
+
+    const VkCommandPoolCreateInfo command_pool_ci{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = graphics_family,
+    };
+    auto command_pool = logical.CreateCommandPool(command_pool_ci);
+
+    const auto run_wave_probe = [&](u32 wave_size) -> bool {
+        if (wave_size < caps.min_subgroup_size || wave_size > caps.max_subgroup_size) {
+            return false;
+        }
+
+        const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
+            .sType =
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
+            .pNext = nullptr,
+            .requiredSubgroupSize = wave_size,
+        };
+        const VkPipelineShaderStageCreateInfo stage_ci{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &subgroup_size_ci,
+            .flags = 0,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = *shader,
+            .pName = "main",
+            .pSpecializationInfo = nullptr,
+        };
+
+        vk::Pipeline pipeline;
+        try {
+            pipeline = logical.CreateComputePipeline({
+                .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .stage = stage_ci,
+                .layout = *pipeline_layout,
+                .basePipelineHandle = VK_NULL_HANDLE,
+                .basePipelineIndex = -1,
+            });
+        } catch (const vk::Exception& exception) {
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE PROBE Wave{} pipeline rejected: {}", wave_size,
+                     exception.what());
+            return false;
+        }
+
+        auto command_buffers = command_pool.Allocate(1);
+        vk::CommandBuffer command_buffer{command_buffers[0], dld};
+        command_buffer.Begin({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = nullptr,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            .pInheritanceInfo = nullptr,
+        });
+        command_buffer.FillBuffer(*probe_buffer, 0, ProbeBytes, 0);
+        const VkMemoryBarrier clear_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        };
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       clear_barrier);
+        command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
+        command_buffer.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
+                                          descriptor_set, {});
+        command_buffer.Dispatch(1, 1, 1);
+        const VkMemoryBarrier host_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        };
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       VK_PIPELINE_STAGE_HOST_BIT, 0, host_barrier);
+        command_buffer.End();
+
+        auto fence = logical.CreateFence({
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+        });
+        const VkCommandBuffer raw_command = *command_buffer;
+        const VkSubmitInfo submit_info{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphores = nullptr,
+            .pWaitDstStageMask = nullptr,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &raw_command,
+            .signalSemaphoreCount = 0,
+            .pSignalSemaphores = nullptr,
+        };
+        if (graphics_queue.Submit(submit_info, *fence) != VK_SUCCESS ||
+            fence.Wait(ProbeTimeoutNs) != VK_SUCCESS) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE Wave{} dispatch timed out", wave_size);
+            return false;
+        }
+
+        const u32 subgroup_size = output[0];
+        const u32 elected_subgroups = output[1];
+        const u32 invocation_count = output[2];
+        const u32 expected_subgroups = 64U / wave_size;
+        const bool valid = subgroup_size == wave_size &&
+                           elected_subgroups == expected_subgroups &&
+                           invocation_count == 64U;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE Wave{} result={} subgroup_size={} elected={} invocations={}",
+                 wave_size, valid ? "validated" : "failed", subgroup_size,
+                 elected_subgroups, invocation_count);
+        return valid;
+    };
+
+    xclipse.wave32_validated = run_wave_probe(32);
+    xclipse.wave64_validated = run_wave_probe(64);
+    xclipse.allowed_wave_mask = (xclipse.wave32_validated ? 0x1U : 0U) |
+                                (xclipse.wave64_validated ? 0x2U : 0U);
+
+    // Preserve Samsung's validated default wave when both forced modes work. Do not force a
+    // different wave without performance evidence.
+    if (caps.subgroup_size == 32 && xclipse.wave32_validated) {
+        xclipse.preferred_compute_wave = 32;
+    } else if (caps.subgroup_size == 64 && xclipse.wave64_validated) {
+        xclipse.preferred_compute_wave = 64;
+    } else if (xclipse.wave32_validated != xclipse.wave64_validated) {
+        xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
+    } else {
+        xclipse.preferred_compute_wave = 0;
+    }
+
+    if (xclipse.allowed_wave_mask != 0) {
+        caps.required_subgroup_size = CapabilityState::Validated;
+    }
+    memory.Unmap();
+}
+
 void Device::RunXclipseValidationProbes() {
     if (!device_policy.xclipse.detected || !Settings::values.xclipse_validation_probes.GetValue()) {
         UpdateXclipseBcnProfile();
@@ -766,6 +1045,8 @@ void Device::RunXclipseValidationProbes() {
                         exception.what());
         }
     }
+
+    RunXclipseSubgroupValidationProbes();
 
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
