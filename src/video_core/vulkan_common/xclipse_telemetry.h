@@ -38,6 +38,14 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_bytes{};
     u64 descriptor_buffer_wraps{};
     u64 descriptor_stalls{};
+    u64 descriptor_frame_waits{};
+    u64 descriptor_buffer_pipelines{};
+    u64 push_descriptor_pipelines{};
+    u64 descriptor_set_pipelines{};
+    u64 descriptor_set_updates{};
+    u64 push_descriptor_updates{};
+    u64 descriptor_buffer_writes{};
+    u64 descriptor_payload_reuses{};
 
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
@@ -66,6 +74,10 @@ public:
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
+    void RecordDescriptorFrameWait() noexcept;
+    void RecordDescriptorBackend(bool descriptor_buffer, bool push_descriptor) noexcept;
+    void RecordDescriptorUpdate(bool descriptor_buffer, bool push_descriptor) noexcept;
+    void RecordDescriptorPayloadReuse() noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
 
@@ -102,6 +114,14 @@ private:
     std::atomic<u64> descriptor_bytes{};
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
+    std::atomic<u64> descriptor_frame_waits{};
+    std::atomic<u64> descriptor_buffer_pipelines{};
+    std::atomic<u64> push_descriptor_pipelines{};
+    std::atomic<u64> descriptor_set_pipelines{};
+    std::atomic<u64> descriptor_set_updates{};
+    std::atomic<u64> push_descriptor_updates{};
+    std::atomic<u64> descriptor_buffer_writes{};
+    std::atomic<u64> descriptor_payload_reuses{};
 
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
