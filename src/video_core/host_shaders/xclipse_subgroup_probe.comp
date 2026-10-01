@@ -1,0 +1,32 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_quad : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0, std430) buffer ProbeOutput {
+    uint data[];
+} output_buffer;
+
+void main() {
+    uint invocation = gl_LocalInvocationIndex;
+    uint base = invocation * 6u;
+
+    uvec4 ballot = subgroupBallot(true);
+    uint ballot_count =
+        bitCount(ballot.x) + bitCount(ballot.y) + bitCount(ballot.z) + bitCount(ballot.w);
+
+    output_buffer.data[base + 0u] = gl_SubgroupSize;
+    output_buffer.data[base + 1u] = subgroupAdd(1u);
+    output_buffer.data[base + 2u] = ballot_count;
+    output_buffer.data[base + 3u] = subgroupShuffle(gl_SubgroupInvocationID, 0u);
+    output_buffer.data[base + 4u] = subgroupQuadSwapHorizontal(gl_SubgroupInvocationID);
+    output_buffer.data[base + 5u] = gl_SubgroupInvocationID;
+}
