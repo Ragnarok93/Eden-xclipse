@@ -651,6 +651,8 @@
     <string name="patch_old_qcom_drivers_description">Override automatic BCn texture format detection on Adreno GPUs. Normally auto-detected based on Android version (enabled on API 28+).</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy</string>
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
+    <string name="xclipse_narrow_upload_barrier">Xclipse Narrow Upload Barrier</string>
+    <string name="xclipse_narrow_upload_barrier_description">Use a graphics/compute/transfer dependency after the upload command buffer instead of ALL_COMMANDS on Xclipse. Disable for synchronization A/B testing.</string>
     <string name="xclipse_gpu_bcn_decode">Xclipse GPU BCn Decoder</string>
     <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="fastmem">Fastmem</string>
