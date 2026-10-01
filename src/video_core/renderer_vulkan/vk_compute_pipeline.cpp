@@ -80,6 +80,11 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
         }
     }
 
+    if (descriptor_set_layout) {
+        device.GetXclipseTelemetry().RecordDescriptorBackend(uses_descriptor_buffer,
+                                                             uses_push_descriptor);
+    }
+
     auto func{[this, shader_notify, pipeline_statistics] {
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
