@@ -94,6 +94,8 @@ public:
 
     BCDecoderPass* BcnDecoderPassFor(PixelFormat format) noexcept;
 
+    BPTCDecoderPass* BptcDecoderPassFor(PixelFormat format) noexcept;
+
     bool CanUploadMSAA() const noexcept {
         return true;
     }
@@ -159,6 +161,8 @@ public:
     RenderPassCache& render_pass_cache;
     std::optional<ASTCDecoderPass> astc_decoder_pass;
     std::array<std::optional<BCDecoderPass>, 4> bcn_decoder_passes;
+    std::optional<BPTCDecoderPass> bptc_bc6_decoder_pass;
+    std::optional<BPTCDecoderPass> bptc_bc7_decoder_pass;
 
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;
     const Settings::ResolutionScalingInfo& resolution;
