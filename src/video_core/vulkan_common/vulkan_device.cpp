@@ -1539,8 +1539,8 @@ void Device::LogDevicePolicy() const {
              pipeline_uuid, device_policy.policy_hash);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
-             "wave32=unvalidated wave64=unvalidated sync2={} timeline={} "
-             "descriptor_buffer={} sparse={}",
+             "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
+             "sync2={} timeline={} descriptor_buffer={} sparse={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
                         BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
              bcn_state({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB}),
@@ -1549,8 +1549,18 @@ void Device::LogDevicePolicy() const {
              bcn_state({BcnFormat::BC5_UNORM, BcnFormat::BC5_SNORM}),
              bcn_state({BcnFormat::BC6H_UFLOAT, BcnFormat::BC6H_SFLOAT}),
              bcn_state({BcnFormat::BC7_UNORM, BcnFormat::BC7_SRGB}),
+             xclipse.wave32_validated ? "validated" : "unvalidated",
+             xclipse.wave64_validated ? "validated" : "unvalidated",
+             xclipse.allowed_wave_mask, xclipse.preferred_compute_wave,
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
              CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding));
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE SUBGROUP required_size={} ballot={} shuffle={} arithmetic={} quad={}",
+             CapabilityStateName(caps.required_subgroup_size),
+             CapabilityStateName(caps.subgroup_ballot),
+             CapabilityStateName(caps.subgroup_shuffle),
+             CapabilityStateName(caps.subgroup_arithmetic),
+             CapabilityStateName(caps.subgroup_quad));
 }
 
 void Device::LogXclipseTelemetry() const {
