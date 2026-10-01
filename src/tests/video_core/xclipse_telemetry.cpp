@@ -38,6 +38,12 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordDescriptorBufferAllocation(96);
     telemetry.RecordDescriptorBufferWrap(false);
     telemetry.RecordDescriptorBufferWrap(true);
+    telemetry.RecordColorShaderBlit();
+    telemetry.RecordDepthStencilBlit(true);
+    telemetry.RecordDepthStencilBlit(false);
+    telemetry.RecordNativeResolve();
+    telemetry.RecordImageCopy(true);
+    telemetry.RecordImageCopy(false);
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE(snapshot.enabled);
@@ -62,4 +68,10 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.descriptor_bytes == 96);
     REQUIRE(snapshot.descriptor_buffer_wraps == 2);
     REQUIRE(snapshot.descriptor_stalls == 1);
+    REQUIRE(snapshot.color_shader_blits == 1);
+    REQUIRE(snapshot.depth_stencil_native_blits == 1);
+    REQUIRE(snapshot.depth_stencil_shader_blits == 1);
+    REQUIRE(snapshot.native_resolves == 1);
+    REQUIRE(snapshot.native_image_copies == 1);
+    REQUIRE(snapshot.reinterpret_copies == 1);
 }
