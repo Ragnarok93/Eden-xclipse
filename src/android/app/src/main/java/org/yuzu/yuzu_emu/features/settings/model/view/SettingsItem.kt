@@ -1016,6 +1016,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_DESCRIPTOR_BUFFER_EXPERIMENTAL,
+                    titleId = R.string.xclipse_descriptor_buffer_experimental,
+                    descriptionId = R.string.xclipse_descriptor_buffer_experimental_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.USE_AUTO_STUB,
                     titleId = R.string.use_auto_stub,
                     descriptionId = R.string.use_auto_stub_description
