@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+// Validate required Wave32/Wave64 execution without coupling wave validity to any
+// optional subgroup operation. A 64-lane workgroup gives deterministic lane
+// multiplicities for both Wave32 (2 groups) and Wave64 (1 group).
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0, std430) buffer ProbeOutput {
+    uint data[];
+} output_buffer;
+
+void main() {
+    const uint invocation = gl_LocalInvocationIndex;
+    const uint base = invocation * 2u;
+    output_buffer.data[base + 0u] = gl_SubgroupSize;
+    output_buffer.data[base + 1u] = gl_SubgroupInvocationID;
+}

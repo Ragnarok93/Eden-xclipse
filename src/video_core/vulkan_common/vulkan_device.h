@@ -403,7 +403,11 @@ FN_MAX_LIMIT_LIST
         return is_optimal_astc_supported;
     }
 
-    /// Returns true if BCn is natively supported.
+    /// Returns true if the host can use the requested BC format on Eden's native sampled path.
+    /// Xclipse requires operation-level validation; other devices preserve the upstream feature gate.
+    bool IsOptimalBcnSupported(VkFormat format) const;
+
+    /// Coarse compatibility query retained for non-format-specific callers.
     bool IsOptimalBcnSupported() const {
         return features.features.textureCompressionBC;
     }
@@ -1124,6 +1128,9 @@ private:
 
     /// Runs bounded device-level probes before pipeline caches are loaded.
     void RunXclipseValidationProbes();
+
+    /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
+    void RunXclipseSubgroupValidationProbes();
 
     /// Recomputes family-level BCn native readiness from exact per-format state.
     void UpdateXclipseBcnProfile();

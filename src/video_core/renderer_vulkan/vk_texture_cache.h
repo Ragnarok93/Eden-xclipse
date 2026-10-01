@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <array>
 #include <span>
 
 #include "video_core/texture_cache/texture_cache_base.h"
@@ -89,9 +90,11 @@ public:
 
     void ConvertImage(Framebuffer* dst, ImageView& dst_view, ImageView& src_view);
 
-    bool CanAccelerateImageUpload(Image&) const noexcept {
-        return false;
-    }
+    bool CanAccelerateImageUpload(Image& image) const noexcept;
+
+    BCDecoderPass* BcnDecoderPassFor(PixelFormat format) noexcept;
+
+    BPTCDecoderPass* BptcDecoderPassFor(PixelFormat format) noexcept;
 
     bool CanUploadMSAA() const noexcept {
         return true;
@@ -157,6 +160,9 @@ public:
     BlitImageHelper& blit_image_helper;
     RenderPassCache& render_pass_cache;
     std::optional<ASTCDecoderPass> astc_decoder_pass;
+    std::array<std::optional<BCDecoderPass>, 4> bcn_decoder_passes;
+    std::optional<BPTCDecoderPass> bptc_bc6_decoder_pass;
+    std::optional<BPTCDecoderPass> bptc_bc7_decoder_pass;
 
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;
     const Settings::ResolutionScalingInfo& resolution;

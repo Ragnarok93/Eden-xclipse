@@ -137,6 +137,47 @@ private:
     MemoryAllocator& memory_allocator;
 };
 
+class BCDecoderPass final : public ComputePass {
+public:
+    explicit BCDecoderPass(const Device& device_, Scheduler& scheduler_,
+                           DescriptorPool& descriptor_pool_,
+                           ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
+                           VideoCore::Surface::PixelFormat format_);
+    ~BCDecoderPass();
+
+    void Assemble(Image& image, const StagingBufferRef& map,
+                  std::span<const VideoCommon::SwizzleParameters> swizzles);
+
+private:
+    Scheduler& scheduler;
+    ComputePassDescriptorQueue& compute_pass_descriptor_queue;
+    VideoCore::Surface::PixelFormat format;
+};
+
+class BPTCDecoderPass final : public ComputePass {
+public:
+    enum class Kind {
+        BC6H,
+        BC7,
+    };
+
+    explicit BPTCDecoderPass(const Device& device_, Scheduler& scheduler_,
+                             DescriptorPool& descriptor_pool_,
+                             ComputePassDescriptorQueue& compute_pass_descriptor_queue_,
+                             Kind kind_);
+    ~BPTCDecoderPass();
+
+    void Assemble(Image& image, const StagingBufferRef& map,
+                  std::span<const VideoCommon::SwizzleParameters> swizzles);
+
+    [[nodiscard]] bool Supports(VideoCore::Surface::PixelFormat format) const noexcept;
+
+private:
+    Scheduler& scheduler;
+    ComputePassDescriptorQueue& compute_pass_descriptor_queue;
+    Kind kind;
+};
+
 class BlockLinearUnswizzle3DPass final : public ComputePass {
 public:
     explicit BlockLinearUnswizzle3DPass(const Device& device_, Scheduler& scheduler_,

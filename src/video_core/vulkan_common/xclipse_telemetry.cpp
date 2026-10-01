@@ -34,6 +34,12 @@ void XclipseTelemetry::RecordPipelineCreate(bool graphics, u64 compile_ns, bool 
     UpdateMax(pipeline_compile_ns_max, compile_ns);
 }
 
+void XclipseTelemetry::RecordPipelinePolicyViolations(u64 count) noexcept {
+    if (Enabled() && count != 0) {
+        pipeline_policy_violations.fetch_add(count, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2) noexcept {
     if (!Enabled()) {
         return;
@@ -89,6 +95,20 @@ void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordBcnGpuDecode(u64 bytes) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    bcn_gpu_decode_dispatches.fetch_add(1, std::memory_order_relaxed);
+    bcn_gpu_decode_bytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+
+void XclipseTelemetry::RecordBcnGpuDecodeFallback() noexcept {
+    if (Enabled()) {
+        bcn_gpu_decode_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
     return {
         .enabled = Enabled(),
@@ -100,6 +120,8 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .pipeline_cache_hits = pipeline_cache_hits.load(std::memory_order_relaxed),
         .pipeline_cache_misses = pipeline_cache_misses.load(std::memory_order_relaxed),
         .pipeline_failures = pipeline_failures.load(std::memory_order_relaxed),
+        .pipeline_policy_violations =
+            pipeline_policy_violations.load(std::memory_order_relaxed),
         .pipeline_compile_ns_total =
             pipeline_compile_ns_total.load(std::memory_order_relaxed),
         .pipeline_compile_ns_max = pipeline_compile_ns_max.load(std::memory_order_relaxed),
@@ -118,6 +140,11 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .descriptor_bytes = descriptor_bytes.load(std::memory_order_relaxed),
         .descriptor_buffer_wraps = descriptor_buffer_wraps.load(std::memory_order_relaxed),
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
+        .bcn_gpu_decode_dispatches =
+            bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
+        .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
+        .bcn_gpu_decode_fallbacks =
+            bcn_gpu_decode_fallbacks.load(std::memory_order_relaxed),
     };
 }
 
