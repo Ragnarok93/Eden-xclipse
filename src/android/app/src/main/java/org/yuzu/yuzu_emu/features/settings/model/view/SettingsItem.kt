@@ -1037,6 +1037,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_ASYNC_ASTC_DECODE,
+                    titleId = R.string.xclipse_async_astc_decode,
+                    descriptionId = R.string.xclipse_async_astc_decode_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
