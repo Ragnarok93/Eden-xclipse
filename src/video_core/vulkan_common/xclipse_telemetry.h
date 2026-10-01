@@ -30,6 +30,7 @@ struct XclipseTelemetrySnapshot {
     u64 scheduler_finishes{};
     u64 all_commands_barriers{};
     u64 transfer_consumer_barriers{};
+    u64 compute_consumer_barriers{};
 
     u64 descriptor_set_allocations{};
     u64 descriptor_buffer_allocations{};
@@ -55,6 +56,7 @@ public:
     void RecordSchedulerFinish() noexcept;
     void RecordAllCommandsBarrier() noexcept;
     void RecordTransferConsumerBarrier() noexcept;
+    void RecordComputeConsumerBarrier() noexcept;
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
@@ -84,6 +86,7 @@ private:
     std::atomic<u64> scheduler_finishes{};
     std::atomic<u64> all_commands_barriers{};
     std::atomic<u64> transfer_consumer_barriers{};
+    std::atomic<u64> compute_consumer_barriers{};
 
     std::atomic<u64> descriptor_set_allocations{};
     std::atomic<u64> descriptor_buffer_allocations{};
