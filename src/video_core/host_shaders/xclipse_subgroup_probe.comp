@@ -3,24 +3,31 @@
 
 #version 450
 #extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_quad : require
 
-// A 64-lane workgroup validates required Wave32/Wave64 behavior by checking both
-// gl_SubgroupSize and the number of subgroup-elected lanes after a real dispatch.
+// A 64-lane workgroup is dispatched once with required subgroup size 32 and once
+// with 64. Every invocation writes observable subgroup results for host validation.
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 0, std430) buffer ProbeOutput {
-    uint subgroup_size;
-    uint elected_subgroups;
-    uint invocation_count;
-    uint reserved;
-} output_data;
+    uint data[];
+} output_buffer;
 
 void main() {
-    if (gl_LocalInvocationIndex == 0u) {
-        output_data.subgroup_size = gl_SubgroupSize;
-    }
-    if (subgroupElect()) {
-        atomicAdd(output_data.elected_subgroups, 1u);
-    }
-    atomicAdd(output_data.invocation_count, 1u);
+    uint invocation = gl_LocalInvocationIndex;
+    uint base = invocation * 6u;
+
+    uvec4 ballot = subgroupBallot(true);
+    uint ballot_count =
+        bitCount(ballot.x) + bitCount(ballot.y) + bitCount(ballot.z) + bitCount(ballot.w);
+
+    output_buffer.data[base + 0u] = gl_SubgroupSize;
+    output_buffer.data[base + 1u] = subgroupAdd(1u);
+    output_buffer.data[base + 2u] = ballot_count;
+    output_buffer.data[base + 3u] = subgroupShuffle(gl_SubgroupInvocationID, 0u);
+    output_buffer.data[base + 4u] = subgroupQuadSwapHorizontal(gl_SubgroupInvocationID);
+    output_buffer.data[base + 5u] = gl_SubgroupInvocationID;
 }
