@@ -1523,6 +1523,7 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.RENDERER_PATCH_OLD_QCOM_DRIVERS.key)
             add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
             add(BooleanSetting.XCLIPSE_PRECISE_UPLOAD_BARRIERS.key)
+            add(BooleanSetting.XCLIPSE_PRECISE_MSAA_COPY_BARRIERS.key)
             add(BooleanSetting.XCLIPSE_GPU_BCN_DECODE.key)
             add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
 
