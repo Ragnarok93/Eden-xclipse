@@ -1391,6 +1391,25 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
     return (supported_usage & wanted_usage) == wanted_usage;
 }
 
+bool Device::IsOptimalBcnSupported(VkFormat format) const {
+    if (!device_policy.xclipse.detected) {
+        return features.features.textureCompressionBC &&
+               IsFormatSupported(format,
+                                 VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                     VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                     VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+                                     VK_FORMAT_FEATURE_TRANSFER_DST_BIT,
+                                 FormatType::Optimal);
+    }
+
+    const auto it = std::ranges::find(BCN_FORMATS, format);
+    if (it == BCN_FORMATS.end()) {
+        return false;
+    }
+    const std::size_t index = static_cast<std::size_t>(std::distance(BCN_FORMATS.begin(), it));
+    return SupportsValidatedNativeBcnPath(device_policy.capabilities.bcn[index]);
+}
+
 std::string Device::GetDriverName() const {
     return vk::GetDriverName(properties.driver);
 }
