@@ -513,6 +513,12 @@ FN_MAX_LIMIT_LIST
         return extensions.descriptor_buffer;
     }
 
+    /// Returns true if descriptor buffers are eligible for automatic pipeline use.
+    ///
+    /// Non-Xclipse devices preserve upstream behavior. Xclipse requires behavioral validation,
+    /// unless the explicit experimental override is enabled for A/B testing.
+    bool CanUseDescriptorBufferForPipelines() const noexcept;
+
     /// Returns the descriptor buffer properties of the device.
     const VkPhysicalDeviceDescriptorBufferPropertiesEXT& DescriptorBufferProperties() const {
         return properties.descriptor_buffer;
