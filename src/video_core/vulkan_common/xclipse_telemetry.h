@@ -47,6 +47,8 @@ struct XclipseTelemetrySnapshot {
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
     u64 bcn_gpu_decode_fallbacks{};
+    u64 astc_async_decodes{};
+    u64 astc_forced_finishes{};
 };
 
 class XclipseTelemetry {
@@ -74,6 +76,7 @@ public:
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
+    void RecordAstcDecode(bool async) noexcept;
 
     [[nodiscard]] XclipseTelemetrySnapshot Snapshot() const noexcept;
 
@@ -117,6 +120,8 @@ private:
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
     std::atomic<u64> bcn_gpu_decode_fallbacks{};
+    std::atomic<u64> astc_async_decodes{};
+    std::atomic<u64> astc_forced_finishes{};
 };
 
 } // namespace Vulkan
