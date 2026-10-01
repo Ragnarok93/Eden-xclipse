@@ -1,0 +1,49 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "video_core/vulkan_common/vulkan_device_profile.h"
+
+TEST_CASE("VulkanDeviceProfile: Xclipse detection requires device-name evidence", "[video_core]") {
+    Vulkan::VulkanDeviceIdentity xclipse{};
+    xclipse.device_name = "Samsung Xclipse 940";
+    xclipse.vendor_id = 0x144D;
+
+    const auto profile = Vulkan::DetectXclipseHardware(xclipse);
+    REQUIRE(profile.detected);
+    REQUIRE(profile.model == 940);
+
+    Vulkan::VulkanDeviceIdentity vendor_only{};
+    vendor_only.device_name = "Mali-G715";
+    vendor_only.vendor_id = 0x144D;
+    REQUIRE_FALSE(Vulkan::DetectXclipseHardware(vendor_only).detected);
+}
+
+TEST_CASE("VulkanDeviceProfile: Xclipse name matching is case insensitive", "[video_core]") {
+    Vulkan::VulkanDeviceIdentity identity{};
+    identity.device_name = "Samsung xClIpSe-940";
+
+    const auto profile = Vulkan::DetectXclipseHardware(identity);
+    REQUIRE(profile.detected);
+    REQUIRE(profile.model == 940);
+}
+
+TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability identity", "[video_core]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.identity.device_name = "Samsung Xclipse 940";
+    policy.identity.vendor_id = 0x144D;
+    policy.identity.driver_version = 100;
+    policy.capabilities.timeline = Vulkan::CapabilityState::Advertised;
+    policy.capabilities.synchronization2 = Vulkan::CapabilityState::Advertised;
+    policy.xclipse = Vulkan::DetectXclipseHardware(policy.identity);
+
+    const auto baseline = Vulkan::ComputeVulkanPolicyHash(policy);
+
+    policy.identity.driver_version = 101;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+
+    policy.identity.driver_version = 100;
+    policy.capabilities.timeline = Vulkan::CapabilityState::Validated;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+}
