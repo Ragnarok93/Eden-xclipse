@@ -18,6 +18,7 @@ struct XclipseTelemetrySnapshot {
     u64 pipeline_cache_hits{};
     u64 pipeline_cache_misses{};
     u64 pipeline_failures{};
+    u64 pipeline_policy_violations{};
     u64 pipeline_compile_ns_total{};
     u64 pipeline_compile_ns_max{};
 
@@ -35,6 +36,10 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_bytes{};
     u64 descriptor_buffer_wraps{};
     u64 descriptor_stalls{};
+
+    u64 bcn_gpu_decode_dispatches{};
+    u64 bcn_gpu_decode_bytes{};
+    u64 bcn_gpu_decode_fallbacks{};
 };
 
 class XclipseTelemetry {
@@ -49,6 +54,7 @@ public:
 
     void RecordPipelineCacheLookup(bool hit) noexcept;
     void RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept;
+    void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2) noexcept;
     void RecordGpuWait(bool timeline) noexcept;
     void RecordSchedulerFinish() noexcept;
@@ -56,6 +62,8 @@ public:
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
+    void RecordBcnGpuDecode(u64 bytes) noexcept;
+    void RecordBcnGpuDecodeFallback() noexcept;
 
     [[nodiscard]] XclipseTelemetrySnapshot Snapshot() const noexcept;
 
@@ -70,6 +78,7 @@ private:
     std::atomic<u64> pipeline_cache_hits{};
     std::atomic<u64> pipeline_cache_misses{};
     std::atomic<u64> pipeline_failures{};
+    std::atomic<u64> pipeline_policy_violations{};
     std::atomic<u64> pipeline_compile_ns_total{};
     std::atomic<u64> pipeline_compile_ns_max{};
 
@@ -87,6 +96,10 @@ private:
     std::atomic<u64> descriptor_bytes{};
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
+
+    std::atomic<u64> bcn_gpu_decode_dispatches{};
+    std::atomic<u64> bcn_gpu_decode_bytes{};
+    std::atomic<u64> bcn_gpu_decode_fallbacks{};
 };
 
 } // namespace Vulkan
