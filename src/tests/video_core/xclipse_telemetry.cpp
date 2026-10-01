@@ -38,6 +38,9 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordDescriptorBufferAllocation(96);
     telemetry.RecordDescriptorBufferWrap(false);
     telemetry.RecordDescriptorBufferWrap(true);
+    telemetry.RecordDescriptorBackend(true, false);
+    telemetry.RecordDescriptorBackend(false, true);
+    telemetry.RecordDescriptorBackend(false, false);
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE(snapshot.enabled);
@@ -62,4 +65,7 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.descriptor_bytes == 96);
     REQUIRE(snapshot.descriptor_buffer_wraps == 2);
     REQUIRE(snapshot.descriptor_stalls == 1);
+    REQUIRE(snapshot.descriptor_buffer_pipelines == 1);
+    REQUIRE(snapshot.push_descriptor_pipelines == 1);
+    REQUIRE(snapshot.descriptor_set_pipelines == 1);
 }
