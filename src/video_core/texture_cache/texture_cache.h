@@ -187,11 +187,17 @@ void TextureCache<P>::RunGarbageCollector(u32 memory_pressure_level) {
         return false;
     };
 
+    const auto SweepOldImages = [&] {
+        const u64 destroy_before =
+            frame_tick > ticks_to_destroy ? frame_tick - ticks_to_destroy : 0;
+        lru_cache.ForEachItemBelow(destroy_before, Cleanup);
+    };
+
     Configure(false);
-    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    SweepOldImages();
     if (total_used_memory >= critical_memory || pressure_critical) {
         Configure(true);
-        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+        SweepOldImages();
     }
 }
 
