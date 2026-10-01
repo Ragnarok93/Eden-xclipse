@@ -107,8 +107,10 @@ DescriptorBufferRing::Allocation DescriptorBufferRing::Allocate(Scheduler& sched
     }
     if (cursor + needed > chunk_capacity) {
         if (chunk_cursor + 1 < chunks_per_frame) {
+            device.GetXclipseTelemetry().RecordDescriptorBufferWrap(false);
             ++chunk_cursor;
         } else {
+            device.GetXclipseTelemetry().RecordDescriptorBufferWrap(true);
             LOG_DEBUG(Render_Vulkan, "Descriptor buffer frame exhausted, stalling on the GPU");
             scheduler.Finish();
             chunk_cursor = 0;
@@ -120,6 +122,7 @@ DescriptorBufferRing::Allocation DescriptorBufferRing::Allocate(Scheduler& sched
     const VkDeviceSize offset{cursor};
     cursor += needed;
     frame_ticks[frame_index] = scheduler.CurrentTick();
+    device.GetXclipseTelemetry().RecordDescriptorBufferAllocation(static_cast<u64>(needed));
     return Allocation{
         .host = chunk_hosts[chunk] + offset,
         .offset = offset,
