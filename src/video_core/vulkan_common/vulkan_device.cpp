@@ -1843,6 +1843,23 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
     return (supported_usage & wanted_usage) == wanted_usage;
 }
 
+bool Device::AllowsDescriptorBufferBackend() const {
+    if (!extensions.descriptor_buffer || features.descriptor_buffer.descriptorBuffer == VK_FALSE ||
+        !extensions.buffer_device_address || features.buffer_device_address.bufferDeviceAddress == VK_FALSE) {
+        return false;
+    }
+    if (!device_policy.xclipse.detected) {
+        return true;
+    }
+
+    const CapabilityState state = device_policy.capabilities.descriptor_buffer;
+    if (state == CapabilityState::Validated) {
+        return true;
+    }
+    return state == CapabilityState::Advertised &&
+           Settings::values.xclipse_descriptor_buffer_experimental.GetValue();
+}
+
 bool Device::IsOptimalBcnSupported(VkFormat format) const {
     if (!device_policy.xclipse.detected) {
         return features.features.textureCompressionBC;
