@@ -323,7 +323,7 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         }
         const bool gpu_rg_decode_candidate =
             device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
-            !device.HasBrokenCompute() && device.IsFormatlessImageWriteSupported() &&
+            !device.HasBrokenCompute() &&
             (pixel_format == PixelFormat::BC4_UNORM || pixel_format == PixelFormat::BC4_SNORM ||
              pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM);
         if (gpu_rg_decode_candidate &&
