@@ -59,8 +59,8 @@ TEST_CASE("Xclipse pipeline policy detects WinXclipse defensive cases", "[video_
         .attachmentCount = 0,
         .pAttachments = reinterpret_cast<const VkPipelineColorBlendAttachmentState*>(1),
     };
-    const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo required{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+    const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT required{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
         .requiredSubgroupSize = 128,
     };
     const VkPipelineShaderStageCreateInfo stage{
