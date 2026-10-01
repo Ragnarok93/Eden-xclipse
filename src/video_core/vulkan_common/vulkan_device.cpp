@@ -607,16 +607,23 @@ void Device::RunXclipseSubgroupValidationProbes() {
 
     const bool compute_stage_supported =
         (caps.subgroup_supported_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
-    const bool subgroup_basic_supported =
-        (caps.subgroup_supported_operations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0;
+    constexpr VkSubgroupFeatureFlags RequiredOperations =
+        VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
+        VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT |
+        VK_SUBGROUP_FEATURE_QUAD_BIT;
+    const bool subgroup_operations_supported =
+        (caps.subgroup_supported_operations & RequiredOperations) == RequiredOperations;
     const bool required_size_supported =
         caps.required_subgroup_size != CapabilityState::Unsupported &&
         (caps.required_subgroup_size_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
-    if (!compute_stage_supported || !subgroup_basic_supported || !required_size_supported) {
+    if (!compute_stage_supported || !subgroup_operations_supported || !required_size_supported) {
         return;
     }
 
-    constexpr VkDeviceSize ProbeBytes = sizeof(u32) * 4;
+    constexpr u32 ProbeInvocations = 64;
+    constexpr u32 ProbeWordsPerInvocation = 6;
+    constexpr VkDeviceSize ProbeBytes =
+        sizeof(u32) * ProbeInvocations * ProbeWordsPerInvocation;
     constexpr u64 ProbeTimeoutNs = 1'000'000'000ULL;
 
     VkBuffer raw_buffer = VK_NULL_HANDLE;
@@ -742,8 +749,8 @@ void Device::RunXclipseSubgroupValidationProbes() {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .codeSize = XCLIPSE_SUBGROUP_PROBE_COMP_SPV.size() * sizeof(u32),
-        .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV.data(),
+        .codeSize = sizeof(XCLIPSE_SUBGROUP_PROBE_COMP_SPV),
+        .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV,
     });
 
     const VkCommandPoolCreateInfo command_pool_ci{
@@ -848,17 +855,49 @@ void Device::RunXclipseSubgroupValidationProbes() {
             return false;
         }
 
-        const u32 subgroup_size = output[0];
-        const u32 elected_subgroups = output[1];
-        const u32 invocation_count = output[2];
-        const u32 expected_subgroups = 64U / wave_size;
-        const bool valid = subgroup_size == wave_size &&
-                           elected_subgroups == expected_subgroups &&
-                           invocation_count == 64U;
+        bool size_valid = true;
+        bool arithmetic_valid = true;
+        bool ballot_valid = true;
+        bool shuffle_valid = true;
+        bool quad_valid = true;
+        bool lane_ids_valid = true;
+        std::array<u32, ProbeInvocations> lane_counts{};
+
+        for (u32 invocation = 0; invocation < ProbeInvocations; ++invocation) {
+            const u32 base = invocation * ProbeWordsPerInvocation;
+            const u32 subgroup_size = output[base + 0];
+            const u32 subgroup_add = output[base + 1];
+            const u32 ballot_count = output[base + 2];
+            const u32 shuffle_zero = output[base + 3];
+            const u32 quad_swap = output[base + 4];
+            const u32 lane = output[base + 5];
+
+            size_valid &= subgroup_size == wave_size;
+            arithmetic_valid &= subgroup_add == wave_size;
+            ballot_valid &= ballot_count == wave_size;
+            shuffle_valid &= shuffle_zero == 0;
+            lane_ids_valid &= lane < wave_size;
+            if (lane < lane_counts.size()) {
+                ++lane_counts[lane];
+                quad_valid &= quad_swap == (lane ^ 1U);
+            } else {
+                quad_valid = false;
+            }
+        }
+
+        const u32 expected_lane_occurrences = ProbeInvocations / wave_size;
+        for (u32 lane = 0; lane < ProbeInvocations; ++lane) {
+            const u32 expected = lane < wave_size ? expected_lane_occurrences : 0U;
+            lane_ids_valid &= lane_counts[lane] == expected;
+        }
+
+        const bool valid = size_valid && arithmetic_valid && ballot_valid &&
+                           shuffle_valid && quad_valid && lane_ids_valid;
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE PROBE Wave{} result={} subgroup_size={} elected={} invocations={}",
-                 wave_size, valid ? "validated" : "failed", subgroup_size,
-                 elected_subgroups, invocation_count);
+                 "XCLIPSE PROBE Wave{} result={} size={} arithmetic={} ballot={} shuffle={} "
+                 "quad={} lane_ids={}",
+                 wave_size, valid ? "validated" : "failed", size_valid, arithmetic_valid,
+                 ballot_valid, shuffle_valid, quad_valid, lane_ids_valid);
         return valid;
     };
 
@@ -867,13 +906,10 @@ void Device::RunXclipseSubgroupValidationProbes() {
     xclipse.allowed_wave_mask = (xclipse.wave32_validated ? 0x1U : 0U) |
                                 (xclipse.wave64_validated ? 0x2U : 0U);
 
-    // Preserve Samsung's validated default wave when both forced modes work. Do not force a
-    // different wave without performance evidence.
-    if (caps.subgroup_size == 32 && xclipse.wave32_validated) {
-        xclipse.preferred_compute_wave = 32;
-    } else if (caps.subgroup_size == 64 && xclipse.wave64_validated) {
-        xclipse.preferred_compute_wave = 64;
-    } else if (xclipse.wave32_validated != xclipse.wave64_validated) {
+    // Do not choose between two correct wave modes from family assumptions or Samsung's
+    // default alone. A nonzero preference is only safe when exactly one forced mode validates;
+    // when both work, benchmark data must choose.
+    if (xclipse.wave32_validated != xclipse.wave64_validated) {
         xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
     } else {
         xclipse.preferred_compute_wave = 0;
@@ -881,7 +917,12 @@ void Device::RunXclipseSubgroupValidationProbes() {
 
     if (xclipse.allowed_wave_mask != 0) {
         caps.required_subgroup_size = CapabilityState::Validated;
+        caps.subgroup_ballot = CapabilityState::Validated;
+        caps.subgroup_shuffle = CapabilityState::Validated;
+        caps.subgroup_arithmetic = CapabilityState::Validated;
+        caps.subgroup_quad = CapabilityState::Validated;
     }
+    device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
 
 void Device::RunXclipseValidationProbes() {
