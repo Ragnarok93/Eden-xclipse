@@ -122,6 +122,11 @@ struct VulkanDevicePolicy {
     VulkanDeviceIdentity identity;
     VulkanCapabilitySnapshot capabilities;
     XclipseHardwareProfile xclipse;
+
+    // Behavioral policy inputs are hashed alongside hardware/driver capability identity so
+    // incompatible Vulkan pipeline-cache blobs cannot cross policy modes.
+    bool allow_unvalidated_descriptor_buffer{};
+
     std::uint64_t policy_hash{};
 };
 
