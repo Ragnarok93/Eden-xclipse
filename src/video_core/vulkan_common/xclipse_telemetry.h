@@ -18,6 +18,7 @@ struct XclipseTelemetrySnapshot {
     u64 pipeline_cache_hits{};
     u64 pipeline_cache_misses{};
     u64 pipeline_failures{};
+    u64 pipeline_policy_violations{};
     u64 pipeline_compile_ns_total{};
     u64 pipeline_compile_ns_max{};
 
@@ -53,6 +54,7 @@ public:
 
     void RecordPipelineCacheLookup(bool hit) noexcept;
     void RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept;
+    void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2) noexcept;
     void RecordGpuWait(bool timeline) noexcept;
     void RecordSchedulerFinish() noexcept;
@@ -76,6 +78,7 @@ private:
     std::atomic<u64> pipeline_cache_hits{};
     std::atomic<u64> pipeline_cache_misses{};
     std::atomic<u64> pipeline_failures{};
+    std::atomic<u64> pipeline_policy_violations{};
     std::atomic<u64> pipeline_compile_ns_total{};
     std::atomic<u64> pipeline_compile_ns_max{};
 
