@@ -103,6 +103,7 @@ DescriptorBufferRing::Allocation DescriptorBufferRing::Allocate(Scheduler& sched
     const VkDeviceSize needed{Common::AlignUp(size, alignment)};
     if (frame_reused) {
         frame_reused = false;
+        device.GetXclipseTelemetry().RecordDescriptorFrameWait();
         scheduler.Wait(frame_ticks[frame_index]);
     }
     if (cursor + needed > chunk_capacity) {
