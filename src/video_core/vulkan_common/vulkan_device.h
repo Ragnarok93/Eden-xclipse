@@ -288,6 +288,10 @@ public:
         return device_policy.xclipse.detected;
     }
 
+    bool UseXclipseSyncPolicy() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_sync_policy;
+    }
+
     XclipseTelemetry& GetXclipseTelemetry() const noexcept {
         return xclipse_telemetry;
     }
