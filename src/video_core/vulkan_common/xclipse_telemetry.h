@@ -38,6 +38,10 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_buffer_pipelines{};
     u64 push_descriptor_pipelines{};
     u64 descriptor_set_pipelines{};
+    u64 descriptor_set_updates{};
+    u64 push_descriptor_updates{};
+    u64 descriptor_buffer_writes{};
+    u64 descriptor_payload_reuses{};
 };
 
 class XclipseTelemetry {
@@ -60,6 +64,8 @@ public:
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordDescriptorBackend(bool descriptor_buffer, bool push_descriptor) noexcept;
+    void RecordDescriptorUpdate(bool descriptor_buffer, bool push_descriptor) noexcept;
+    void RecordDescriptorPayloadReuse() noexcept;
 
     [[nodiscard]] XclipseTelemetrySnapshot Snapshot() const noexcept;
 
@@ -94,6 +100,10 @@ private:
     std::atomic<u64> descriptor_buffer_pipelines{};
     std::atomic<u64> push_descriptor_pipelines{};
     std::atomic<u64> descriptor_set_pipelines{};
+    std::atomic<u64> descriptor_set_updates{};
+    std::atomic<u64> push_descriptor_updates{};
+    std::atomic<u64> descriptor_buffer_writes{};
+    std::atomic<u64> descriptor_payload_reuses{};
 };
 
 } // namespace Vulkan
