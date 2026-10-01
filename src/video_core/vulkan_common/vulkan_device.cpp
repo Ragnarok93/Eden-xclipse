@@ -1114,7 +1114,9 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
              CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding));
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE POLICY descriptor_buffer_auto={} descriptor_buffer_experimental={}",
+             "XCLIPSE POLICY descriptor_buffer_validated={} descriptor_buffer_auto={} "
+             "descriptor_buffer_experimental={}",
+             device_policy.capabilities.descriptor_buffer == CapabilityState::Validated,
              CanUseDescriptorBufferForPipelines(),
              device_policy.allow_unvalidated_descriptor_buffer);
 }
@@ -1693,8 +1695,12 @@ bool Device::CanUseDescriptorBufferForPipelines() const noexcept {
     if (!device_policy.xclipse.detected) {
         return true;
     }
-    return device_policy.capabilities.descriptor_buffer == CapabilityState::Validated ||
-           device_policy.allow_unvalidated_descriptor_buffer;
+
+    // A successful execution probe establishes correctness, not that descriptor buffers are
+    // faster than push descriptors or descriptor sets on Xclipse 940. Keep Auto on Eden's
+    // lower-churn fallback path until game telemetry/A-B measurements justify promotion.
+    // The explicit experimental switch remains the opt-in path for validated/unvalidated testing.
+    return device_policy.allow_unvalidated_descriptor_buffer;
 }
 
 std::string Device::GetDriverName() const {
