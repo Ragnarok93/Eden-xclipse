@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
@@ -78,6 +79,11 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             descriptor_allocator =
                 descriptor_pool.Allocator(device, scheduler, *descriptor_set_layout, info);
         }
+    }
+
+    if (num_descriptor_entries != 0) {
+        device.GetXclipseTelemetry().RecordDescriptorBackend(uses_push_descriptor,
+                                                             uses_descriptor_buffer);
     }
 
     auto func{[this, shader_notify, pipeline_statistics] {
@@ -289,15 +295,32 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     VkDeviceSize descriptor_buffer_offset{};
     u32 descriptor_buffer_chunk{};
     if (uses_descriptor_buffer) {
-        const DescriptorBufferRing::Allocation alloc{
-            descriptor_buffer_ring.Allocate(scheduler, descriptor_buffer_layout.size)};
-        if (!alloc.host) {
-            LOG_DEBUG(Render_Vulkan, "Failed to reserve descriptor memory, skipping dispatch");
-            return false;
+        const bool reuse_allocation =
+            last_descriptor_buffer_generation == descriptor_buffer_ring.CurrentGeneration() &&
+            last_descriptor_payload.size() == num_descriptor_entries &&
+            std::memcmp(last_descriptor_payload.data(), descriptor_data,
+                        num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0;
+        if (reuse_allocation) {
+            device.GetXclipseTelemetry().RecordDescriptorReuse();
+            descriptor_buffer_offset = last_descriptor_buffer_offset;
+            descriptor_buffer_chunk = last_descriptor_buffer_chunk;
+            descriptor_buffer_ring.TouchFrame(scheduler);
+        } else {
+            const DescriptorBufferRing::Allocation alloc{
+                descriptor_buffer_ring.Allocate(scheduler, descriptor_buffer_layout.size)};
+            if (!alloc.host) {
+                LOG_DEBUG(Render_Vulkan, "Failed to reserve descriptor memory, skipping dispatch");
+                return false;
+            }
+            WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
+            descriptor_buffer_offset = alloc.offset;
+            descriptor_buffer_chunk = alloc.chunk;
+            last_descriptor_buffer_offset = alloc.offset;
+            last_descriptor_buffer_chunk = alloc.chunk;
+            last_descriptor_buffer_generation = alloc.generation;
+            last_descriptor_payload.assign(descriptor_data,
+                                           descriptor_data + num_descriptor_entries);
         }
-        WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
-        descriptor_buffer_offset = alloc.offset;
-        descriptor_buffer_chunk = alloc.chunk;
     }
 
     const bool bind_descriptor_buffer{
@@ -329,11 +352,13 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
+            device.GetXclipseTelemetry().RecordPushDescriptorUpdate();
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else {
             const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
             const vk::Device& dev{device.GetLogical()};
+            device.GetXclipseTelemetry().RecordDescriptorSetUpdate();
             dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
             cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
                                       descriptor_set, nullptr);
