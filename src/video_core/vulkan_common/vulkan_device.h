@@ -1131,6 +1131,9 @@ private:
     /// Runs bounded device-level probes before pipeline caches are loaded.
     void RunXclipseValidationProbes();
 
+    /// Executes a real descriptor-buffer-backed compute dispatch and readback.
+    void RunXclipseDescriptorBufferValidationProbe();
+
     /// Recomputes family-level BCn native readiness from exact per-format state.
     void UpdateXclipseBcnProfile();
 
