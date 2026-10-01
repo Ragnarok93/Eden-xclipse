@@ -321,11 +321,14 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         } else {
             tuple.format = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
         }
-        const bool gpu_rg_decode =
+        const bool gpu_rg_decode_candidate =
             device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
+            !device.HasBrokenCompute() && device.IsFormatlessImageWriteSupported() &&
             (pixel_format == PixelFormat::BC4_UNORM || pixel_format == PixelFormat::BC4_SNORM ||
              pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM);
-        if (gpu_rg_decode) {
+        if (gpu_rg_decode_candidate &&
+            device.IsFormatSupported(tuple.format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
+                                     FormatType::Optimal)) {
             tuple.usage |= usage_storage;
         }
     } else if (!device.IsOptimalEtc2Supported() && VideoCore::Surface::IsPixelFormatETC2(pixel_format)) {
