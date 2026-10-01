@@ -77,6 +77,12 @@ void XclipseTelemetry::RecordTransferConsumerBarrier() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordComputeConsumerBarrier() noexcept {
+    if (Enabled()) {
+        compute_consumer_barriers.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordDescriptorSetAllocation(u64 sets) noexcept {
     if (Enabled()) {
         descriptor_set_allocations.fetch_add(sets, std::memory_order_relaxed);
@@ -141,6 +147,8 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
         .transfer_consumer_barriers =
             transfer_consumer_barriers.load(std::memory_order_relaxed),
+        .compute_consumer_barriers =
+            compute_consumer_barriers.load(std::memory_order_relaxed),
         .descriptor_set_allocations =
             descriptor_set_allocations.load(std::memory_order_relaxed),
         .descriptor_buffer_allocations =
