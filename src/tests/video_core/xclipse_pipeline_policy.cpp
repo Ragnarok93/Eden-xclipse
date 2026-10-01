@@ -80,5 +80,7 @@ TEST_CASE("Xclipse pipeline policy detects WinXclipse defensive cases", "[video_
 
     const auto report = Vulkan::InspectGraphicsPipeline(policy, pipeline_ci);
     REQUIRE_FALSE(report.Clean());
-    REQUIRE(report.issue_count >= 4);
+    REQUIRE(report.issue_count == 4);
+    REQUIRE((static_cast<u32>(report.issues) &
+             static_cast<u32>(Vulkan::PipelinePolicyIssue::PNextTraversalLimit)) == 0);
 }
