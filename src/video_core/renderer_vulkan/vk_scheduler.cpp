@@ -22,6 +22,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
+#include "video_core/renderer_vulkan/vk_sync_policy.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
@@ -355,8 +356,18 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         };
-        device.GetXclipseTelemetry().RecordAllCommandsBarrier();
-        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, WRITE_BARRIER);
+        const bool narrow_upload_barrier =
+            device.IsXclipse() &&
+            Settings::values.xclipse_narrow_upload_barrier.GetValue();
+        const VkPipelineStageFlags destination_stages =
+            SelectUploadBarrierDestinationStages(narrow_upload_barrier);
+        if (narrow_upload_barrier) {
+            device.GetXclipseTelemetry().RecordNarrowUploadBarrier();
+        } else {
+            device.GetXclipseTelemetry().RecordAllCommandsBarrier();
+        }
+        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, destination_stages, 0,
+                                      WRITE_BARRIER);
         upload_cmdbuf.End();
         cmdbuf.End();
 
