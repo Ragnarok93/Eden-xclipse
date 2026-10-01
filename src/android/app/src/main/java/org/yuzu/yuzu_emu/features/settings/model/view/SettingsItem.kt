@@ -1030,6 +1030,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_DESCRIPTOR_BUFFER_EXPERIMENTAL,
+                    titleId = R.string.xclipse_descriptor_buffer_experimental,
+                    descriptionId = R.string.xclipse_descriptor_buffer_experimental_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_SYNC_POLICY,
                     titleId = R.string.xclipse_sync_policy,
                     descriptionId = R.string.xclipse_sync_policy_description
