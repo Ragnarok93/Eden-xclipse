@@ -95,6 +95,17 @@ void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordMemoryPressure(u32 level, bool changed) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    memory_pressure_samples.fetch_add(1, std::memory_order_relaxed);
+    memory_pressure_level.store(level, std::memory_order_relaxed);
+    if (changed) {
+        memory_pressure_transitions.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordBcnGpuDecode(u64 bytes) noexcept {
     if (!Enabled()) {
         return;
@@ -140,6 +151,12 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .descriptor_bytes = descriptor_bytes.load(std::memory_order_relaxed),
         .descriptor_buffer_wraps = descriptor_buffer_wraps.load(std::memory_order_relaxed),
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
+        .memory_pressure_samples =
+            memory_pressure_samples.load(std::memory_order_relaxed),
+        .memory_pressure_transitions =
+            memory_pressure_transitions.load(std::memory_order_relaxed),
+        .memory_pressure_level =
+            memory_pressure_level.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
