@@ -355,8 +355,18 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         };
-        device.GetXclipseTelemetry().RecordAllCommandsBarrier();
-        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, WRITE_BARRIER);
+        const bool precise_upload_barrier =
+            device.IsXclipse() && Settings::values.xclipse_sync_policy.GetValue();
+        const VkPipelineStageFlags upload_consumer_stages =
+            precise_upload_barrier ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                                   : VkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        if (precise_upload_barrier) {
+            device.GetXclipseTelemetry().RecordTransferConsumerBarrier();
+        } else {
+            device.GetXclipseTelemetry().RecordAllCommandsBarrier();
+        }
+        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, upload_consumer_stages, 0,
+                                     WRITE_BARRIER);
         upload_cmdbuf.End();
         cmdbuf.End();
 
