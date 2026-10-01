@@ -126,6 +126,20 @@ XclipseHardwareProfile DetectXclipseHardware(const VulkanDeviceIdentity& identit
         return profile;
     }
 
+    constexpr std::uint32_t SamsungVendorId = 0x144D;
+    constexpr std::uint32_t ArmVendorId = 0x13B5;
+    const bool vendor_corroborates =
+        identity.vendor_id == SamsungVendorId || identity.vendor_id == ArmVendorId;
+    const bool driver_corroborates =
+        FindAsciiInsensitive(identity.driver_name, "samsung") != std::string_view::npos ||
+        FindAsciiInsensitive(identity.driver_name, "sgpu") != std::string_view::npos;
+    const bool soc_corroborates =
+        FindAsciiInsensitive(identity.soc_model, "exynos") != std::string_view::npos ||
+        FindAsciiInsensitive(identity.soc_model, "s5e") != std::string_view::npos;
+    if (!vendor_corroborates && !driver_corroborates && !soc_corroborates) {
+        return profile;
+    }
+
     profile.detected = true;
     profile.model = ParseModelAfterXclipse(identity.device_name, token);
     return profile;
