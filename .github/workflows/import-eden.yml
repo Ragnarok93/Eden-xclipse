@@ -1,0 +1,44 @@
+name: Import Eden source snapshot
+
+on:
+  push:
+    paths:
+      - '.github/workflows/import-eden.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out destination repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify pinned source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object eden-master.zip)" = "0843fcf56f1e6e9ba23ae5f13ab28cc59b8e7926"
+          unzip -z eden-master.zip | head -n 2 | grep -F "963119e7cc3851007252c9981e4fae3e88b7687f"
+
+      - name: Replace repository contents with unpacked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/eden-import
+          mkdir -p /tmp/eden-import
+          unzip -q eden-master.zip -d /tmp/eden-import
+          test -f /tmp/eden-import/eden/CMakeLists.txt
+          test -f /tmp/eden-import/eden/README.md
+
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/eden-import/eden/. .
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -Af .
+          git commit -m "Import Eden source snapshot 963119e7cc"
+          git push origin HEAD:main
