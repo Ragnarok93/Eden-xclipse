@@ -39,6 +39,7 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordSchedulerFinish();
     telemetry.RecordAllCommandsBarrier();
     telemetry.RecordPreciseUploadBarrier();
+    telemetry.RecordPreciseMsaaCopyBarrier();
     telemetry.RecordDescriptorSetAllocation(2);
     telemetry.RecordDescriptorBufferAllocation(96);
     telemetry.RecordDescriptorBufferWrap(false);
@@ -71,6 +72,7 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.submit_commands_17_plus == 1);
     REQUIRE(snapshot.all_commands_barriers == 1);
     REQUIRE(snapshot.precise_upload_barriers == 1);
+    REQUIRE(snapshot.precise_msaa_copy_barriers == 1);
     REQUIRE(snapshot.descriptor_set_allocations == 2);
     REQUIRE(snapshot.descriptor_buffer_allocations == 1);
     REQUIRE(snapshot.descriptor_bytes == 96);
