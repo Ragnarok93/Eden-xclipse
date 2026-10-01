@@ -35,6 +35,10 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_bytes{};
     u64 descriptor_buffer_wraps{};
     u64 descriptor_stalls{};
+
+    u64 memory_pressure_samples{};
+    u64 memory_pressure_transitions{};
+    u32 memory_pressure_class{};
 };
 
 class XclipseTelemetry {
@@ -56,6 +60,7 @@ public:
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
+    void RecordMemoryPressure(u32 pressure_class, bool changed) noexcept;
 
     [[nodiscard]] XclipseTelemetrySnapshot Snapshot() const noexcept;
 
@@ -87,6 +92,10 @@ private:
     std::atomic<u64> descriptor_bytes{};
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
+
+    std::atomic<u64> memory_pressure_samples{};
+    std::atomic<u64> memory_pressure_transitions{};
+    std::atomic<u32> memory_pressure_class{};
 };
 
 } // namespace Vulkan
