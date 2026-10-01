@@ -31,6 +31,7 @@
 #include "video_core/vulkan_common/nsight_aftermath_tracker.h"
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/host_shaders/xclipse_subgroup_probe_comp_spv.h"
+#include "video_core/host_shaders/xclipse_wave_probe_comp_spv.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -605,18 +606,13 @@ void Device::RunXclipseSubgroupValidationProbes() {
     auto& caps = device_policy.capabilities;
     auto& xclipse = device_policy.xclipse;
 
-    const bool compute_stage_supported =
-        (caps.subgroup_supported_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
-    constexpr VkSubgroupFeatureFlags RequiredOperations =
-        VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
-        VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT |
-        VK_SUBGROUP_FEATURE_QUAD_BIT;
-    const bool subgroup_operations_supported =
-        (caps.subgroup_supported_operations & RequiredOperations) == RequiredOperations;
+    // Required subgroup size must be legal for compute before we force Wave32/Wave64.
+    // supportedStages/supportedOperations remain useful evidence, but zero/inconsistent values on
+    // Samsung are not treated as authoritative: the bounded execution probe is the final arbiter.
     const bool required_size_supported =
         caps.required_subgroup_size != CapabilityState::Unsupported &&
         (caps.required_subgroup_size_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0;
-    if (!compute_stage_supported || !subgroup_operations_supported || !required_size_supported) {
+    if (!required_size_supported) {
         return;
     }
 
@@ -640,8 +636,7 @@ void Device::RunXclipseSubgroupValidationProbes() {
     vk::Check(dld.vkCreateBuffer(*logical, &buffer_ci, nullptr, &raw_buffer));
     vk::Handle<VkBuffer, VkDevice, vk::DeviceDispatch> probe_buffer{raw_buffer, *logical, dld};
 
-    const VkMemoryRequirements requirements =
-        logical.GetBufferMemoryRequirements(*probe_buffer);
+    const VkMemoryRequirements requirements = logical.GetBufferMemoryRequirements(*probe_buffer);
     const VkPhysicalDeviceMemoryProperties memory_properties =
         physical.GetMemoryProperties().memoryProperties;
 
@@ -745,12 +740,12 @@ void Device::RunXclipseSubgroupValidationProbes() {
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = nullptr,
     });
-    const auto shader = logical.CreateShaderModule({
+    const auto wave_shader = logical.CreateShaderModule({
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .codeSize = sizeof(XCLIPSE_SUBGROUP_PROBE_COMP_SPV),
-        .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV,
+        .codeSize = sizeof(XCLIPSE_WAVE_PROBE_COMP_SPV),
+        .pCode = XCLIPSE_WAVE_PROBE_COMP_SPV,
     });
 
     const VkCommandPoolCreateInfo command_pool_ci{
@@ -761,11 +756,7 @@ void Device::RunXclipseSubgroupValidationProbes() {
     };
     auto command_pool = logical.CreateCommandPool(command_pool_ci);
 
-    const auto run_wave_probe = [&](u32 wave_size) -> bool {
-        if (wave_size < caps.min_subgroup_size || wave_size > caps.max_subgroup_size) {
-            return false;
-        }
-
+    const auto create_pipeline = [&](VkShaderModule shader, u32 wave_size) -> vk::Pipeline {
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
             .sType =
                 VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
@@ -777,29 +768,22 @@ void Device::RunXclipseSubgroupValidationProbes() {
             .pNext = &subgroup_size_ci,
             .flags = 0,
             .stage = VK_SHADER_STAGE_COMPUTE_BIT,
-            .module = *shader,
+            .module = shader,
             .pName = "main",
             .pSpecializationInfo = nullptr,
         };
+        return logical.CreateComputePipeline({
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .stage = stage_ci,
+            .layout = *pipeline_layout,
+            .basePipelineHandle = VK_NULL_HANDLE,
+            .basePipelineIndex = -1,
+        });
+    };
 
-        vk::Pipeline pipeline;
-        try {
-            pipeline = logical.CreateComputePipeline({
-                .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-                .pNext = nullptr,
-                .flags = 0,
-                .stage = stage_ci,
-                .layout = *pipeline_layout,
-                .basePipelineHandle = VK_NULL_HANDLE,
-                .basePipelineIndex = -1,
-            });
-        } catch (const vk::Exception& exception) {
-            LOG_INFO(Render_Vulkan,
-                     "XCLIPSE PROBE Wave{} pipeline rejected: {}", wave_size,
-                     exception.what());
-            return false;
-        }
-
+    const auto dispatch_probe = [&](VkPipeline pipeline) -> bool {
         auto command_buffers = command_pool.Allocate(1);
         vk::CommandBuffer command_buffer{command_buffers[0], dld};
         command_buffer.Begin({
@@ -816,9 +800,8 @@ void Device::RunXclipseSubgroupValidationProbes() {
             .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
         };
         command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                                       clear_barrier);
-        command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, clear_barrier);
+        command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         command_buffer.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
                                           descriptor_set, {});
         command_buffer.Dispatch(1, 1, 1);
@@ -849,55 +832,41 @@ void Device::RunXclipseSubgroupValidationProbes() {
             .signalSemaphoreCount = 0,
             .pSignalSemaphores = nullptr,
         };
-        if (graphics_queue.Submit(submit_info, *fence) != VK_SUCCESS ||
-            fence.Wait(ProbeTimeoutNs) != VK_SUCCESS) {
-            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE Wave{} dispatch timed out", wave_size);
+        const VkResult submit_result = graphics_queue.Submit(submit_info, *fence);
+        return submit_result == VK_SUCCESS && fence.Wait(ProbeTimeoutNs) == VK_SUCCESS;
+    };
+
+    const auto run_wave_probe = [&](u32 wave_size) -> bool {
+        if (wave_size < caps.min_subgroup_size || wave_size > caps.max_subgroup_size ||
+            ProbeInvocations % wave_size != 0) {
             return false;
         }
 
-        bool size_valid = true;
-        bool arithmetic_valid = true;
-        bool ballot_valid = true;
-        bool shuffle_valid = true;
-        bool quad_valid = true;
-        bool lane_ids_valid = true;
-        std::array<u32, ProbeInvocations> lane_counts{};
-
-        for (u32 invocation = 0; invocation < ProbeInvocations; ++invocation) {
-            const u32 base = invocation * ProbeWordsPerInvocation;
-            const u32 subgroup_size = output[base + 0];
-            const u32 subgroup_add = output[base + 1];
-            const u32 ballot_count = output[base + 2];
-            const u32 shuffle_zero = output[base + 3];
-            const u32 quad_swap = output[base + 4];
-            const u32 lane = output[base + 5];
-
-            size_valid &= subgroup_size == wave_size;
-            arithmetic_valid &= subgroup_add == wave_size;
-            ballot_valid &= ballot_count == wave_size;
-            shuffle_valid &= shuffle_zero == 0;
-            lane_ids_valid &= lane < wave_size;
-            if (lane < lane_counts.size()) {
-                ++lane_counts[lane];
-                quad_valid &= quad_swap == (lane ^ 1U);
-            } else {
-                quad_valid = false;
-            }
+        vk::Pipeline pipeline;
+        try {
+            pipeline = create_pipeline(*wave_shader, wave_size);
+        } catch (const vk::Exception& exception) {
+            LOG_INFO(Render_Vulkan, "XCLIPSE PROBE Wave{} pipeline rejected: {}", wave_size,
+                     exception.what());
+            return false;
+        }
+        if (!dispatch_probe(*pipeline)) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE Wave{} dispatch failed/timed out",
+                        wave_size);
+            return false;
         }
 
-        const u32 expected_lane_occurrences = ProbeInvocations / wave_size;
-        for (u32 lane = 0; lane < ProbeInvocations; ++lane) {
-            const u32 expected = lane < wave_size ? expected_lane_occurrences : 0U;
-            lane_ids_valid &= lane_counts[lane] == expected;
-        }
-
-        const bool valid = size_valid && arithmetic_valid && ballot_valid &&
-                           shuffle_valid && quad_valid && lane_ids_valid;
+        const u32 subgroup_size = output[0];
+        const u32 elected_subgroups = output[1];
+        const u32 invocation_count = output[2];
+        const u32 expected_subgroups = ProbeInvocations / wave_size;
+        const bool valid = subgroup_size == wave_size &&
+                           elected_subgroups == expected_subgroups &&
+                           invocation_count == ProbeInvocations;
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE PROBE Wave{} result={} size={} arithmetic={} ballot={} shuffle={} "
-                 "quad={} lane_ids={}",
-                 wave_size, valid ? "validated" : "failed", size_valid, arithmetic_valid,
-                 ballot_valid, shuffle_valid, quad_valid, lane_ids_valid);
+                 "XCLIPSE PROBE Wave{} result={} subgroup_size={} elected={} invocations={}",
+                 wave_size, valid ? "validated" : "failed", subgroup_size, elected_subgroups,
+                 invocation_count);
         return valid;
     };
 
@@ -906,22 +875,104 @@ void Device::RunXclipseSubgroupValidationProbes() {
     xclipse.allowed_wave_mask = (xclipse.wave32_validated ? 0x1U : 0U) |
                                 (xclipse.wave64_validated ? 0x2U : 0U);
 
-    // Do not choose between two correct wave modes from family assumptions or Samsung's
-    // default alone. A nonzero preference is only safe when exactly one forced mode validates;
-    // when both work, benchmark data must choose.
+    // A nonzero preference is only safe when exactly one forced mode validates. If both work,
+    // retain Auto until benchmark data proves a winner for a specific compute workload.
     if (xclipse.wave32_validated != xclipse.wave64_validated) {
         xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
     } else {
         xclipse.preferred_compute_wave = 0;
     }
-
     if (xclipse.allowed_wave_mask != 0) {
         caps.required_subgroup_size = CapabilityState::Validated;
-        caps.subgroup_ballot = CapabilityState::Validated;
-        caps.subgroup_shuffle = CapabilityState::Validated;
-        caps.subgroup_arithmetic = CapabilityState::Validated;
-        caps.subgroup_quad = CapabilityState::Validated;
     }
+
+    // Validate optional subgroup operations independently from wave-size correctness. The compact
+    // combined shader is only attempted when Samsung advertises the whole operation set; failure
+    // leaves those operations Advertised rather than invalidating a proven Wave32/Wave64 path.
+    constexpr VkSubgroupFeatureFlags OptionalOperations =
+        VK_SUBGROUP_FEATURE_BALLOT_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT |
+        VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT;
+    const bool optional_ops_advertised =
+        (caps.subgroup_supported_operations & OptionalOperations) == OptionalOperations;
+    const u32 ops_wave =
+        (caps.subgroup_size == 32 && xclipse.wave32_validated)
+            ? 32U
+            : (caps.subgroup_size == 64 && xclipse.wave64_validated)
+                  ? 64U
+                  : xclipse.wave32_validated ? 32U : xclipse.wave64_validated ? 64U : 0U;
+
+    if (optional_ops_advertised && ops_wave != 0) {
+        try {
+            const auto ops_shader = logical.CreateShaderModule({
+                .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .codeSize = sizeof(XCLIPSE_SUBGROUP_PROBE_COMP_SPV),
+                .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV,
+            });
+            auto pipeline = create_pipeline(*ops_shader, ops_wave);
+            if (dispatch_probe(*pipeline)) {
+                bool arithmetic_valid = true;
+                bool ballot_valid = true;
+                bool shuffle_valid = true;
+                bool quad_valid = true;
+                bool lane_ids_valid = true;
+                std::array<u32, ProbeInvocations> lane_counts{};
+
+                for (u32 invocation = 0; invocation < ProbeInvocations; ++invocation) {
+                    const u32 base = invocation * ProbeWordsPerInvocation;
+                    const u32 subgroup_size = output[base + 0];
+                    const u32 subgroup_add = output[base + 1];
+                    const u32 ballot_count = output[base + 2];
+                    const u32 shuffle_zero = output[base + 3];
+                    const u32 quad_swap = output[base + 4];
+                    const u32 lane = output[base + 5];
+
+                    lane_ids_valid &= subgroup_size == ops_wave && lane < ops_wave;
+                    arithmetic_valid &= subgroup_add == ops_wave;
+                    ballot_valid &= ballot_count == ops_wave;
+                    shuffle_valid &= shuffle_zero == 0;
+                    if (lane < lane_counts.size()) {
+                        ++lane_counts[lane];
+                        quad_valid &= quad_swap == (lane ^ 1U);
+                    } else {
+                        quad_valid = false;
+                    }
+                }
+                const u32 expected_lane_occurrences = ProbeInvocations / ops_wave;
+                for (u32 lane = 0; lane < ProbeInvocations; ++lane) {
+                    const u32 expected = lane < ops_wave ? expected_lane_occurrences : 0U;
+                    lane_ids_valid &= lane_counts[lane] == expected;
+                }
+
+                if (lane_ids_valid && ballot_valid) {
+                    caps.subgroup_ballot = CapabilityState::Validated;
+                }
+                if (lane_ids_valid && shuffle_valid) {
+                    caps.subgroup_shuffle = CapabilityState::Validated;
+                }
+                if (lane_ids_valid && arithmetic_valid) {
+                    caps.subgroup_arithmetic = CapabilityState::Validated;
+                }
+                if (lane_ids_valid && quad_valid) {
+                    caps.subgroup_quad = CapabilityState::Validated;
+                }
+
+                LOG_INFO(Render_Vulkan,
+                         "XCLIPSE PROBE subgroup ops wave={} ballot={} shuffle={} arithmetic={} "
+                         "quad={} lane_ids={}",
+                         ops_wave, ballot_valid, shuffle_valid, arithmetic_valid, quad_valid,
+                         lane_ids_valid);
+            } else {
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE PROBE subgroup operations dispatch failed/timed out");
+            }
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE subgroup operations exception: {}",
+                        exception.what());
+        }
+    }
+
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
 
@@ -1528,7 +1579,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     vk::Check(vmaCreateAllocator(&allocator_info, &allocator));
 
-    RunXclipseSubgroupValidationProbes();
     LogDevicePolicy();
 
     owns_static_pipeline_cache = surface != VkSurfaceKHR{};
