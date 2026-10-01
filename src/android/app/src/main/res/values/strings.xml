@@ -649,8 +649,8 @@
     <string name="renderer_debug_description">Sets the graphics API to a slow debugging mode.</string>
     <string name="patch_old_qcom_drivers">BCn Texture Patching</string>
     <string name="patch_old_qcom_drivers_description">Override automatic BCn texture format detection on Adreno GPUs. Normally auto-detected based on Android version (enabled on API 28+).</string>
-    <string name="xclipse_gpu_bcn_decode">Xclipse GPU BC4/BC5 Decoder</string>
-    <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4/BC5 textures with a fused Vulkan compute path instead of the CPU fallback. Restart emulation after changing this setting.</string>
+    <string name="xclipse_gpu_bcn_decode">Xclipse GPU BCn Decoder</string>
+    <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
