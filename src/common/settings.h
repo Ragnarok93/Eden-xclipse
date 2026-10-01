@@ -714,6 +714,9 @@ struct Values {
                                             Category::RendererDebug};
     Setting<bool> xclipse_pipeline_policy{linkage, true, "xclipse_pipeline_policy",
                                          Category::RendererDebug};
+    Setting<bool> xclipse_precise_upload_barriers{linkage, true,
+                                                  "xclipse_precise_upload_barriers",
+                                                  Category::RendererDebug};
     Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
                                          Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
