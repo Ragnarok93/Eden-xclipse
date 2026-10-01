@@ -28,7 +28,12 @@ struct XclipseTelemetrySnapshot {
     u64 legacy_submits{};
     u64 host_waits{};
     u64 timeline_waits{};
+    u64 scheduler_flushes{};
     u64 scheduler_finishes{};
+    u64 submit_commands_0{};
+    u64 submit_commands_1_4{};
+    u64 submit_commands_5_16{};
+    u64 submit_commands_17_plus{};
     u64 all_commands_barriers{};
     u64 precise_upload_barriers{};
 
@@ -58,6 +63,7 @@ public:
     void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2) noexcept;
     void RecordGpuWait(bool timeline) noexcept;
+    void RecordSchedulerFlush() noexcept;
     void RecordSchedulerFinish() noexcept;
     void RecordAllCommandsBarrier() noexcept;
     void RecordPreciseUploadBarrier() noexcept;
@@ -90,7 +96,12 @@ private:
     std::atomic<u64> legacy_submits{};
     std::atomic<u64> host_waits{};
     std::atomic<u64> timeline_waits{};
+    std::atomic<u64> scheduler_flushes{};
     std::atomic<u64> scheduler_finishes{};
+    std::atomic<u64> submit_commands_0{};
+    std::atomic<u64> submit_commands_1_4{};
+    std::atomic<u64> submit_commands_5_16{};
+    std::atomic<u64> submit_commands_17_plus{};
     std::atomic<u64> all_commands_barriers{};
     std::atomic<u64> precise_upload_barriers{};
 
