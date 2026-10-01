@@ -2518,7 +2518,7 @@ void Device::CollectPhysicalMemoryInfo() {
     const auto& mem_properties = mem_info.memoryProperties;
     const size_t num_properties = mem_properties.memoryHeapCount;
     device_access_memory = 0;
-    u64 device_initial_usage = 0;
+    device_initial_usage = 0;
     u64 local_memory = 0;
     for (size_t element = 0; element < num_properties; ++element) {
         const bool is_heap_local =
