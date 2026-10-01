@@ -1299,12 +1299,13 @@ void Device::LogXclipseTelemetry() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} sync2_submits={} legacy_submits={} "
              "host_waits={} timeline_waits={} scheduler_flushes={} scheduler_finishes={} "
-             "all_commands_barriers={} precise_upload_barriers={} "
+             "all_commands_barriers={} precise_upload_barriers={} precise_msaa_barriers={} "
              "submit_buckets[0/1-4/5-16/17+]={}/{}/{}/{}",
              t.queue_submits, commands_per_submit, t.sync2_submits, t.legacy_submits, t.host_waits,
              t.timeline_waits, t.scheduler_flushes, t.scheduler_finishes,
-             t.all_commands_barriers, t.precise_upload_barriers, t.submit_commands_0,
-             t.submit_commands_1_4, t.submit_commands_5_16, t.submit_commands_17_plus);
+             t.all_commands_barriers, t.precise_upload_barriers, t.precise_msaa_copy_barriers,
+             t.submit_commands_0, t.submit_commands_1_4, t.submit_commands_5_16,
+             t.submit_commands_17_plus);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE DESCRIPTORS set_allocations={} buffer_allocations={} descriptor_bytes={} "
              "ring_wraps={} stalls={}",
