@@ -37,6 +37,10 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_buffer_wraps{};
     u64 descriptor_stalls{};
 
+    u64 memory_pressure_samples{};
+    u64 memory_pressure_transitions{};
+    u32 memory_pressure_level{};
+
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
     u64 bcn_gpu_decode_fallbacks{};
@@ -62,6 +66,7 @@ public:
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
+    void RecordMemoryPressure(u32 level, bool changed) noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
 
@@ -96,6 +101,10 @@ private:
     std::atomic<u64> descriptor_bytes{};
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
+
+    std::atomic<u64> memory_pressure_samples{};
+    std::atomic<u64> memory_pressure_transitions{};
+    std::atomic<u32> memory_pressure_level{};
 
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
