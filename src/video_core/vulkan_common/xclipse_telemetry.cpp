@@ -101,6 +101,38 @@ void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordDescriptorBackend(bool push_descriptor,
+                                                      bool descriptor_buffer) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    if (descriptor_buffer) {
+        descriptor_buffer_pipelines.fetch_add(1, std::memory_order_relaxed);
+    } else if (push_descriptor) {
+        push_descriptor_pipelines.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        descriptor_set_pipelines.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorSetUpdate() noexcept {
+    if (Enabled()) {
+        descriptor_set_updates.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordPushDescriptorUpdate() noexcept {
+    if (Enabled()) {
+        push_descriptor_updates.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorReuse() noexcept {
+    if (Enabled()) {
+        descriptor_reuses.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordBcnGpuDecode(u64 bytes) noexcept {
     if (!Enabled()) {
         return;
@@ -148,6 +180,15 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .descriptor_bytes = descriptor_bytes.load(std::memory_order_relaxed),
         .descriptor_buffer_wraps = descriptor_buffer_wraps.load(std::memory_order_relaxed),
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
+        .descriptor_set_pipelines =
+            descriptor_set_pipelines.load(std::memory_order_relaxed),
+        .push_descriptor_pipelines =
+            push_descriptor_pipelines.load(std::memory_order_relaxed),
+        .descriptor_buffer_pipelines =
+            descriptor_buffer_pipelines.load(std::memory_order_relaxed),
+        .descriptor_set_updates = descriptor_set_updates.load(std::memory_order_relaxed),
+        .push_descriptor_updates = push_descriptor_updates.load(std::memory_order_relaxed),
+        .descriptor_reuses = descriptor_reuses.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
