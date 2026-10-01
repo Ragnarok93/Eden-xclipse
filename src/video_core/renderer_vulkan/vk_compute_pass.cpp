@@ -17,6 +17,7 @@
 #include "common/div_ceil.h"
 #include "common/vector_math.h"
 #include "video_core/host_shaders/astc_decoder_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_nosubgroups_comp_spv.h"
 #include "video_core/host_shaders/resolve_conditional_render_comp_spv.h"
@@ -184,6 +185,32 @@ struct AstcPushConstants {
     u32 block_height;
     u32 block_height_mask;
 };
+
+struct BcnPushConstants {
+    u32 format;
+    u32 layer_stride;
+    u32 block_size;
+    u32 x_shift;
+    u32 block_height;
+    u32 block_height_mask;
+};
+static_assert(sizeof(BcnPushConstants) <= 128);
+
+std::optional<u32> BcnDecoderFormat(VideoCore::Surface::PixelFormat format) {
+    using VideoCore::Surface::PixelFormat;
+    switch (format) {
+    case PixelFormat::BC4_UNORM:
+        return 0;
+    case PixelFormat::BC4_SNORM:
+        return 1;
+    case PixelFormat::BC5_UNORM:
+        return 2;
+    case PixelFormat::BC5_SNORM:
+        return 3;
+    default:
+        return std::nullopt;
+    }
+}
 
 struct QueriesPrefixScanPushConstants {
     u32 min_accumulation_base;
@@ -614,6 +641,119 @@ void ASTCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
                        vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, 0, image_barrier);
     });
     scheduler.Finish();
+}
+
+BCDecoderPass::BCDecoderPass(const Device& device_, Scheduler& scheduler_,
+                                 DescriptorPool& descriptor_pool_,
+                                 ComputePassDescriptorQueue& compute_pass_descriptor_queue_)
+    : ComputePass(device_, scheduler_, descriptor_pool_, ASTC_DESCRIPTOR_SET_BINDINGS,
+                  ASTC_PASS_DESCRIPTOR_UPDATE_TEMPLATE_ENTRY, ASTC_BANK_INFO,
+                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcnPushConstants)>, BCN_DECODER_COMP_SPV),
+      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_} {}
+
+BCDecoderPass::~BCDecoderPass() = default;
+
+void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
+                             std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    using namespace VideoCommon::Accelerated;
+
+    const auto decoder_format = BcnDecoderFormat(image.info.format);
+    ASSERT(decoder_format.has_value());
+
+    scheduler.RequestOutsideRenderPassOperationContext();
+    const VkPipeline vk_pipeline = *pipeline;
+    const VkImageAspectFlags aspect_mask = image.AspectMask();
+    const VkImage vk_image = image.Handle();
+    const bool is_initialized = image.ExchangeInitialization();
+
+    scheduler.Record([vk_pipeline, vk_image, aspect_mask,
+                      is_initialized](vk::CommandBuffer cmdbuf) {
+        const VkImageMemoryBarrier image_barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = static_cast<VkAccessFlags>(
+                is_initialized ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_NONE),
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .oldLayout = is_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = vk_image,
+            .subresourceRange{
+                .aspectMask = aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = VK_REMAINING_MIP_LEVELS,
+                .baseArrayLayer = 0,
+                .layerCount = VK_REMAINING_ARRAY_LAYERS,
+            },
+        };
+        cmdbuf.PipelineBarrier(
+            is_initialized ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                           : VkPipelineStageFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, image_barrier);
+        cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, vk_pipeline);
+    });
+
+    for (const VideoCommon::SwizzleParameters& swizzle : swizzles) {
+        const size_t input_offset = swizzle.buffer_offset + map.offset;
+        const u32 num_dispatches_x = Common::DivCeil(swizzle.num_tiles.width, 8U);
+        const u32 num_dispatches_y = Common::DivCeil(swizzle.num_tiles.height, 8U);
+        const u32 num_dispatches_z = image.info.resources.layers;
+
+        compute_pass_descriptor_queue.Acquire(scheduler, 2);
+        compute_pass_descriptor_queue.AddBuffer(
+            map.buffer, input_offset, image.guest_size_bytes - swizzle.buffer_offset);
+        compute_pass_descriptor_queue.AddImage(image.StorageImageView(swizzle.level));
+        const void* const descriptor_data{compute_pass_descriptor_queue.UpdateData()};
+
+        const auto params = MakeBlockLinearSwizzle2DParams(swizzle, image.info);
+        ASSERT(params.origin == (std::array<u32, 3>{0, 0, 0}));
+        ASSERT(params.destination == (std::array<s32, 3>{0, 0, 0}));
+        ASSERT(params.bytes_per_block_log2 == 3 || params.bytes_per_block_log2 == 4);
+
+        scheduler.Record([this, num_dispatches_x, num_dispatches_y, num_dispatches_z,
+                          format = *decoder_format, params,
+                          descriptor_data](vk::CommandBuffer cmdbuf) {
+            const BcnPushConstants uniforms{
+                .format = format,
+                .layer_stride = params.layer_stride,
+                .block_size = params.block_size,
+                .x_shift = params.x_shift,
+                .block_height = params.block_height,
+                .block_height_mask = params.block_height_mask,
+            };
+            const VkDescriptorSet set = descriptor_allocator.Commit();
+            device.GetLogical().UpdateDescriptorSet(set, *descriptor_template, descriptor_data);
+            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *layout, 0, set, {});
+            cmdbuf.PushConstants(*layout, VK_SHADER_STAGE_COMPUTE_BIT, uniforms);
+            cmdbuf.Dispatch(num_dispatches_x, num_dispatches_y, num_dispatches_z);
+        });
+    }
+
+    scheduler.Record([vk_image, aspect_mask](vk::CommandBuffer cmdbuf) {
+        const VkImageMemoryBarrier image_barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                             VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = vk_image,
+            .subresourceRange{
+                .aspectMask = aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = VK_REMAINING_MIP_LEVELS,
+                .baseArrayLayer = 0,
+                .layerCount = VK_REMAINING_ARRAY_LAYERS,
+            },
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0,
+                               image_barrier);
+    });
 }
 
 constexpr u32 BL3D_BINDING_INPUT_BUFFER  = 0;
