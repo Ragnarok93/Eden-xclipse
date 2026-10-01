@@ -9,6 +9,8 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <iterator>
 #include <optional>
 #include <thread>
 #include "common/container/unordered_map.h"
