@@ -575,7 +575,10 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
 
 bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                                      const RenderAreaPushConstant& render_area) {
-    const auto descriptor_prepare_start = std::chrono::steady_clock::now();
+    const bool measure_descriptors = device.GetXclipseTelemetry().Enabled();
+    const auto descriptor_prepare_start =
+        measure_descriptors ? std::chrono::steady_clock::now()
+                            : std::chrono::steady_clock::time_point{};
     const void* const descriptor_data{guest_descriptor_queue.UpdateData()};
 
     VkDeviceSize descriptor_buffer_offset{};
@@ -606,12 +609,14 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             last_descriptor_buffer_generation = alloc.generation;
             last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
         }
-        const auto descriptor_cpu_ns = static_cast<u64>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - descriptor_prepare_start)
-                .count());
-        device.GetXclipseTelemetry().RecordDescriptorBufferUse(reuse_allocation,
-                                                               descriptor_cpu_ns);
+        if (measure_descriptors) {
+            const auto descriptor_cpu_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - descriptor_prepare_start)
+                    .count());
+            device.GetXclipseTelemetry().RecordDescriptorBufferUse(reuse_allocation,
+                                                                   descriptor_cpu_ns);
+        }
     }
 
     scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
@@ -686,26 +691,41 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
-            const auto start = std::chrono::steady_clock::now();
-            cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
-                                                    0, descriptor_data);
-            const auto cpu_ns = static_cast<u64>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - start)
-                    .count());
-            device.GetXclipseTelemetry().RecordDescriptorPushUpdate(cpu_ns);
+            if (device.GetXclipseTelemetry().Enabled()) {
+                const auto start = std::chrono::steady_clock::now();
+                cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template,
+                                                        *pipeline_layout, 0, descriptor_data);
+                const auto cpu_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count());
+                device.GetXclipseTelemetry().RecordDescriptorPushUpdate(cpu_ns);
+            } else {
+                cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template,
+                                                        *pipeline_layout, 0, descriptor_data);
+            }
         } else if (update_descriptors) {
-            const auto start = std::chrono::steady_clock::now();
-            const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
-            const vk::Device& dev{device.GetLogical()};
-            dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
-            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
-                                      descriptor_set, nullptr);
-            const auto cpu_ns = static_cast<u64>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - start)
-                    .count());
-            device.GetXclipseTelemetry().RecordDescriptorSetUpdate(cpu_ns);
+            if (device.GetXclipseTelemetry().Enabled()) {
+                const auto start = std::chrono::steady_clock::now();
+                const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
+                const vk::Device& dev{device.GetLogical()};
+                dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template,
+                                        descriptor_data);
+                cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
+                                          descriptor_set, nullptr);
+                const auto cpu_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count());
+                device.GetXclipseTelemetry().RecordDescriptorSetUpdate(cpu_ns);
+            } else {
+                const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
+                const vk::Device& dev{device.GetLogical()};
+                dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template,
+                                        descriptor_data);
+                cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
+                                          descriptor_set, nullptr);
+            }
         }
     });
     return true;
