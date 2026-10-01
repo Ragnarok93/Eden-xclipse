@@ -228,6 +228,34 @@ bool HasValidatedImageCreation(const FormatCapabilitySnapshot& format) {
            SupportsAdvertisedNativeBcnPath(format);
 }
 
+bool IsXclipseBasicNativeBcFormat(VkFormat format) {
+    switch (format) {
+    case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
+    case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+    case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+    case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+    case VK_FORMAT_BC2_UNORM_BLOCK:
+    case VK_FORMAT_BC2_SRGB_BLOCK:
+    case VK_FORMAT_BC3_UNORM_BLOCK:
+    case VK_FORMAT_BC3_SRGB_BLOCK:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool SupportsXclipseRuntimeNativeBcnPath(VkFormat format,
+                                         const FormatCapabilitySnapshot& capability) {
+    // Samsung's Xclipse Vulkan format table exposes BC1-BC3 as the basic native family.
+    // For those formats a successful image-create probe plus the advertised sampled/filter/
+    // transfer usage is enough to retain the native path. BC4-BC7 stay on emulation until their
+    // actual operations are validated; we never synthesize missing format properties.
+    if (IsXclipseBasicNativeBcFormat(format)) {
+        return HasValidatedImageCreation(capability);
+    }
+    return SupportsValidatedNativeBcnPath(capability);
+}
+
 ::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
     static constexpr std::array formats{
         VK_FORMAT_A1R5G5B5_UNORM_PACK16,
@@ -584,7 +612,8 @@ void Device::UpdateXclipseBcnProfile() {
     const auto& caps = device_policy.capabilities;
     const auto native = [&caps](std::initializer_list<BcnFormat> formats) {
         return std::ranges::all_of(formats, [&caps](BcnFormat format) {
-            return SupportsValidatedNativeBcnPath(caps.bcn[static_cast<std::size_t>(format)]);
+            const std::size_t index = static_cast<std::size_t>(format);
+            return SupportsXclipseRuntimeNativeBcnPath(BCN_FORMATS[index], caps.bcn[index]);
         });
     };
     xclipse.bc1_native =
@@ -783,11 +812,12 @@ void Device::LogDevicePolicy() const {
     const auto& caps = device_policy.capabilities;
     const auto& xclipse = device_policy.xclipse;
     const auto bcn_state = [&caps](std::initializer_list<BcnFormat> formats) -> std::string_view {
-        const bool validated = std::ranges::all_of(formats, [&caps](BcnFormat format) {
-            return SupportsValidatedNativeBcnPath(
-                caps.bcn[static_cast<std::size_t>(format)]);
-        });
-        if (validated) {
+        const bool runtime_native =
+            std::ranges::all_of(formats, [&caps](BcnFormat format) {
+                const std::size_t index = static_cast<std::size_t>(format);
+                return SupportsXclipseRuntimeNativeBcnPath(BCN_FORMATS[index], caps.bcn[index]);
+            });
+        if (runtime_native) {
             return "native";
         }
         const bool image_create_validated =
@@ -857,6 +887,9 @@ void Device::LogXclipseTelemetry() const {
              "ring_wraps={} stalls={}",
              t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
              t.descriptor_buffer_wraps, t.descriptor_stalls);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
+             t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
@@ -1389,6 +1422,19 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
     }
     const auto supported_usage = GetFormatFeatures(it->second, format_type);
     return (supported_usage & wanted_usage) == wanted_usage;
+}
+
+bool Device::IsOptimalBcnSupported(VkFormat format) const {
+    if (!device_policy.xclipse.detected) {
+        return features.features.textureCompressionBC;
+    }
+
+    const auto it = std::ranges::find(BCN_FORMATS, format);
+    if (it == BCN_FORMATS.end()) {
+        return false;
+    }
+    const std::size_t index = static_cast<std::size_t>(std::distance(BCN_FORMATS.begin(), it));
+    return SupportsXclipseRuntimeNativeBcnPath(format, device_policy.capabilities.bcn[index]);
 }
 
 std::string Device::GetDriverName() const {

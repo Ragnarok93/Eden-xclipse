@@ -116,6 +116,46 @@ constexpr bool IsZetaFormat(PixelFormat pixel_format) {
     return pixel_format >= PixelFormat::MaxColorFormat && pixel_format < PixelFormat::MaxDepthStencilFormat;
 }
 
+VkFormat NativeBcnFormat(PixelFormat pixel_format) {
+    switch (pixel_format) {
+    case PixelFormat::BC1_RGBA_UNORM:
+        return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+    case PixelFormat::BC1_RGBA_SRGB:
+        return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+    case PixelFormat::BC2_UNORM:
+        return VK_FORMAT_BC2_UNORM_BLOCK;
+    case PixelFormat::BC2_SRGB:
+        return VK_FORMAT_BC2_SRGB_BLOCK;
+    case PixelFormat::BC3_UNORM:
+        return VK_FORMAT_BC3_UNORM_BLOCK;
+    case PixelFormat::BC3_SRGB:
+        return VK_FORMAT_BC3_SRGB_BLOCK;
+    case PixelFormat::BC4_UNORM:
+        return VK_FORMAT_BC4_UNORM_BLOCK;
+    case PixelFormat::BC4_SNORM:
+        return VK_FORMAT_BC4_SNORM_BLOCK;
+    case PixelFormat::BC5_UNORM:
+        return VK_FORMAT_BC5_UNORM_BLOCK;
+    case PixelFormat::BC5_SNORM:
+        return VK_FORMAT_BC5_SNORM_BLOCK;
+    case PixelFormat::BC6H_UFLOAT:
+        return VK_FORMAT_BC6H_UFLOAT_BLOCK;
+    case PixelFormat::BC6H_SFLOAT:
+        return VK_FORMAT_BC6H_SFLOAT_BLOCK;
+    case PixelFormat::BC7_UNORM:
+        return VK_FORMAT_BC7_UNORM_BLOCK;
+    case PixelFormat::BC7_SRGB:
+        return VK_FORMAT_BC7_SRGB_BLOCK;
+    default:
+        return VK_FORMAT_UNDEFINED;
+    }
+}
+
+bool IsBcnNative(const Device& device, PixelFormat pixel_format) {
+    const VkFormat format = NativeBcnFormat(pixel_format);
+    return format != VK_FORMAT_UNDEFINED && device.IsOptimalBcnSupported(format);
+}
+
 FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with_srgb, PixelFormat pixel_format) {
     u32 const usage_attachable = 1 << 0;
     u32 const usage_storage = 1 << 1;
@@ -263,7 +303,8 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
             break;
         }
     }
-    if (!device.IsOptimalBcnSupported() && VideoCore::Surface::IsPixelFormatBCn(pixel_format)) {
+    if (VideoCore::Surface::IsPixelFormatBCn(pixel_format) &&
+        !device.IsOptimalBcnSupported(tuple.format)) {
         // Transcode on hardware that doesn't support BCn natively
         if (pixel_format == PixelFormat::BC4_SNORM) {
             tuple.format = VK_FORMAT_R8_SNORM;
@@ -279,6 +320,16 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
             tuple.format = VK_FORMAT_A8B8G8R8_SRGB_PACK32;
         } else {
             tuple.format = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+        }
+        const bool gpu_rg_decode_candidate =
+            device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
+            !device.HasBrokenCompute() && device.IsFormatlessImageWriteSupported() &&
+            (pixel_format == PixelFormat::BC4_UNORM || pixel_format == PixelFormat::BC4_SNORM ||
+             pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM);
+        if (gpu_rg_decode_candidate &&
+            device.IsFormatSupported(tuple.format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
+                                     FormatType::Optimal)) {
+            tuple.usage |= usage_storage;
         }
     } else if (!device.IsOptimalEtc2Supported() && VideoCore::Surface::IsPixelFormatETC2(pixel_format)) {
         // Transcode on hardware that doesn't support ETC2 natively

@@ -47,6 +47,9 @@ struct FormatInfo {
 [[nodiscard]] FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with_srgb,
                                        PixelFormat pixel_format);
 
+[[nodiscard]] VkFormat NativeBcnFormat(PixelFormat pixel_format);
+[[nodiscard]] bool IsBcnNative(const Device& device, PixelFormat pixel_format);
+
 VkShaderStageFlagBits ShaderStage(Shader::Stage stage);
 
 VkPrimitiveTopology PrimitiveTopology(const Device& device, Maxwell::PrimitiveTopology topology);
