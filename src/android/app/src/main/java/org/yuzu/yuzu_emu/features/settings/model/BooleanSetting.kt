@@ -34,6 +34,7 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
     BUFFER_REORDER_DISABLE("disable_buffer_reorder"),
     RENDERER_DEBUG("debug"),
     RENDERER_PATCH_OLD_QCOM_DRIVERS("patch_old_qcom_drivers"),
+    XCLIPSE_SYNC_POLICY("xclipse_sync_policy"),
     XCLIPSE_PIPELINE_POLICY("xclipse_pipeline_policy"),
     XCLIPSE_GPU_BCN_DECODE("xclipse_gpu_bcn_decode"),
     RENDERER_VERTEX_INPUT_DYNAMIC_STATE("vertex_input_dynamic_state"),
