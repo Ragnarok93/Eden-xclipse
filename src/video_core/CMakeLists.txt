@@ -206,6 +206,8 @@ add_library(video_core STATIC
     vulkan_common/vulkan_device.h
     vulkan_common/vulkan_device_profile.cpp
     vulkan_common/vulkan_device_profile.h
+    vulkan_common/xclipse_bcn_repetition.cpp
+    vulkan_common/xclipse_bcn_repetition.h
     vulkan_common/xclipse_telemetry.cpp
     vulkan_common/xclipse_telemetry.h
     vulkan_common/vulkan_instance.cpp
