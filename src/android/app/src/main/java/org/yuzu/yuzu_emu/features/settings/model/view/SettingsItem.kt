@@ -1030,6 +1030,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_PRECISE_MSAA_COPY_BARRIERS,
+                    titleId = R.string.xclipse_precise_msaa_copy_barriers,
+                    descriptionId = R.string.xclipse_precise_msaa_copy_barriers_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
