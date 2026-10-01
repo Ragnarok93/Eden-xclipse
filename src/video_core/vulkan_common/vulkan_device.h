@@ -919,7 +919,7 @@ FN_MAX_LIMIT_LIST
 
     /// Returns true if the device supports VK_KHR_synchronization2.
     bool HasSynchronization2() const {
-        return extensions.synchronization2;
+        return features.synchronization2.synchronization2 != VK_FALSE;
     }
 
     /// Returns the minimum supported version of SPIR-V.
