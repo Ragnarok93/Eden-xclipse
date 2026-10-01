@@ -607,6 +607,8 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    device_policy.use_xclipse_sync_policy =
+        device_policy.xclipse.detected && Settings::values.xclipse_sync_policy.GetValue();
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
