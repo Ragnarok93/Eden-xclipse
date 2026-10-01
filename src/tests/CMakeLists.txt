@@ -20,6 +20,7 @@ add_executable(tests
     core/internal_network/network.cpp
     video_core/memory_tracker.cpp
     video_core/vulkan_device_profile.cpp
+    video_core/xclipse_telemetry.cpp
     input_common/calibration_configuration_job.cpp
 )
 
