@@ -192,7 +192,11 @@ FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties pro
     const auto has = [flags](VkFormatFeatureFlagBits feature) {
         return Advertised((flags & feature) == feature);
     };
+    const bool sampled = (flags & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+    const bool transfer_src = (flags & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) != 0;
+    const bool transfer_dst = (flags & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) != 0;
     return {
+        .image_create = Advertised(sampled && transfer_src && transfer_dst),
         .sampled = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT),
         .linear_filter = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
         .storage_image = has(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT),
@@ -203,11 +207,17 @@ FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties pro
     };
 }
 
-bool SupportsDefaultNativeBcnPath(const FormatCapabilitySnapshot& format) {
-    return format.sampled != CapabilityState::Unsupported &&
+bool SupportsAdvertisedNativeBcnPath(const FormatCapabilitySnapshot& format) {
+    return format.image_create != CapabilityState::Unsupported &&
+           format.sampled != CapabilityState::Unsupported &&
            format.linear_filter != CapabilityState::Unsupported &&
            format.transfer_src != CapabilityState::Unsupported &&
            format.transfer_dst != CapabilityState::Unsupported;
+}
+
+bool SupportsValidatedNativeBcnPath(const FormatCapabilitySnapshot& format) {
+    return format.image_create == CapabilityState::Validated &&
+           SupportsAdvertisedNativeBcnPath(format);
 }
 
 ::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
@@ -554,11 +564,19 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    UpdateXclipseBcnProfile();
+    device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
+}
+
+void Device::UpdateXclipseBcnProfile() {
     auto& xclipse = device_policy.xclipse;
+    if (!xclipse.detected) {
+        return;
+    }
+    const auto& caps = device_policy.capabilities;
     const auto native = [&caps](std::initializer_list<BcnFormat> formats) {
         return std::ranges::all_of(formats, [&caps](BcnFormat format) {
-            return SupportsDefaultNativeBcnPath(
-                caps.bcn[static_cast<std::size_t>(format)]);
+            return SupportsValidatedNativeBcnPath(caps.bcn[static_cast<std::size_t>(format)]);
         });
     };
     xclipse.bc1_native =
@@ -570,7 +588,175 @@ void Device::BuildDevicePolicy() {
     xclipse.bc5_native = native({BcnFormat::BC5_UNORM, BcnFormat::BC5_SNORM});
     xclipse.bc6_native = native({BcnFormat::BC6H_UFLOAT, BcnFormat::BC6H_SFLOAT});
     xclipse.bc7_native = native({BcnFormat::BC7_UNORM, BcnFormat::BC7_SRGB});
+}
 
+void Device::RunXclipseValidationProbes() {
+    if (!device_policy.xclipse.detected || !Settings::values.xclipse_validation_probes.GetValue()) {
+        UpdateXclipseBcnProfile();
+        device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
+        return;
+    }
+
+    auto& caps = device_policy.capabilities;
+
+    // Validate exact BC image creation without allocating memory or advertising unsupported use.
+    for (std::size_t index = 0; index < BCN_FORMATS.size(); ++index) {
+        auto& format_caps = caps.bcn[index];
+        if (format_caps.image_create == CapabilityState::Unsupported) {
+            continue;
+        }
+        const VkImageCreateInfo image_ci{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = BCN_FORMATS[index],
+            .extent = {4, 4, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+        VkImage image = VK_NULL_HANDLE;
+        const VkResult result = dld.vkCreateImage(*logical, &image_ci, nullptr, &image);
+        if (result == VK_SUCCESS) {
+            format_caps.image_create = CapabilityState::Validated;
+            dld.vkDestroyImage(*logical, image, nullptr);
+        } else {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE BC format={} image_create failed result={}",
+                        BCN_FORMATS[index], result);
+        }
+    }
+
+    // Exercise a real queue submission before pipeline caches are loaded. This validates the
+    // selected synchronization API without using queue-idle or persistent resources.
+    const bool probe_sync2 = caps.synchronization2 == CapabilityState::Advertised;
+    const bool probe_timeline = caps.timeline == CapabilityState::Advertised;
+    if (probe_sync2 || probe_timeline) {
+        try {
+            const VkCommandPoolCreateInfo pool_ci{
+                .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                .queueFamilyIndex = graphics_family,
+            };
+            auto command_pool = logical.CreateCommandPool(pool_ci);
+            auto command_buffers = command_pool.Allocate(1);
+            vk::CommandBuffer command_buffer{command_buffers[0], dld};
+            command_buffer.Begin({
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                .pNext = nullptr,
+                .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+                .pInheritanceInfo = nullptr,
+            });
+            command_buffer.End();
+
+            const VkFenceCreateInfo fence_ci{
+                .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+            };
+            auto fence = logical.CreateFence(fence_ci);
+
+            vk::Semaphore timeline;
+            if (probe_timeline) {
+                const VkSemaphoreTypeCreateInfo type_ci{
+                    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+                    .pNext = nullptr,
+                    .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+                    .initialValue = 0,
+                };
+                const VkSemaphoreCreateInfo semaphore_ci{
+                    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+                    .pNext = &type_ci,
+                    .flags = 0,
+                };
+                timeline = logical.CreateSemaphore(semaphore_ci);
+            }
+
+            VkResult submit_result = VK_SUCCESS;
+            if (probe_sync2) {
+                const VkCommandBufferSubmitInfo command_info{
+                    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                    .pNext = nullptr,
+                    .commandBuffer = *command_buffer,
+                    .deviceMask = 0,
+                };
+                const VkSemaphoreSubmitInfo signal_info{
+                    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                    .pNext = nullptr,
+                    .semaphore = probe_timeline ? *timeline : VK_NULL_HANDLE,
+                    .value = probe_timeline ? 1U : 0U,
+                    .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                    .deviceIndex = 0,
+                };
+                const VkSubmitInfo2 submit_info{
+                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+                    .pNext = nullptr,
+                    .flags = 0,
+                    .waitSemaphoreInfoCount = 0,
+                    .pWaitSemaphoreInfos = nullptr,
+                    .commandBufferInfoCount = 1,
+                    .pCommandBufferInfos = &command_info,
+                    .signalSemaphoreInfoCount = probe_timeline ? 1U : 0U,
+                    .pSignalSemaphoreInfos = probe_timeline ? &signal_info : nullptr,
+                };
+                submit_result = graphics_queue.Submit2(submit_info, *fence);
+            } else {
+                const u64 signal_value = 1;
+                const VkTimelineSemaphoreSubmitInfo timeline_info{
+                    .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+                    .pNext = nullptr,
+                    .waitSemaphoreValueCount = 0,
+                    .pWaitSemaphoreValues = nullptr,
+                    .signalSemaphoreValueCount = 1,
+                    .pSignalSemaphoreValues = &signal_value,
+                };
+                const VkSemaphore signal_semaphore = *timeline;
+                const VkCommandBuffer raw_command = *command_buffer;
+                const VkSubmitInfo submit_info{
+                    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                    .pNext = &timeline_info,
+                    .waitSemaphoreCount = 0,
+                    .pWaitSemaphores = nullptr,
+                    .pWaitDstStageMask = nullptr,
+                    .commandBufferCount = 1,
+                    .pCommandBuffers = &raw_command,
+                    .signalSemaphoreCount = 1,
+                    .pSignalSemaphores = &signal_semaphore,
+                };
+                submit_result = graphics_queue.Submit(submit_info, *fence);
+            }
+
+            constexpr u64 ProbeTimeoutNs = 1'000'000'000ULL;
+            const VkResult wait_result =
+                submit_result == VK_SUCCESS ? fence.Wait(ProbeTimeoutNs) : submit_result;
+            if (submit_result == VK_SUCCESS && wait_result == VK_SUCCESS) {
+                if (probe_sync2) {
+                    caps.synchronization2 = CapabilityState::Validated;
+                }
+                if (probe_timeline && timeline.GetCounter() >= 1) {
+                    caps.timeline = CapabilityState::Validated;
+                }
+            } else {
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE PROBE sync submit={} wait={} sync2={} timeline={}",
+                            submit_result, wait_result, probe_sync2, probe_timeline);
+            }
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE synchronization exception: {}",
+                        exception.what());
+        }
+    }
+
+    UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
 
@@ -588,6 +774,21 @@ void Device::LogDevicePolicy() const {
     const auto& identity = device_policy.identity;
     const auto& caps = device_policy.capabilities;
     const auto& xclipse = device_policy.xclipse;
+    const auto bcn_state = [&caps](std::initializer_list<BcnFormat> formats) -> std::string_view {
+        const bool validated = std::ranges::all_of(formats, [&caps](BcnFormat format) {
+            return SupportsValidatedNativeBcnPath(
+                caps.bcn[static_cast<std::size_t>(format)]);
+        });
+        if (validated) {
+            return "native";
+        }
+        const bool advertised = std::ranges::all_of(formats, [&caps](BcnFormat format) {
+            return SupportsAdvertisedNativeBcnPath(
+                caps.bcn[static_cast<std::size_t>(format)]);
+        });
+        return advertised ? "advertised/unvalidated" : "unsupported";
+    };
+
     LOG_INFO(Render_Vulkan,
              "XCLIPSE PROFILE model=Xclipse{} soc={} driver={} driver_id={} device_id=0x{:x} "
              "driver_version={} pipeline_uuid={} policy_hash={:016x}",
@@ -598,15 +799,50 @@ void Device::LogDevicePolicy() const {
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32=unvalidated wave64=unvalidated sync2={} timeline={} "
              "descriptor_buffer={} sparse={}",
-             xclipse.bc1_native ? "native" : "native-unavailable",
-             xclipse.bc2_native ? "native" : "native-unavailable",
-             xclipse.bc3_native ? "native" : "native-unavailable",
-             xclipse.bc4_native ? "native" : "native-unavailable",
-             xclipse.bc5_native ? "native" : "native-unavailable",
-             xclipse.bc6_native ? "native" : "native-unavailable",
-             xclipse.bc7_native ? "native" : "native-unavailable",
+             bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
+                        BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
+             bcn_state({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB}),
+             bcn_state({BcnFormat::BC3_UNORM, BcnFormat::BC3_SRGB}),
+             bcn_state({BcnFormat::BC4_UNORM, BcnFormat::BC4_SNORM}),
+             bcn_state({BcnFormat::BC5_UNORM, BcnFormat::BC5_SNORM}),
+             bcn_state({BcnFormat::BC6H_UFLOAT, BcnFormat::BC6H_SFLOAT}),
+             bcn_state({BcnFormat::BC7_UNORM, BcnFormat::BC7_SRGB}),
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
              CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding));
+}
+
+void Device::LogXclipseTelemetry() const {
+    if (!xclipse_telemetry.Enabled()) {
+        return;
+    }
+    const auto t = xclipse_telemetry.Snapshot();
+    const double commands_per_submit =
+        t.queue_submits != 0 ? static_cast<double>(t.commands_submitted) /
+                                  static_cast<double>(t.queue_submits)
+                            : 0.0;
+    const double average_compile_ms =
+        t.pipeline_creates != 0
+            ? static_cast<double>(t.pipeline_compile_ns_total) /
+                  static_cast<double>(t.pipeline_creates) / 1'000'000.0
+            : 0.0;
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE PIPELINE creates={} graphics={} compute={} cache_hits={} cache_misses={} "
+             "failures={} compile_avg_ms={:.3f} compile_max_ms={:.3f}",
+             t.pipeline_creates, t.graphics_pipeline_creates, t.compute_pipeline_creates,
+             t.pipeline_cache_hits, t.pipeline_cache_misses, t.pipeline_failures,
+             average_compile_ms, static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE SYNC submits={} commands_per_submit={:.2f} sync2_submits={} legacy_submits={} "
+             "host_waits={} timeline_waits={} scheduler_finishes={} all_commands_barriers={}",
+             t.queue_submits, commands_per_submit, t.sync2_submits, t.legacy_submits, t.host_waits,
+             t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE DESCRIPTORS set_allocations={} buffer_allocations={} descriptor_bytes={} "
+             "ring_wraps={} stalls={}",
+             t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
+             t.descriptor_buffer_wraps, t.descriptor_stalls);
+    LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
+             CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
 
 Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR surface,
@@ -640,7 +876,8 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     SetupFamilies(surface);
     BuildDevicePolicy();
-    LogDevicePolicy();
+    xclipse_telemetry.SetEnabled(device_policy.xclipse.detected &&
+                                 Settings::values.xclipse_runtime_telemetry.GetValue());
     const auto queue_cis = GetDeviceQueueCreateInfos();
 
     // GetSuitability has already configured the linked list of features for us.
@@ -900,6 +1137,9 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     graphics_queue = logical.GetQueue(graphics_family);
     present_queue = logical.GetQueue(present_family);
 
+    RunXclipseValidationProbes();
+    LogDevicePolicy();
+
     VmaVulkanFunctions functions{};
     functions.vkGetInstanceProcAddr = dld.vkGetInstanceProcAddr;
     functions.vkGetDeviceProcAddr = dld.vkGetDeviceProcAddr;
@@ -938,6 +1178,7 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
 Device::~Device() {
     SaveStaticPipelineCache();
+    LogXclipseTelemetry();
     ShutdownGPULogging();
     vmaDestroyAllocator(allocator);
 }
