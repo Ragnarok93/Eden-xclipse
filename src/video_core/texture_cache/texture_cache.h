@@ -133,7 +133,8 @@ void TextureCache<P>::RunGarbageCollector(u32 memory_pressure_level) {
                          aggressive_mode ? 40 :
                          high_priority_mode ? 20 : 10;
     };
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
+    const auto Cleanup = [this, memory_pressure_level, &num_iterations, &high_priority_mode,
+                          &aggressive_mode](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -158,10 +159,12 @@ void TextureCache<P>::RunGarbageCollector(u32 memory_pressure_level) {
         }
         UnregisterImage(image_id);
         DeleteImage(image_id, image.scale_tick > frame_tick + 5);
-        if (aggressive_mode && total_used_memory < critical_memory) {
+        if (aggressive_mode && total_used_memory < critical_memory &&
+            memory_pressure_level < 2) {
             num_iterations >>= 2;
             aggressive_mode = false;
-        } else if (high_priority_mode && total_used_memory < expected_memory) {
+        } else if (high_priority_mode && total_used_memory < expected_memory &&
+                   memory_pressure_level < 1) {
             num_iterations >>= 1;
             high_priority_mode = false;
         }
