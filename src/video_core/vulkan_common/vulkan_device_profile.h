@@ -52,6 +52,7 @@ enum class BcnFormat : std::uint8_t {
 constexpr std::size_t BcnFormatCount = static_cast<std::size_t>(BcnFormat::Count);
 
 struct FormatCapabilitySnapshot {
+    CapabilityState image_create{CapabilityState::Unsupported};
     CapabilityState sampled{CapabilityState::Unsupported};
     CapabilityState linear_filter{CapabilityState::Unsupported};
     CapabilityState storage_image{CapabilityState::Unsupported};
