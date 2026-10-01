@@ -11,6 +11,7 @@
 
 #include "common/common_types.h"
 
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
@@ -97,9 +98,9 @@ private:
 
     StagingBuffersCache& GetCache(MemoryUsage usage);
 
-    void ReleaseCache(MemoryUsage usage);
+    void ReleaseCache(MemoryUsage usage, size_t log2, MemoryPressureClass pressure);
 
-    void ReleaseLevel(StagingBuffersCache& cache, size_t log2);
+    void ReleaseLevel(StagingBuffersCache& cache, size_t log2, MemoryPressureClass pressure);
     size_t Region(size_t iter) const noexcept {
         return iter / region_size;
     }
