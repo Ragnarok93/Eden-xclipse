@@ -1,0 +1,35 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+// Startup probe for Xclipse required-subgroup-size validation.
+//
+// A 64-invocation workgroup is dispatched once. The host forces either a
+// 32- or 64-lane subgroup through VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT.
+// Each subgroup contributes exactly once via subgroupElect().
+//
+// output[0] = subgroup count
+// output[1] = minimum observed gl_SubgroupSize
+// output[2] = maximum observed gl_SubgroupSize
+// output[3] = sum of gl_SubgroupSize over elected lanes
+//
+// Expected:
+//   Wave32 -> {2, 32, 32, 64}
+//   Wave64 -> {1, 64, 64, 64}
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0, std430) buffer ProbeResult {
+    uint value[4];
+} result;
+
+void main() {
+    if (subgroupElect()) {
+        atomicAdd(result.value[0], 1u);
+        atomicMin(result.value[1], gl_SubgroupSize);
+        atomicMax(result.value[2], gl_SubgroupSize);
+        atomicAdd(result.value[3], gl_SubgroupSize);
+    }
+}
