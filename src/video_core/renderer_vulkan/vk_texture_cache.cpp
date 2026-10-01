@@ -1996,13 +1996,40 @@ void TextureCacheRuntime::ReleaseMsaaScratchImage(VkImage image) {
 }
 
 void TextureCacheRuntime::TickFrame() {
-    static constexpr u32 MAX_UNUSED_SCRATCH_FRAMES = 60;
-    std::erase_if(msaa_scratch_images, [this](MsaaScratchImage& scratch) {
+    const auto pressure = memory_pressure_controller.Tick(
+        device, Settings::values.xclipse_memory_pressure.GetValue());
+    if (pressure.sampled) {
+        device.GetXclipseTelemetry().RecordMemoryPressure(
+            static_cast<u32>(pressure.pressure), pressure.changed);
+        if (pressure.changed) {
+            const auto percent_or = [](const auto& value) -> s32 {
+                return value ? static_cast<s32>(*value) : -1;
+            };
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE MEMORY pressure={} budget_used_pct={} ram_available_pct={} "
+                     "gtt_used_pct={} psi_some_avg10={} psi_full_avg10={} psi_trending_up={}",
+                     MemoryPressureClassName(pressure.pressure),
+                     percent_or(pressure.sample.memory_budget_used_percent),
+                     percent_or(pressure.sample.ram_available_percent),
+                     percent_or(pressure.sample.gtt_used_percent),
+                     pressure.sample.psi_some_avg10.value_or(-1.0f),
+                     pressure.sample.psi_full_avg10.value_or(-1.0f),
+                     pressure.psi_trending_up);
+        }
+    }
+
+    const u32 pressure_level = static_cast<u32>(memory_pressure_controller.Current());
+    const u32 max_unused_scratch_frames =
+        pressure_level >= static_cast<u32>(MemoryPressureClass::Critical) ? 0U
+        : pressure_level >= static_cast<u32>(MemoryPressureClass::High) ? 10U
+        : pressure_level >= static_cast<u32>(MemoryPressureClass::Elevated) ? 30U
+                                                                           : 60U;
+    std::erase_if(msaa_scratch_images, [this, max_unused_scratch_frames](MsaaScratchImage& scratch) {
         if (!scheduler.IsFree(scratch.tick)) {
             scratch.unused_frames = 0;
             return false;
         }
-        return ++scratch.unused_frames > MAX_UNUSED_SCRATCH_FRAMES;
+        return ++scratch.unused_frames > max_unused_scratch_frames;
     });
     std::erase_if(pending_resolve_shadows, [this](const auto& pending) {
         return scheduler.IsFree(pending.first);
