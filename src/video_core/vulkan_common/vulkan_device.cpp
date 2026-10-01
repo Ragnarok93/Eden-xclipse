@@ -27,6 +27,7 @@
 #include <ranges>
 #include "common/settings.h"
 #include "common/settings_enums.h"
+#include "video_core/host_shaders/xclipse_subgroup_probe_comp_spv.h"
 #include "video_core/vulkan_common/nsight_aftermath_tracker.h"
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -226,6 +227,339 @@ bool SupportsValidatedNativeBcnPath(const FormatCapabilitySnapshot& format) {
 bool HasValidatedImageCreation(const FormatCapabilitySnapshot& format) {
     return format.image_create == CapabilityState::Validated &&
            SupportsAdvertisedNativeBcnPath(format);
+}
+
+bool ProbeRequiredSubgroupSize(const vk::Device& logical, vk::PhysicalDevice physical,
+                               const vk::Queue& graphics_queue,
+                               const vk::DeviceDispatch& dld, u32 graphics_family,
+                               u32 required_size) {
+    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkShaderModule shader_module = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    void* mapped = nullptr;
+
+    const VkDevice device = *logical;
+    const auto cleanup = [&] {
+        if (mapped != nullptr && memory != VK_NULL_HANDLE) {
+            dld.vkUnmapMemory(device, memory);
+            mapped = nullptr;
+        }
+        if (fence != VK_NULL_HANDLE) {
+            dld.vkDestroyFence(device, fence, nullptr);
+        }
+        if (command_pool != VK_NULL_HANDLE) {
+            dld.vkDestroyCommandPool(device, command_pool, nullptr);
+        }
+        if (descriptor_pool != VK_NULL_HANDLE) {
+            dld.vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+        }
+        if (pipeline != VK_NULL_HANDLE) {
+            dld.vkDestroyPipeline(device, pipeline, nullptr);
+        }
+        if (shader_module != VK_NULL_HANDLE) {
+            dld.vkDestroyShaderModule(device, shader_module, nullptr);
+        }
+        if (pipeline_layout != VK_NULL_HANDLE) {
+            dld.vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+        }
+        if (descriptor_set_layout != VK_NULL_HANDLE) {
+            dld.vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
+        }
+        if (buffer != VK_NULL_HANDLE) {
+            dld.vkDestroyBuffer(device, buffer, nullptr);
+        }
+        if (memory != VK_NULL_HANDLE) {
+            dld.vkFreeMemory(device, memory, nullptr);
+        }
+    };
+
+    const auto fail = [&](std::string_view stage, VkResult result) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE subgroup{} failed stage={} result={}",
+                    required_size, stage, result);
+        cleanup();
+        return false;
+    };
+
+    const VkDescriptorSetLayoutBinding binding{
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+    const VkDescriptorSetLayoutCreateInfo set_layout_ci{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .bindingCount = 1,
+        .pBindings = &binding,
+    };
+    VkResult result =
+        dld.vkCreateDescriptorSetLayout(device, &set_layout_ci, nullptr, &descriptor_set_layout);
+    if (result != VK_SUCCESS) {
+        return fail("descriptor-set-layout", result);
+    }
+
+    const VkPipelineLayoutCreateInfo pipeline_layout_ci{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptor_set_layout,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = nullptr,
+    };
+    result = dld.vkCreatePipelineLayout(device, &pipeline_layout_ci, nullptr, &pipeline_layout);
+    if (result != VK_SUCCESS) {
+        return fail("pipeline-layout", result);
+    }
+
+    const VkShaderModuleCreateInfo shader_ci{
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = std::size(XCLIPSE_SUBGROUP_PROBE_COMP_SPV) * sizeof(u32),
+        .pCode = std::data(XCLIPSE_SUBGROUP_PROBE_COMP_SPV),
+    };
+    result = dld.vkCreateShaderModule(device, &shader_ci, nullptr, &shader_module);
+    if (result != VK_SUCCESS) {
+        return fail("shader-module", result);
+    }
+
+    const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_ci{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
+        .pNext = nullptr,
+        .requiredSubgroupSize = required_size,
+    };
+    const VkPipelineShaderStageCreateInfo stage_ci{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = &subgroup_ci,
+        .flags = 0,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = shader_module,
+        .pName = "main",
+        .pSpecializationInfo = nullptr,
+    };
+    const VkComputePipelineCreateInfo pipeline_ci{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stage = stage_ci,
+        .layout = pipeline_layout,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = -1,
+    };
+    result =
+        dld.vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_ci, nullptr, &pipeline);
+    if (result != VK_SUCCESS) {
+        return fail("pipeline", result);
+    }
+
+    constexpr VkDeviceSize ProbeBytes = sizeof(u32) * 4;
+    const VkBufferCreateInfo buffer_ci{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .size = ProbeBytes,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+    };
+    result = dld.vkCreateBuffer(device, &buffer_ci, nullptr, &buffer);
+    if (result != VK_SUCCESS) {
+        return fail("buffer", result);
+    }
+
+    const VkMemoryRequirements requirements = logical.GetBufferMemoryRequirements(buffer);
+    const auto memory_properties = physical.GetMemoryProperties().memoryProperties;
+    u32 memory_type = VK_MAX_MEMORY_TYPES;
+    constexpr VkMemoryPropertyFlags RequiredMemoryFlags =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+        if ((requirements.memoryTypeBits & (1U << index)) != 0 &&
+            (memory_properties.memoryTypes[index].propertyFlags & RequiredMemoryFlags) ==
+                RequiredMemoryFlags) {
+            memory_type = index;
+            break;
+        }
+    }
+    if (memory_type == VK_MAX_MEMORY_TYPES) {
+        return fail("host-coherent-memory-type", VK_ERROR_FEATURE_NOT_PRESENT);
+    }
+
+    const VkMemoryAllocateInfo memory_ai{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memory_type,
+    };
+    result = dld.vkAllocateMemory(device, &memory_ai, nullptr, &memory);
+    if (result != VK_SUCCESS) {
+        return fail("memory", result);
+    }
+    result = dld.vkBindBufferMemory(device, buffer, memory, 0);
+    if (result != VK_SUCCESS) {
+        return fail("bind-memory", result);
+    }
+    result = dld.vkMapMemory(device, memory, 0, ProbeBytes, 0, &mapped);
+    if (result != VK_SUCCESS) {
+        mapped = nullptr;
+        return fail("map-memory", result);
+    }
+
+    auto* probe = static_cast<u32*>(mapped);
+    probe[0] = 0;
+    probe[1] = 0xffffffffU;
+    probe[2] = 0;
+    probe[3] = 0;
+
+    const VkDescriptorPoolSize pool_size{
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+    };
+    const VkDescriptorPoolCreateInfo pool_ci{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .maxSets = 1,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    result = dld.vkCreateDescriptorPool(device, &pool_ci, nullptr, &descriptor_pool);
+    if (result != VK_SUCCESS) {
+        return fail("descriptor-pool", result);
+    }
+
+    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+    const VkDescriptorSetAllocateInfo descriptor_ai{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .descriptorPool = descriptor_pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &descriptor_set_layout,
+    };
+    result = dld.vkAllocateDescriptorSets(device, &descriptor_ai, &descriptor_set);
+    if (result != VK_SUCCESS) {
+        return fail("descriptor-set", result);
+    }
+
+    const VkDescriptorBufferInfo buffer_info{
+        .buffer = buffer,
+        .offset = 0,
+        .range = ProbeBytes,
+    };
+    const VkWriteDescriptorSet write{
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .pNext = nullptr,
+        .dstSet = descriptor_set,
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pImageInfo = nullptr,
+        .pBufferInfo = &buffer_info,
+        .pTexelBufferView = nullptr,
+    };
+    dld.vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+    const VkCommandPoolCreateInfo command_pool_ci{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = graphics_family,
+    };
+    result = dld.vkCreateCommandPool(device, &command_pool_ci, nullptr, &command_pool);
+    if (result != VK_SUCCESS) {
+        return fail("command-pool", result);
+    }
+
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    const VkCommandBufferAllocateInfo command_ai{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .commandPool = command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    result = dld.vkAllocateCommandBuffers(device, &command_ai, &command_buffer);
+    if (result != VK_SUCCESS) {
+        return fail("command-buffer", result);
+    }
+
+    const VkCommandBufferBeginInfo begin_info{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr,
+    };
+    result = dld.vkBeginCommandBuffer(command_buffer, &begin_info);
+    if (result != VK_SUCCESS) {
+        return fail("begin-command-buffer", result);
+    }
+    dld.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    dld.vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0,
+                                1, &descriptor_set, 0, nullptr);
+    dld.vkCmdDispatch(command_buffer, 1, 1, 1);
+    result = dld.vkEndCommandBuffer(command_buffer);
+    if (result != VK_SUCCESS) {
+        return fail("end-command-buffer", result);
+    }
+
+    const VkFenceCreateInfo fence_ci{
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+    };
+    result = dld.vkCreateFence(device, &fence_ci, nullptr, &fence);
+    if (result != VK_SUCCESS) {
+        return fail("fence", result);
+    }
+
+    const VkSubmitInfo submit_info{
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = nullptr,
+        .pWaitDstStageMask = nullptr,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = nullptr,
+    };
+    result = graphics_queue.Submit(submit_info, fence);
+    if (result != VK_SUCCESS) {
+        return fail("submit", result);
+    }
+
+    constexpr u64 ProbeTimeoutNs = 1'000'000'000ULL;
+    result = dld.vkWaitForFences(device, 1, &fence, VK_TRUE, ProbeTimeoutNs);
+    if (result != VK_SUCCESS) {
+        return fail("wait", result);
+    }
+
+    const u32 expected_subgroups = 64U / required_size;
+    const bool valid = probe[0] == expected_subgroups && probe[1] == required_size &&
+                       probe[2] == required_size && probe[3] == 64U;
+    if (!valid) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE subgroup{} readback count={} min={} max={} sum={}",
+                    required_size, probe[0], probe[1], probe[2], probe[3]);
+    } else {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE subgroup{} validated count={} min={} max={} sum={}",
+                 required_size, probe[0], probe[1], probe[2], probe[3]);
+    }
+
+    cleanup();
+    return valid;
 }
 
 ::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
@@ -572,6 +906,27 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    const bool can_probe_required_subgroup =
+        caps.required_subgroup_size == CapabilityState::Advertised &&
+        (caps.subgroup_supported_stages & VK_SHADER_STAGE_COMPUTE_BIT) != 0 &&
+        (caps.subgroup_supported_operations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0;
+    if (can_probe_required_subgroup) {
+        const auto probe_wave = [&](u32 size) {
+            if (size < caps.min_subgroup_size || size > caps.max_subgroup_size ||
+                (size & (size - 1U)) != 0) {
+                return false;
+            }
+            return ProbeRequiredSubgroupSize(logical, physical, graphics_queue, dld,
+                                             graphics_family, size);
+        };
+        device_policy.xclipse.wave32_validated = probe_wave(32);
+        device_policy.xclipse.wave64_validated = probe_wave(64);
+        if (device_policy.xclipse.wave32_validated ||
+            device_policy.xclipse.wave64_validated) {
+            caps.required_subgroup_size = CapabilityState::Validated;
+        }
+    }
+
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
