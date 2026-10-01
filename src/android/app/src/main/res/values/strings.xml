@@ -655,6 +655,8 @@
     <string name="xclipse_pipeline_policy_description">Validate Eden graphics pipeline state against known Xclipse/Samsung driver-sensitive conditions and record telemetry. Does not rewrite arbitrary pipeline state.</string>
     <string name="xclipse_precise_upload_barrier">Xclipse Precise Upload Barrier</string>
     <string name="xclipse_precise_upload_barrier_description">Use a graphics, compute, and transfer destination-stage barrier for upload writes instead of ALL_COMMANDS on Xclipse. Disable to restore Eden’s conservative barrier for A/B testing.</string>
+    <string name="xclipse_descriptor_buffer_experimental">Xclipse Descriptor Buffer Experiment</string>
+    <string name="xclipse_descriptor_buffer_experimental_description">Allow VK_EXT_descriptor_buffer on Xclipse while the feature is advertised but not behaviorally validated. Off keeps Auto on push descriptors or descriptor sets. Restart emulation after changing this setting.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
