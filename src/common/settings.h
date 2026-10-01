@@ -720,6 +720,8 @@ struct Values {
     Setting<bool> xclipse_precise_msaa_copy_barriers{linkage, true,
                                                      "xclipse_precise_msaa_copy_barriers",
                                                      Category::RendererDebug};
+    Setting<bool> xclipse_async_astc_decode{linkage, true, "xclipse_async_astc_decode",
+                                             Category::RendererDebug};
     Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
                                          Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
