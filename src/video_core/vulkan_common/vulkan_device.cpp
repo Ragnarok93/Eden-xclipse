@@ -857,6 +857,9 @@ void Device::LogXclipseTelemetry() const {
              "ring_wraps={} stalls={}",
              t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
              t.descriptor_buffer_wraps, t.descriptor_stalls);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
+             t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
