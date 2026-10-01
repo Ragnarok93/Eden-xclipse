@@ -31,6 +31,10 @@
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
 
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
+
 #if defined(__ANDROID__) && defined(ARCHITECTURE_arm64)
 #include <adrenotools/bcenabler.h>
 #include <android/api-level.h>
@@ -156,6 +160,52 @@ VkFormatFeatureFlags GetFormatFeatures(VkFormatProperties properties, FormatType
     default:
         return {};
     }
+}
+
+constexpr std::array<VkFormat, BcnFormatCount> BCN_FORMATS{
+    VK_FORMAT_BC1_RGB_UNORM_BLOCK,
+    VK_FORMAT_BC1_RGB_SRGB_BLOCK,
+    VK_FORMAT_BC1_RGBA_UNORM_BLOCK,
+    VK_FORMAT_BC1_RGBA_SRGB_BLOCK,
+    VK_FORMAT_BC2_UNORM_BLOCK,
+    VK_FORMAT_BC2_SRGB_BLOCK,
+    VK_FORMAT_BC3_UNORM_BLOCK,
+    VK_FORMAT_BC3_SRGB_BLOCK,
+    VK_FORMAT_BC4_UNORM_BLOCK,
+    VK_FORMAT_BC4_SNORM_BLOCK,
+    VK_FORMAT_BC5_UNORM_BLOCK,
+    VK_FORMAT_BC5_SNORM_BLOCK,
+    VK_FORMAT_BC6H_UFLOAT_BLOCK,
+    VK_FORMAT_BC6H_SFLOAT_BLOCK,
+    VK_FORMAT_BC7_UNORM_BLOCK,
+    VK_FORMAT_BC7_SRGB_BLOCK,
+};
+
+CapabilityState Advertised(bool available) {
+    return available ? CapabilityState::Advertised : CapabilityState::Unsupported;
+}
+
+FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties properties) {
+    const VkFormatFeatureFlags flags = properties.optimalTilingFeatures;
+    const auto has = [flags](VkFormatFeatureFlagBits feature) {
+        return Advertised((flags & feature) == feature);
+    };
+    return {
+        .sampled = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT),
+        .linear_filter = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
+        .storage_image = has(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT),
+        .transfer_src = has(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT),
+        .transfer_dst = has(VK_FORMAT_FEATURE_TRANSFER_DST_BIT),
+        .blit_src = has(VK_FORMAT_FEATURE_BLIT_SRC_BIT),
+        .blit_dst = has(VK_FORMAT_FEATURE_BLIT_DST_BIT),
+    };
+}
+
+bool SupportsDefaultNativeBcnPath(const FormatCapabilitySnapshot& format) {
+    return format.sampled != CapabilityState::Unsupported &&
+           format.linear_filter != CapabilityState::Unsupported &&
+           format.transfer_src != CapabilityState::Unsupported &&
+           format.transfer_dst != CapabilityState::Unsupported;
 }
 
 ::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
@@ -448,6 +498,115 @@ void Device::RemoveExtensionFeatureIfUnsuitable(bool is_suitable, Feature& featu
     }
 }
 
+void Device::BuildDevicePolicy() {
+    auto& identity = device_policy.identity;
+    identity.device_name = properties.properties.deviceName;
+    identity.driver_name = properties.driver.driverName;
+    identity.vendor_id = properties.properties.vendorID;
+    identity.device_id = properties.properties.deviceID;
+    identity.driver_id = static_cast<std::uint32_t>(properties.driver.driverID);
+    identity.driver_version = properties.properties.driverVersion;
+    std::copy_n(properties.properties.pipelineCacheUUID, identity.pipeline_cache_uuid.size(),
+                identity.pipeline_cache_uuid.begin());
+
+#if defined(__ANDROID__)
+    char soc_model[PROP_VALUE_MAX]{};
+    if (__system_property_get("ro.soc.model", soc_model) > 0) {
+        identity.soc_model = soc_model;
+    }
+#endif
+
+    auto& caps = device_policy.capabilities;
+    caps.timeline = Advertised(features.timeline_semaphore.timelineSemaphore != VK_FALSE);
+    caps.synchronization2 = Advertised(features.synchronization2.synchronization2 != VK_FALSE);
+    caps.descriptor_buffer =
+        Advertised(extensions.descriptor_buffer &&
+                   features.descriptor_buffer.descriptorBuffer != VK_FALSE);
+    caps.sparse_binding =
+        Advertised(features.features.sparseBinding != VK_FALSE && graphics_family_sparse_binding);
+
+    const VkSubgroupFeatureFlags subgroup_ops = properties.subgroup_properties.supportedOperations;
+    caps.subgroup_ballot =
+        Advertised((subgroup_ops & VK_SUBGROUP_FEATURE_BALLOT_BIT) != 0);
+    caps.subgroup_shuffle =
+        Advertised((subgroup_ops & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) != 0);
+    caps.subgroup_arithmetic =
+        Advertised((subgroup_ops & VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) != 0);
+    caps.subgroup_quad =
+        Advertised((subgroup_ops & VK_SUBGROUP_FEATURE_QUAD_BIT) != 0);
+    caps.required_subgroup_size =
+        Advertised(features.subgroup_size_control.subgroupSizeControl != VK_FALSE &&
+                   properties.subgroup_size_control.requiredSubgroupSizeStages != 0);
+
+    caps.subgroup_size = properties.subgroup_properties.subgroupSize;
+    caps.subgroup_supported_stages = properties.subgroup_properties.supportedStages;
+    caps.subgroup_supported_operations = properties.subgroup_properties.supportedOperations;
+    caps.min_subgroup_size = properties.subgroup_size_control.minSubgroupSize;
+    caps.max_subgroup_size = properties.subgroup_size_control.maxSubgroupSize;
+    caps.required_subgroup_size_stages =
+        properties.subgroup_size_control.requiredSubgroupSizeStages;
+
+    for (std::size_t index = 0; index < BCN_FORMATS.size(); ++index) {
+        caps.bcn[index] = CaptureOptimalFormatCapabilities(
+            physical.GetFormatProperties(BCN_FORMATS[index]));
+    }
+
+    device_policy.xclipse = DetectXclipseHardware(identity);
+    auto& xclipse = device_policy.xclipse;
+    const auto native = [&caps](std::initializer_list<BcnFormat> formats) {
+        return std::ranges::all_of(formats, [&caps](BcnFormat format) {
+            return SupportsDefaultNativeBcnPath(
+                caps.bcn[static_cast<std::size_t>(format)]);
+        });
+    };
+    xclipse.bc1_native =
+        native({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
+                BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB});
+    xclipse.bc2_native = native({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB});
+    xclipse.bc3_native = native({BcnFormat::BC3_UNORM, BcnFormat::BC3_SRGB});
+    xclipse.bc4_native = native({BcnFormat::BC4_UNORM, BcnFormat::BC4_SNORM});
+    xclipse.bc5_native = native({BcnFormat::BC5_UNORM, BcnFormat::BC5_SNORM});
+    xclipse.bc6_native = native({BcnFormat::BC6H_UFLOAT, BcnFormat::BC6H_SFLOAT});
+    xclipse.bc7_native = native({BcnFormat::BC7_UNORM, BcnFormat::BC7_SRGB});
+
+    device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
+}
+
+void Device::LogDevicePolicy() const {
+    if (!device_policy.xclipse.detected) {
+        return;
+    }
+
+    std::string pipeline_uuid;
+    pipeline_uuid.reserve(device_policy.identity.pipeline_cache_uuid.size() * 2);
+    for (const auto byte : device_policy.identity.pipeline_cache_uuid) {
+        fmt::format_to(std::back_inserter(pipeline_uuid), "{:02x}", byte);
+    }
+
+    const auto& identity = device_policy.identity;
+    const auto& caps = device_policy.capabilities;
+    const auto& xclipse = device_policy.xclipse;
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE PROFILE model=Xclipse{} soc={} driver={} driver_id={} device_id=0x{:x} "
+             "driver_version={} pipeline_uuid={} policy_hash={:016x}",
+             xclipse.model, identity.soc_model.empty() ? "unknown" : identity.soc_model,
+             identity.driver_name, identity.driver_id, identity.device_id, identity.driver_version,
+             pipeline_uuid, device_policy.policy_hash);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
+             "wave32=unvalidated wave64=unvalidated sync2={} timeline={} "
+             "descriptor_buffer={} sparse={}",
+             xclipse.bc1_native ? "native" : "native-unavailable",
+             xclipse.bc2_native ? "native" : "native-unavailable",
+             xclipse.bc3_native ? "native" : "native-unavailable",
+             xclipse.bc4_native ? "native" : "native-unavailable",
+             xclipse.bc5_native ? "native" : "native-unavailable",
+             xclipse.bc6_native ? "native" : "native-unavailable",
+             xclipse.bc7_native ? "native" : "native-unavailable",
+             CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
+             CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding));
+}
+
 Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR surface,
                const vk::InstanceDispatch& dld_)
     : instance{instance_}, dld{dld_}, physical{physical_},
@@ -478,6 +637,8 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     }
 
     SetupFamilies(surface);
+    BuildDevicePolicy();
+    LogDevicePolicy();
     const auto queue_cis = GetDeviceQueueCreateInfos();
 
     // GetSuitability has already configured the linked list of features for us.
