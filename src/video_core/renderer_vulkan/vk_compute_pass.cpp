@@ -21,6 +21,8 @@
 #include "video_core/host_shaders/bcn_decoder_r8_snorm_comp_spv.h"
 #include "video_core/host_shaders/bcn_decoder_rg8_comp_spv.h"
 #include "video_core/host_shaders/bcn_decoder_rg8_snorm_comp_spv.h"
+#include "video_core/host_shaders/bcn_bptc_decoder_rgba16f_comp_spv.h"
+#include "video_core/host_shaders/bcn_bptc_decoder_rgba8_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_comp_spv.h"
 #include "video_core/host_shaders/queries_prefix_scan_sum_nosubgroups_comp_spv.h"
 #include "video_core/host_shaders/resolve_conditional_render_comp_spv.h"
@@ -228,6 +230,32 @@ std::span<const u32> BcnDecoderCode(VideoCore::Surface::PixelFormat format) {
         return BCN_DECODER_RG8_SNORM_COMP_SPV;
     default:
         return {};
+    }
+}
+
+std::span<const u32> BptcDecoderCode(BPTCDecoderPass::Kind kind) {
+    switch (kind) {
+    case BPTCDecoderPass::Kind::BC6H:
+        return BCN_BPTC_DECODER_RGBA16F_COMP_SPV;
+    case BPTCDecoderPass::Kind::BC7:
+        return BCN_BPTC_DECODER_RGBA8_COMP_SPV;
+    }
+    return {};
+}
+
+u32 BptcDecoderFormat(VideoCore::Surface::PixelFormat format) {
+    using VideoCore::Surface::PixelFormat;
+    switch (format) {
+    case PixelFormat::BC6H_UFLOAT:
+        return 4;
+    case PixelFormat::BC6H_SFLOAT:
+        return 5;
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
+        return 6;
+    default:
+        ASSERT(false);
+        return 6;
     }
 }
 
@@ -739,6 +767,133 @@ void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
 
         scheduler.Record([this, num_dispatches_x, num_dispatches_y, num_dispatches_z,
                           format = *decoder_format, params,
+                          descriptor_data](vk::CommandBuffer cmdbuf) {
+            const BcnPushConstants uniforms{
+                .format = format,
+                .layer_stride = params.layer_stride,
+                .block_size = params.block_size,
+                .x_shift = params.x_shift,
+                .block_height = params.block_height,
+                .block_height_mask = params.block_height_mask,
+            };
+            const VkDescriptorSet set = descriptor_allocator.Commit();
+            device.GetLogical().UpdateDescriptorSet(set, *descriptor_template, descriptor_data);
+            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *layout, 0, set, {});
+            cmdbuf.PushConstants(*layout, VK_SHADER_STAGE_COMPUTE_BIT, uniforms);
+            cmdbuf.Dispatch(num_dispatches_x, num_dispatches_y, num_dispatches_z);
+        });
+    }
+
+    scheduler.Record([vk_image, aspect_mask](vk::CommandBuffer cmdbuf) {
+        const VkImageMemoryBarrier image_barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                             VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = vk_image,
+            .subresourceRange{
+                .aspectMask = aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = VK_REMAINING_MIP_LEVELS,
+                .baseArrayLayer = 0,
+                .layerCount = VK_REMAINING_ARRAY_LAYERS,
+            },
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0,
+                               image_barrier);
+    });
+}
+
+BPTCDecoderPass::BPTCDecoderPass(
+    const Device& device_, Scheduler& scheduler_, DescriptorPool& descriptor_pool_,
+    ComputePassDescriptorQueue& compute_pass_descriptor_queue_, Kind kind_)
+    : ComputePass(device_, scheduler_, descriptor_pool_, ASTC_DESCRIPTOR_SET_BINDINGS,
+                  ASTC_PASS_DESCRIPTOR_UPDATE_TEMPLATE_ENTRY, ASTC_BANK_INFO,
+                  COMPUTE_PUSH_CONSTANT_RANGE<sizeof(BcnPushConstants)>,
+                  BptcDecoderCode(kind_)),
+      scheduler{scheduler_}, compute_pass_descriptor_queue{compute_pass_descriptor_queue_},
+      kind{kind_} {}
+
+BPTCDecoderPass::~BPTCDecoderPass() = default;
+
+bool BPTCDecoderPass::Supports(VideoCore::Surface::PixelFormat format) const noexcept {
+    using VideoCore::Surface::PixelFormat;
+    switch (kind) {
+    case Kind::BC6H:
+        return format == PixelFormat::BC6H_UFLOAT || format == PixelFormat::BC6H_SFLOAT;
+    case Kind::BC7:
+        return format == PixelFormat::BC7_UNORM || format == PixelFormat::BC7_SRGB;
+    }
+    return false;
+}
+
+void BPTCDecoderPass::Assemble(
+    Image& image, const StagingBufferRef& map,
+    std::span<const VideoCommon::SwizzleParameters> swizzles) {
+    using namespace VideoCommon::Accelerated;
+    ASSERT(Supports(image.info.format));
+
+    device.GetXclipseTelemetry().RecordBcnGpuDecode(image.guest_size_bytes);
+    scheduler.RequestOutsideRenderPassOperationContext();
+
+    const VkPipeline vk_pipeline = *pipeline;
+    const VkImageAspectFlags aspect_mask = image.AspectMask();
+    const VkImage vk_image = image.Handle();
+    const bool is_initialized = image.ExchangeInitialization();
+
+    scheduler.Record([vk_pipeline, vk_image, aspect_mask,
+                      is_initialized](vk::CommandBuffer cmdbuf) {
+        const VkImageMemoryBarrier image_barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = static_cast<VkAccessFlags>(
+                is_initialized ? VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_NONE),
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            .oldLayout = is_initialized ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = vk_image,
+            .subresourceRange{
+                .aspectMask = aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = VK_REMAINING_MIP_LEVELS,
+                .baseArrayLayer = 0,
+                .layerCount = VK_REMAINING_ARRAY_LAYERS,
+            },
+        };
+        cmdbuf.PipelineBarrier(
+            is_initialized ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                           : VkPipelineStageFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, image_barrier);
+        cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, vk_pipeline);
+    });
+
+    for (const VideoCommon::SwizzleParameters& swizzle : swizzles) {
+        const size_t input_offset = swizzle.buffer_offset + map.offset;
+        const u32 num_dispatches_x = Common::DivCeil(swizzle.num_tiles.width, 8U);
+        const u32 num_dispatches_y = Common::DivCeil(swizzle.num_tiles.height, 8U);
+        const u32 num_dispatches_z = image.info.resources.layers;
+
+        compute_pass_descriptor_queue.Acquire(scheduler, 2);
+        compute_pass_descriptor_queue.AddBuffer(
+            map.buffer, input_offset, image.guest_size_bytes - swizzle.buffer_offset);
+        compute_pass_descriptor_queue.AddImage(image.StorageImageView(swizzle.level));
+        const void* const descriptor_data{compute_pass_descriptor_queue.UpdateData()};
+
+        const auto params = MakeBlockLinearSwizzle2DParams(swizzle, image.info);
+        ASSERT(params.origin == (std::array<u32, 3>{0, 0, 0}));
+        ASSERT(params.destination == (std::array<s32, 3>{0, 0, 0}));
+        ASSERT(params.bytes_per_block_log2 == 4);
+
+        scheduler.Record([this, num_dispatches_x, num_dispatches_y, num_dispatches_z,
+                          format = BptcDecoderFormat(image.info.format), params,
                           descriptor_data](vk::CommandBuffer cmdbuf) {
             const BcnPushConstants uniforms{
                 .format = format,
