@@ -1524,6 +1524,7 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.XCLIPSE_GPU_BCN_DECODE.key)
             add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
             add(BooleanSetting.XCLIPSE_PRECISE_UPLOAD_BARRIER.key)
+            add(BooleanSetting.XCLIPSE_DESCRIPTOR_BUFFER_EXPERIMENTAL.key)
             add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
 
             add(HeaderSetting(R.string.cpu))
