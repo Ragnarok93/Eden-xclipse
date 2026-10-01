@@ -311,6 +311,11 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
 
+    if (descriptor_set_layout) {
+        device.GetXclipseTelemetry().RecordDescriptorBackend(uses_descriptor_buffer,
+                                                             uses_push_descriptor);
+    }
+
     auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
@@ -588,6 +593,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             std::memcmp(last_descriptor_payload.data(), entries,
                         num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0;
         if (reuse_allocation) {
+            device.GetXclipseTelemetry().RecordDescriptorPayloadReuse();
             descriptor_buffer_offset = last_descriptor_buffer_offset;
             descriptor_buffer_chunk = last_descriptor_buffer_chunk;
             descriptor_buffer_ring.TouchFrame(scheduler);
@@ -599,6 +605,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                 return false;
             }
             WriteDescriptorBuffer(device, descriptor_buffer_layout, entries, alloc.host);
+            device.GetXclipseTelemetry().RecordDescriptorUpdate(true, false);
             descriptor_buffer_offset = alloc.offset;
             descriptor_buffer_chunk = alloc.chunk;
             last_descriptor_buffer_offset = alloc.offset;
@@ -639,7 +646,12 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                         num_descriptor_entries * sizeof(DescriptorUpdateEntry)) != 0;
         if (update_descriptors) {
             last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
+            device.GetXclipseTelemetry().RecordDescriptorUpdate(false, false);
+        } else {
+            device.GetXclipseTelemetry().RecordDescriptorPayloadReuse();
         }
+    } else if (descriptor_set_layout && uses_push_descriptor) {
+        device.GetXclipseTelemetry().RecordDescriptorUpdate(false, true);
     }
     scheduler.Record([this, descriptor_data, bind_pipeline, update_descriptors,
                       descriptor_buffer_offset, descriptor_buffer_chunk, bind_descriptor_buffer,
