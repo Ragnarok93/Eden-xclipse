@@ -1016,6 +1016,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_MEMORY_PRESSURE,
+                    titleId = R.string.xclipse_memory_pressure,
+                    descriptionId = R.string.xclipse_memory_pressure_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.USE_AUTO_STUB,
                     titleId = R.string.use_auto_stub,
                     descriptionId = R.string.use_auto_stub_description
