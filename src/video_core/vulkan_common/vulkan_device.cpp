@@ -843,10 +843,11 @@ void Device::LogXclipseTelemetry() const {
             : 0.0;
     LOG_INFO(Render_Vulkan,
              "XCLIPSE PIPELINE creates={} graphics={} compute={} cache_hits={} cache_misses={} "
-             "failures={} compile_avg_ms={:.3f} compile_max_ms={:.3f}",
+             "failures={} policy_violations={} compile_avg_ms={:.3f} compile_max_ms={:.3f}",
              t.pipeline_creates, t.graphics_pipeline_creates, t.compute_pipeline_creates,
              t.pipeline_cache_hits, t.pipeline_cache_misses, t.pipeline_failures,
-             average_compile_ms, static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
+             t.pipeline_policy_violations, average_compile_ms,
+             static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} sync2_submits={} legacy_submits={} "
              "host_waits={} timeline_waits={} scheduler_finishes={} all_commands_barriers={}",
