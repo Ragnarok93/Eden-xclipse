@@ -1888,6 +1888,9 @@ bool Device::HasTimelineSemaphore() const {
     if (GetDriverID() == VK_DRIVER_ID_MESA_TURNIP) {
         return false;
     }
+    if (device_policy.xclipse.detected) {
+        return device_policy.capabilities.timeline == CapabilityState::Validated;
+    }
     return features.timeline_semaphore.timelineSemaphore;
 }
 
