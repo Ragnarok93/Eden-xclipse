@@ -719,6 +719,8 @@ struct Values {
     Setting<bool> xclipse_precise_upload_barrier{linkage, true,
                                                   "xclipse_precise_upload_barrier",
                                                   Category::RendererDebug};
+    Setting<bool> xclipse_descriptor_buffer_experimental{
+        linkage, false, "xclipse_descriptor_buffer_experimental", Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
                                            Category::RendererDebug};
     Setting<bool> enable_nsight_aftermath{linkage, false, "nsight_aftermath",
