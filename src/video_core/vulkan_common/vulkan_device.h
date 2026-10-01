@@ -1147,6 +1147,9 @@ private:
     /// Executes a real descriptor-buffer-backed compute dispatch and readback.
     void RunXclipseDescriptorBufferValidationProbe();
 
+    /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
+    void RunXclipseSubgroupValidationProbes();
+
     /// Recomputes family-level BCn native readiness from exact per-format state.
     void UpdateXclipseBcnProfile();
 
