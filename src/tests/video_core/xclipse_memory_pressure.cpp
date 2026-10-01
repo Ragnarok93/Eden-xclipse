@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
+
+TEST_CASE("Xclipse pressure uses strongest available signal", "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureSample sample{};
+    sample.memory_budget_used_percent = 79;
+    sample.ram_available_percent = 50;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Elevated);
+
+    sample.gtt_used_percent = 82;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::High);
+
+    sample.psi_full_avg10 = 8.5f;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Critical);
+}
+
+TEST_CASE("Xclipse pressure thresholds are injectable", "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureThresholds thresholds{};
+    thresholds.budget_elevated = 90;
+    thresholds.budget_high = 95;
+    thresholds.budget_critical = 99;
+
+    Vulkan::XclipseMemoryPressureSample sample{};
+    sample.memory_budget_used_percent = 89;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample, thresholds) ==
+            Vulkan::MemoryPressureClass::Normal);
+    sample.memory_budget_used_percent = 90;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample, thresholds) ==
+            Vulkan::MemoryPressureClass::Elevated);
+}
+
+TEST_CASE("Xclipse pressure promotes immediately and demotes gradually",
+          "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureController controller;
+
+    Vulkan::XclipseMemoryPressureSample critical{};
+    critical.memory_budget_used_percent = 96;
+    REQUIRE(controller.ApplySample(critical).pressure ==
+            Vulkan::MemoryPressureClass::Critical);
+
+    Vulkan::XclipseMemoryPressureSample normal{};
+    normal.memory_budget_used_percent = 30;
+    REQUIRE(controller.ApplySample(normal).pressure == Vulkan::MemoryPressureClass::Critical);
+    REQUIRE(controller.ApplySample(normal).pressure == Vulkan::MemoryPressureClass::Critical);
+    REQUIRE(controller.ApplySample(normal).pressure == Vulkan::MemoryPressureClass::High);
+}
+
+TEST_CASE("Xclipse rising PSI trend preemptively raises one class",
+          "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureController controller;
+    Vulkan::XclipseMemoryPressureSample sample{};
+
+    sample.psi_some_avg10 = 0.20f;
+    REQUIRE(controller.ApplySample(sample).pressure == Vulkan::MemoryPressureClass::Normal);
+    sample.psi_some_avg10 = 0.40f;
+    REQUIRE(controller.ApplySample(sample).pressure == Vulkan::MemoryPressureClass::Normal);
+    sample.psi_some_avg10 = 0.80f;
+    const auto result = controller.ApplySample(sample);
+    REQUIRE(result.psi_trending_up);
+    REQUIRE(result.pressure == Vulkan::MemoryPressureClass::Elevated);
+}
