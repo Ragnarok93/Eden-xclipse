@@ -1941,8 +1941,14 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
     }
     if (IsPixelFormatBCn(info.format) &&
         !MaxwellToVK::IsBcnNative(runtime->device, info.format)) {
+        const bool wants_gpu_bcn =
+            runtime->device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
+            (info.format == PixelFormat::BC4_UNORM || info.format == PixelFormat::BC4_SNORM ||
+             info.format == PixelFormat::BC5_UNORM || info.format == PixelFormat::BC5_SNORM);
         if (runtime->bcn_decoder_pass && WillUseAcceleratedBcnDecode(runtime->device, info)) {
             flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
+        } else if (wants_gpu_bcn) {
+            runtime->device.GetXclipseTelemetry().RecordBcnGpuDecodeFallback();
         }
         flags |= VideoCommon::ImageFlagBits::Converted;
         flags |= VideoCommon::ImageFlagBits::CostlyLoad;
