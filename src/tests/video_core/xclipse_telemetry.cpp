@@ -46,6 +46,8 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordDescriptorBufferWrap(true);
     telemetry.RecordBcnGpuDecode(4096);
     telemetry.RecordBcnGpuDecodeFallback();
+    telemetry.RecordAstcDecode(true);
+    telemetry.RecordAstcDecode(false);
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE(snapshot.enabled);
@@ -81,4 +83,6 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.bcn_gpu_decode_dispatches == 1);
     REQUIRE(snapshot.bcn_gpu_decode_bytes == 4096);
     REQUIRE(snapshot.bcn_gpu_decode_fallbacks == 1);
+    REQUIRE(snapshot.astc_async_decodes == 1);
+    REQUIRE(snapshot.astc_forced_finishes == 1);
 }
