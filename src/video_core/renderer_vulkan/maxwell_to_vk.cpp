@@ -321,6 +321,13 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         } else {
             tuple.format = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
         }
+        const bool gpu_rg_decode =
+            device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
+            (pixel_format == PixelFormat::BC4_UNORM || pixel_format == PixelFormat::BC4_SNORM ||
+             pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM);
+        if (gpu_rg_decode) {
+            tuple.usage |= usage_storage;
+        }
     } else if (!device.IsOptimalEtc2Supported() && VideoCore::Surface::IsPixelFormatETC2(pixel_format)) {
         // Transcode on hardware that doesn't support ETC2 natively
         if (pixel_format == PixelFormat::EAC_R11_SNORM) {
