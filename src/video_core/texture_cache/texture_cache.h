@@ -114,16 +114,24 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
 }
 
 template <class P>
-void TextureCache<P>::RunGarbageCollector() {
+void TextureCache<P>::RunGarbageCollector(u32 memory_pressure_level) {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
     const auto Configure = [&](bool allow_aggressive) {
-        high_priority_mode = total_used_memory >= expected_memory;
-        aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
-        ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
-        num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
+        const bool external_elevated = memory_pressure_level >= 1;
+        const bool external_high = memory_pressure_level >= 2;
+        const bool external_critical = memory_pressure_level >= 3;
+        high_priority_mode = total_used_memory >= expected_memory || external_elevated;
+        aggressive_mode =
+            allow_aggressive && (total_used_memory >= critical_memory || external_high);
+        ticks_to_destroy = external_critical ? 5ULL :
+                           aggressive_mode ? 10ULL :
+                           high_priority_mode ? 25ULL : 50ULL;
+        num_iterations = external_critical ? 64 :
+                         aggressive_mode ? 40 :
+                         high_priority_mode ? 20 : 10;
     };
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
         if (num_iterations == 0) {
@@ -161,7 +169,7 @@ void TextureCache<P>::RunGarbageCollector() {
     };
     Configure(false);
     lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
-    if (total_used_memory >= critical_memory) {
+    if (total_used_memory >= critical_memory || memory_pressure_level >= 2) {
         Configure(true);
         lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
     }
@@ -173,8 +181,12 @@ void TextureCache<P>::TickFrame() {
     if (runtime.CanReportMemoryUsage()) {
         total_used_memory = runtime.GetDeviceMemoryUsage();
     }
-    if (total_used_memory > minimum_memory) {
-        RunGarbageCollector();
+    u32 memory_pressure_level = 0;
+    if constexpr (requires { runtime.GetMemoryPressureLevel(); }) {
+        memory_pressure_level = runtime.GetMemoryPressureLevel();
+    }
+    if (total_used_memory > minimum_memory || memory_pressure_level >= 1) {
+        RunGarbageCollector(memory_pressure_level);
     }
     sentenced_images.Tick();
     sentenced_framebuffers.Tick();
