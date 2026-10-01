@@ -1554,6 +1554,12 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
              CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding));
     LOG_INFO(Render_Vulkan,
+             "XCLIPSE DESCRIPTOR POLICY correctness_validated={} auto_selected={} "
+             "experimental_override={}",
+             caps.descriptor_buffer == CapabilityState::Validated,
+             CanUseDescriptorBufferForPipelines(),
+             device_policy.allow_unvalidated_descriptor_buffer);
+    LOG_INFO(Render_Vulkan,
              "XCLIPSE SUBGROUP required_size={} ballot={} shuffle={} arithmetic={} quad={}",
              CapabilityStateName(caps.required_subgroup_size),
              CapabilityStateName(caps.subgroup_ballot),
@@ -1591,10 +1597,16 @@ void Device::LogXclipseTelemetry() const {
              t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers,
              t.transfer_consumer_barriers, t.compute_consumer_barriers);
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE DESCRIPTORS set_allocations={} buffer_allocations={} descriptor_bytes={} "
-             "ring_wraps={} stalls={}",
-             t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
-             t.descriptor_buffer_wraps, t.descriptor_stalls);
+             "XCLIPSE DESCRIPTORS pipelines_buffer={} pipelines_push={} pipelines_sets={} "
+             "set_allocations={} buffer_allocations={} descriptor_bytes={} ring_wraps={} "
+             "frame_waits={} stalls={} updates_buffer={} updates_push={} updates_sets={} "
+             "payload_reuses={}",
+             t.descriptor_buffer_pipelines, t.push_descriptor_pipelines,
+             t.descriptor_set_pipelines, t.descriptor_set_allocations,
+             t.descriptor_buffer_allocations, t.descriptor_bytes,
+             t.descriptor_buffer_wraps, t.descriptor_frame_waits, t.descriptor_stalls,
+             t.descriptor_buffer_writes, t.push_descriptor_updates, t.descriptor_set_updates,
+             t.descriptor_payload_reuses);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
