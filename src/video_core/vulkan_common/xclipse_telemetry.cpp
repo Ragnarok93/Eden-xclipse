@@ -92,6 +92,12 @@ void XclipseTelemetry::RecordPreciseUploadBarrier() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordPreciseMsaaCopyBarrier() noexcept {
+    if (Enabled()) {
+        precise_msaa_copy_barriers.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordDescriptorSetAllocation(u64 sets) noexcept {
     if (Enabled()) {
         descriptor_set_allocations.fetch_add(sets, std::memory_order_relaxed);
@@ -160,6 +166,8 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .submit_commands_17_plus = submit_commands_17_plus.load(std::memory_order_relaxed),
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
         .precise_upload_barriers = precise_upload_barriers.load(std::memory_order_relaxed),
+        .precise_msaa_copy_barriers =
+            precise_msaa_copy_barriers.load(std::memory_order_relaxed),
         .descriptor_set_allocations =
             descriptor_set_allocations.load(std::memory_order_relaxed),
         .descriptor_buffer_allocations =
