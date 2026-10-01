@@ -572,6 +572,9 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    device_policy.allow_unvalidated_descriptor_buffer =
+        device_policy.xclipse.detected &&
+        Settings::values.xclipse_descriptor_buffer_experimental.GetValue();
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -825,6 +828,10 @@ void Device::LogDevicePolicy() const {
              bcn_state({BcnFormat::BC7_UNORM, BcnFormat::BC7_SRGB}),
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
              CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding));
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE POLICY descriptor_buffer_auto={} descriptor_buffer_experimental={}",
+             CanUseDescriptorBufferForPipelines(),
+             device_policy.allow_unvalidated_descriptor_buffer);
 }
 
 void Device::LogXclipseTelemetry() const {
@@ -1389,6 +1396,18 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
     }
     const auto supported_usage = GetFormatFeatures(it->second, format_type);
     return (supported_usage & wanted_usage) == wanted_usage;
+}
+
+bool Device::CanUseDescriptorBufferForPipelines() const noexcept {
+    if (!extensions.descriptor_buffer ||
+        features.descriptor_buffer.descriptorBuffer == VK_FALSE) {
+        return false;
+    }
+    if (!device_policy.xclipse.detected) {
+        return true;
+    }
+    return device_policy.capabilities.descriptor_buffer == CapabilityState::Validated ||
+           device_policy.allow_unvalidated_descriptor_buffer;
 }
 
 std::string Device::GetDriverName() const {
