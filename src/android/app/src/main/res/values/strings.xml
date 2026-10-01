@@ -649,6 +649,8 @@
     <string name="renderer_debug_description">Sets the graphics API to a slow debugging mode.</string>
     <string name="patch_old_qcom_drivers">BCn Texture Patching</string>
     <string name="patch_old_qcom_drivers_description">Override automatic BCn texture format detection on Adreno GPUs. Normally auto-detected based on Android version (enabled on API 28+).</string>
+    <string name="xclipse_sync_policy">Xclipse Precise Upload Barriers</string>
+    <string name="xclipse_sync_policy_description">Use dependency-specific transfer-to-render/compute barriers instead of ALL_COMMANDS for the central upload handoff on Xclipse. Disable this for A/B testing if upload-related corruption or instability appears.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>
