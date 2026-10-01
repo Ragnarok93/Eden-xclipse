@@ -1,0 +1,25 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+// 64 invocations make Wave32 observable as two elected subgroups and Wave64 as one.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0, std430) buffer ProbeOutput {
+    uint subgroup_size;
+    uint elected_subgroups;
+    uint invocation_count;
+    uint reserved;
+} output_data;
+
+void main() {
+    if (gl_LocalInvocationIndex == 0u) {
+        output_data.subgroup_size = gl_SubgroupSize;
+    }
+    if (subgroupElect()) {
+        atomicAdd(output_data.elected_subgroups, 1u);
+    }
+    atomicAdd(output_data.invocation_count, 1u);
+}
