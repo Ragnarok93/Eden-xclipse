@@ -3,6 +3,7 @@
 
 #include "video_core/vulkan_common/xclipse_bcn_repetition.h"
 
+#include <algorithm>
 #include <functional>
 
 namespace Vulkan {
