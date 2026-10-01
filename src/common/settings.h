@@ -716,6 +716,8 @@ struct Values {
                                          Category::RendererDebug};
     Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
                                          Category::RendererDebug};
+    Setting<bool> xclipse_pipeline_policy{linkage, true, "xclipse_pipeline_policy",
+                                           Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
                                            Category::RendererDebug};
     Setting<bool> enable_nsight_aftermath{linkage, false, "nsight_aftermath",
