@@ -47,6 +47,15 @@ void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2) noexcept {
     queue_submits.fetch_add(1, std::memory_order_relaxed);
     commands_submitted.fetch_add(commands, std::memory_order_relaxed);
     (sync2 ? sync2_submits : legacy_submits).fetch_add(1, std::memory_order_relaxed);
+    if (commands == 0) {
+        submit_commands_0.fetch_add(1, std::memory_order_relaxed);
+    } else if (commands <= 4) {
+        submit_commands_1_4.fetch_add(1, std::memory_order_relaxed);
+    } else if (commands <= 16) {
+        submit_commands_5_16.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        submit_commands_17_plus.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 void XclipseTelemetry::RecordGpuWait(bool timeline) noexcept {
@@ -56,6 +65,12 @@ void XclipseTelemetry::RecordGpuWait(bool timeline) noexcept {
     host_waits.fetch_add(1, std::memory_order_relaxed);
     if (timeline) {
         timeline_waits.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordSchedulerFlush() noexcept {
+    if (Enabled()) {
+        scheduler_flushes.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -137,7 +152,12 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .legacy_submits = legacy_submits.load(std::memory_order_relaxed),
         .host_waits = host_waits.load(std::memory_order_relaxed),
         .timeline_waits = timeline_waits.load(std::memory_order_relaxed),
+        .scheduler_flushes = scheduler_flushes.load(std::memory_order_relaxed),
         .scheduler_finishes = scheduler_finishes.load(std::memory_order_relaxed),
+        .submit_commands_0 = submit_commands_0.load(std::memory_order_relaxed),
+        .submit_commands_1_4 = submit_commands_1_4.load(std::memory_order_relaxed),
+        .submit_commands_5_16 = submit_commands_5_16.load(std::memory_order_relaxed),
+        .submit_commands_17_plus = submit_commands_17_plus.load(std::memory_order_relaxed),
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
         .precise_upload_barriers = precise_upload_barriers.load(std::memory_order_relaxed),
         .descriptor_set_allocations =
