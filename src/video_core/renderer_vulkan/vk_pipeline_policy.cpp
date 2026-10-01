@@ -108,14 +108,16 @@ PipelinePolicyReport InspectGraphicsPipeline(const VulkanDevicePolicy& policy,
     }
 
     for (u32 stage = 0; create_info.pStages && stage < create_info.stageCount; ++stage) {
-        bool hit_limit = false;
         auto* current = static_cast<const VkBaseInStructure*>(create_info.pStages[stage].pNext);
-        for (u32 depth = 0; current && depth < 32; ++depth) {
+        bool found_required_subgroup = false;
+        u32 depth = 0;
+        for (; current && depth < 32; ++depth) {
             if (current->sType ==
                 VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT) {
                 const auto* required =
-                    reinterpret_cast<const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo*>(
+                    reinterpret_cast<const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT*>(
                         current);
+                found_required_subgroup = true;
                 if (policy.capabilities.required_subgroup_size != CapabilityState::Validated) {
                     AddIssue(report, PipelinePolicyIssue::RequiredSubgroupUnvalidated);
                 }
@@ -130,8 +132,7 @@ PipelinePolicyReport InspectGraphicsPipeline(const VulkanDevicePolicy& policy,
             }
             current = current->pNext;
         }
-        hit_limit = current != nullptr;
-        if (hit_limit) {
+        if (!found_required_subgroup && current != nullptr && depth == 32) {
             AddIssue(report, PipelinePolicyIssue::PNextTraversalLimit);
         }
     }
