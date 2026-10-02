@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <array>
 #include <optional>
@@ -28,6 +29,7 @@
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_image_copy_validation.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/formatter.h"
@@ -60,6 +62,17 @@ constexpr bool ENABLE_MSAA_TILER_RESOLVE = true;
 constexpr bool ENABLE_MSAA_RESOLVE_CONSUME = true;
 constexpr bool ENABLE_MSAA_COLOR_DISCARD = true;
 constexpr bool ENABLE_MSAA_DEPTH_STENCIL_DISCARD = true;
+
+std::atomic<u32> xclipse_image_diagnostic_count{};
+constexpr u32 XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT = 64;
+
+[[nodiscard]] bool ShouldLogXclipseImageDiagnostic(const Device& device) {
+    if (!device.IsXclipse() || !device.GetXclipseTelemetry().Enabled()) {
+        return false;
+    }
+    return xclipse_image_diagnostic_count.fetch_add(1, std::memory_order_relaxed) <
+           XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT;
+}
 
 [[nodiscard]] constexpr bool NeedsExplicitBorderColorFormat(VkFormat format) {
     switch (format) {
@@ -681,18 +694,19 @@ struct RangedBarrierRange {
         max_layer = (std::max)(max_layer, layers.baseArrayLayer + layers.layerCount);
     }
 
-    VkImageSubresourceRange SubresourceRange(VkImageAspectFlags aspect_mask) const noexcept {
+    VkImageSubresourceRange SubresourceRange(VkImageAspectFlags aspect_mask,
+                                             bool is_3d = false) const noexcept {
         return VkImageSubresourceRange{
             .aspectMask = aspect_mask,
             .baseMipLevel = min_mip,
             .levelCount = max_mip - min_mip,
-            .baseArrayLayer = min_layer,
-            .layerCount = max_layer - min_layer,
+            .baseArrayLayer = is_3d ? 0U : min_layer,
+            .layerCount = is_3d ? VK_REMAINING_ARRAY_LAYERS : max_layer - min_layer,
         };
     }
 };
 void CopyBufferToImage(vk::CommandBuffer cmdbuf, VkBuffer src_buffer, VkImage image,
-                       VkImageAspectFlags aspect_mask, bool is_initialized,
+                       VkImageAspectFlags aspect_mask, bool is_initialized, bool is_3d,
                        std::span<const VkBufferImageCopy> copies) {
     static constexpr VkAccessFlags WRITE_ACCESS_FLAGS =
                                            VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
@@ -706,7 +720,8 @@ void CopyBufferToImage(vk::CommandBuffer cmdbuf, VkBuffer src_buffer, VkImage im
     for (const auto& region : copies) {
         range.AddLayers(region.imageSubresource);
     }
-    const VkImageSubresourceRange subresource_range = range.SubresourceRange(aspect_mask);
+    const VkImageSubresourceRange subresource_range =
+        range.SubresourceRange(aspect_mask, is_3d);
 
     const VkImageMemoryBarrier read_barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1282,9 +1297,12 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
     const VkBuffer copy_buffer = GetTemporaryBuffer(total_size);
     const VkImage dst_image = dst.Handle();
     const VkImage src_image = src.Handle();
+    const bool src_is_3d = src.info.type == ImageType::e3D;
+    const bool dst_is_3d = dst.info.type == ImageType::e3D;
     scheduler.RequestOutsideRenderPassOperationContext();
     scheduler.Record([dst_image, src_image, copy_buffer, src_aspect_mask, dst_aspect_mask,
-                      vk_in_copies, vk_out_copies](vk::CommandBuffer cmdbuf) {
+                      src_is_3d, dst_is_3d, vk_in_copies,
+                      vk_out_copies](vk::CommandBuffer cmdbuf) {
         RangedBarrierRange dst_range;
         RangedBarrierRange src_range;
         for (const VkBufferImageCopy& copy : vk_in_copies) {
@@ -1318,7 +1336,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = src_image,
-                .subresourceRange = src_range.SubresourceRange(src_aspect_mask),
+                .subresourceRange = src_range.SubresourceRange(src_aspect_mask, src_is_3d),
             },
         };
         const std::array middle_in_barrier{
@@ -1332,7 +1350,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = src_image,
-                .subresourceRange = src_range.SubresourceRange(src_aspect_mask),
+                .subresourceRange = src_range.SubresourceRange(src_aspect_mask, src_is_3d),
             },
         };
         const std::array middle_out_barrier{
@@ -1348,7 +1366,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = dst_image,
-                .subresourceRange = dst_range.SubresourceRange(dst_aspect_mask),
+                .subresourceRange = dst_range.SubresourceRange(dst_aspect_mask, dst_is_3d),
             },
         };
         const std::array post_barriers{
@@ -1367,7 +1385,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = dst_image,
-                .subresourceRange = dst_range.SubresourceRange(dst_aspect_mask),
+                .subresourceRange = dst_range.SubresourceRange(dst_aspect_mask, dst_is_3d),
             },
         };
         cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -1380,7 +1398,8 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
 
         cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        0, READ_BARRIER, {}, middle_out_barrier);
-        cmdbuf.CopyBufferToImage(copy_buffer, dst_image, VK_IMAGE_LAYOUT_GENERAL, vk_out_copies);
+        cmdbuf.CopyBufferToImage(copy_buffer, dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  vk_out_copies);
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                        0, {}, {}, post_barriers);
     });
@@ -1679,6 +1698,49 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
     if (ENABLE_MSAA_RESOLVE_CONSUME) {
         InvalidateResolveShadow(dst.Handle());
     }
+
+    boost::container::small_vector<VideoCommon::ImageCopy, 16> bounded_copies;
+    std::span<const VideoCommon::ImageCopy> copy_regions = copies;
+    if (device.IsXclipse()) {
+        bounded_copies.reserve(copies.size());
+        bool rejected_region = false;
+        for (const auto& copy : copies) {
+            const ImageCopyBounds bounds = ValidateImageCopyBounds(src.info, dst.info, copy);
+            if (bounds.InBounds()) {
+                bounded_copies.push_back(copy);
+                continue;
+            }
+            rejected_region = true;
+            if (ShouldLogXclipseImageDiagnostic(device)) {
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE IMAGE COPY rejected src_gpu={:#x} dst_gpu={:#x} "
+                            "src_fmt={} dst_fmt={} src_size={}x{}x{} dst_size={}x{}x{} "
+                            "src_mip={} src_layer={} dst_mip={} dst_layer={} "
+                            "src_off=({},{},{}) dst_off=({},{},{}) extent={}x{}x{} "
+                            "src_mip_size={}x{}x{} dst_mip_size={}x{}x{} "
+                            "src_in_bounds={} dst_in_bounds={}",
+                            src.gpu_addr, dst.gpu_addr, static_cast<u32>(src.info.format),
+                            static_cast<u32>(dst.info.format), src.info.size.width,
+                            src.info.size.height, src.info.size.depth, dst.info.size.width,
+                            dst.info.size.height, dst.info.size.depth,
+                            copy.src_subresource.base_level, copy.src_subresource.base_layer,
+                            copy.dst_subresource.base_level, copy.dst_subresource.base_layer,
+                            copy.src_offset.x, copy.src_offset.y, copy.src_offset.z,
+                            copy.dst_offset.x, copy.dst_offset.y, copy.dst_offset.z,
+                            copy.extent.width, copy.extent.height, copy.extent.depth,
+                            bounds.src_mip_size.width, bounds.src_mip_size.height,
+                            bounds.src_mip_size.depth, bounds.dst_mip_size.width,
+                            bounds.dst_mip_size.height, bounds.dst_mip_size.depth,
+                            bounds.src_in_bounds, bounds.dst_in_bounds);
+            }
+        }
+        if (rejected_region) {
+            if (bounded_copies.empty()) {
+                return;
+            }
+            copy_regions = bounded_copies;
+        }
+    }
     // Vulkan copy compatibility is defined by the actual backing VkFormats, not only by the
     // guest PixelFormats. Xclipse can emulate an unsupported guest format with a different
     // backing format, so the guest block sizes may match while vkCmdCopyImage is still illegal.
@@ -1700,25 +1762,37 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
             return;
         }
 #endif
-        auto oneCopy = VideoCommon::ImageCopy{
-            .src_offset = VideoCommon::Offset3D(0, 0, 0),
-            .dst_offset = VideoCommon::Offset3D(0, 0, 0),
-            .extent = dst.info.size
-        };
-        return ReinterpretImage(dst, src, std::span{&oneCopy, 1});
+        if (ShouldLogXclipseImageDiagnostic(device) && !copy_regions.empty()) {
+            const auto& copy = copy_regions.front();
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE IMAGE COPY reinterpret src_gpu={:#x} dst_gpu={:#x} "
+                     "src_guest_fmt={} dst_guest_fmt={} src_vk_fmt={} dst_vk_fmt={} regions={} "
+                     "first_src_mip={} first_src_layer={} first_dst_mip={} first_dst_layer={} "
+                     "first_extent={}x{}x{} layouts=GENERAL->TRANSFER_SRC/DST->GENERAL",
+                     src.gpu_addr, dst.gpu_addr, static_cast<u32>(src.info.format),
+                     static_cast<u32>(dst.info.format), static_cast<u32>(src_vk_format),
+                     static_cast<u32>(dst_vk_format), copy_regions.size(),
+                     copy.src_subresource.base_level, copy.src_subresource.base_layer,
+                     copy.dst_subresource.base_level, copy.dst_subresource.base_layer,
+                     copy.extent.width, copy.extent.height, copy.extent.depth);
+        }
+        return ReinterpretImage(dst, src, copy_regions);
     }
     device.GetXclipseTelemetry().RecordImageCopy(true);
-    boost::container::small_vector<VkImageCopy, 16> vk_copies(copies.size());
+    boost::container::small_vector<VkImageCopy, 16> vk_copies(copy_regions.size());
     const VkImageAspectFlags aspect_mask = dst.AspectMask();
     ASSERT(aspect_mask == src.AspectMask());
 
-    std::ranges::transform(copies, vk_copies.begin(), [aspect_mask](const auto& copy) {
+    std::ranges::transform(copy_regions, vk_copies.begin(), [aspect_mask](const auto& copy) {
         return MakeImageCopy(copy, aspect_mask);
     });
     const VkImage dst_image = dst.Handle();
     const VkImage src_image = src.Handle();
+    const bool src_is_3d = src.info.type == ImageType::e3D;
+    const bool dst_is_3d = dst.info.type == ImageType::e3D;
     scheduler.RequestOutsideRenderPassOperationContext();
-    scheduler.Record([dst_image, src_image, aspect_mask, vk_copies](vk::CommandBuffer cmdbuf) {
+    scheduler.Record([dst_image, src_image, aspect_mask, src_is_3d, dst_is_3d,
+                      vk_copies](vk::CommandBuffer cmdbuf) {
         RangedBarrierRange dst_range;
         RangedBarrierRange src_range;
         for (const VkImageCopy& copy : vk_copies) {
@@ -1738,7 +1812,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = src_image,
-                .subresourceRange = src_range.SubresourceRange(aspect_mask),
+                .subresourceRange = src_range.SubresourceRange(aspect_mask, src_is_3d),
             },
             VkImageMemoryBarrier{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1752,7 +1826,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = dst_image,
-                .subresourceRange = dst_range.SubresourceRange(aspect_mask),
+                .subresourceRange = dst_range.SubresourceRange(aspect_mask, dst_is_3d),
             },
         };
         const std::array post_barriers{
@@ -1766,7 +1840,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = src_image,
-                .subresourceRange = src_range.SubresourceRange(aspect_mask),
+                .subresourceRange = src_range.SubresourceRange(aspect_mask, src_is_3d),
             },
             VkImageMemoryBarrier{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1783,7 +1857,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .image = dst_image,
-                .subresourceRange = dst_range.SubresourceRange(aspect_mask),
+                .subresourceRange = dst_range.SubresourceRange(aspect_mask, dst_is_3d),
             },
         };
         cmdbuf.PipelineBarrier(
@@ -2185,7 +2259,8 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
 
         scheduler->Record([src_buffer, temp_vk_image, vk_aspect_mask,
                            vk_copies](vk::CommandBuffer cmdbuf) {
-            CopyBufferToImage(cmdbuf, src_buffer, temp_vk_image, vk_aspect_mask, false, VideoCommon::FixSmallVectorADL(vk_copies));
+            CopyBufferToImage(cmdbuf, src_buffer, temp_vk_image, vk_aspect_mask, false, false,
+                              VideoCommon::FixSmallVectorADL(vk_copies));
         });
 
         const auto [samples_x, samples_y] = VideoCommon::SamplesLog2(info.num_samples);
@@ -2236,10 +2311,25 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
     const VkImage vk_image = *original_image;
     const VkImageAspectFlags vk_aspect_mask = aspect_mask;
     const bool was_initialized = std::exchange(initialized, true);
+    const bool image_is_3d = info.type == ImageType::e3D;
 
-    scheduler->Record([src_buffer, vk_image, vk_aspect_mask, was_initialized,
+    if (image_is_3d && ShouldLogXclipseImageDiagnostic(runtime->device) && !copies.empty()) {
+        const auto& copy = copies.front();
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE IMAGE LAYOUT upload3d gpu={:#x} fmt={} size={}x{}x{} "
+                 "mip={} layer={} extent={}x{}x{} layout={}->TRANSFER_DST_OPTIMAL->GENERAL "
+                 "barrier_layers=VK_REMAINING_ARRAY_LAYERS",
+                 gpu_addr, static_cast<u32>(info.format), info.size.width, info.size.height,
+                 info.size.depth, copy.image_subresource.base_level,
+                 copy.image_subresource.base_layer, copy.image_extent.width,
+                 copy.image_extent.height, copy.image_extent.depth,
+                 was_initialized ? "GENERAL" : "UNDEFINED");
+    }
+
+    scheduler->Record([src_buffer, vk_image, vk_aspect_mask, was_initialized, image_is_3d,
                        vk_copies](vk::CommandBuffer cmdbuf) {
-        CopyBufferToImage(cmdbuf, src_buffer, vk_image, vk_aspect_mask, was_initialized, VideoCommon::FixSmallVectorADL(vk_copies));
+        CopyBufferToImage(cmdbuf, src_buffer, vk_image, vk_aspect_mask, was_initialized,
+                          image_is_3d, VideoCommon::FixSmallVectorADL(vk_copies));
     });
 
     if (is_rescaled) {
@@ -3136,6 +3226,23 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth) {
     }
     if (const VkSampler existing = Find(key); existing != VK_NULL_HANDLE) {
         return existing;
+    }
+    if ((key.drop_depth_comparison || key.force_nearest) &&
+        ShouldLogXclipseImageDiagnostic(*device_ptr)) {
+        const VkFormat host_format =
+            MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, false,
+                                       image_view.format)
+                .format;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE IMAGE SAMPLER sanitized image_id={} gpu={:#x} guest_fmt={} host_fmt={} "
+                 "size={}x{}x{} base_mip={} levels={} base_layer={} layers={} "
+                 "drop_depth_compare={} force_nearest={}",
+                 image_view.image_id.Value(), image_view.GpuAddr(),
+                 static_cast<u32>(image_view.format), static_cast<u32>(host_format),
+                 image_view.size.width, image_view.size.height, image_view.size.depth,
+                 image_view.range.base.level, image_view.range.extent.levels,
+                 image_view.range.base.layer, image_view.range.extent.layers,
+                 key.drop_depth_comparison, key.force_nearest);
     }
     return Emplace(key);
 }
