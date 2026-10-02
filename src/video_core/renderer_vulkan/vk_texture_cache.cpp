@@ -210,11 +210,14 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
     case PixelFormat::BC4_SNORM:
     case PixelFormat::BC5_UNORM:
     case PixelFormat::BC5_SNORM:
+        // The RGTC decoder has CPU-reference coverage. Keep the more complex BPTC
+        // BC6H/BC7 path on Eden's proven CPU fallback until an on-device decoder
+        // self-test validates Samsung's shader/image path end-to-end.
+        break;
     case PixelFormat::BC6H_UFLOAT:
     case PixelFormat::BC6H_SFLOAT:
     case PixelFormat::BC7_UNORM:
     case PixelFormat::BC7_SRGB:
-        break;
     default:
         return false;
     }
@@ -1040,26 +1043,12 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                 bcn_decoder_passes[*index].reset();
             }
         }
-        try {
-            bptc_bc6_decoder_pass.emplace(device, scheduler, descriptor_pool,
-                                          compute_pass_descriptor_queue,
-                                          BPTCDecoderPass::Kind::BC6H);
-        } catch (const vk::Exception& exception) {
-            LOG_WARNING(Render_Vulkan,
-                        "XCLIPSE BC6H GPU decoder unavailable, retaining CPU fallback: {}",
-                        exception.what());
-            bptc_bc6_decoder_pass.reset();
-        }
-        try {
-            bptc_bc7_decoder_pass.emplace(device, scheduler, descriptor_pool,
-                                          compute_pass_descriptor_queue,
-                                          BPTCDecoderPass::Kind::BC7);
-        } catch (const vk::Exception& exception) {
-            LOG_WARNING(Render_Vulkan,
-                        "XCLIPSE BC7 GPU decoder unavailable, retaining CPU fallback: {}",
-                        exception.what());
-            bptc_bc7_decoder_pass.reset();
-        }
+        // BC6H/BC7 remain on the CPU conversion path. The shader implementation is
+        // retained for future validation work, but must not be selected merely because
+        // Samsung advertises the destination storage formats.
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE BCN policy: BC4/BC5 GPU decode requested; "
+                 "BC6H/BC7 remain on CPU fallback pending on-device validation");
     }
     if (!device.IsKhrImageFormatListSupported()) {
         return;
