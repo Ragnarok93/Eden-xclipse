@@ -450,6 +450,10 @@ public:
         return supports_depth_comparison;
     }
 
+    [[nodiscard]] bool SupportsLinearFilter() const noexcept {
+        return supports_linear_filter;
+    }
+
     [[nodiscard]] bool RequiresBorderColorFormat() const noexcept {
         return requires_border_color_format;
     }
@@ -501,6 +505,7 @@ private:
     VkComponentMapping swizzle_mapping{};
 
     bool supports_depth_comparison = false;
+    bool supports_linear_filter = false;
     bool requires_border_color_format = false;
     bool supports_minmax_filter = false;
     bool has_identity_swizzle = true;

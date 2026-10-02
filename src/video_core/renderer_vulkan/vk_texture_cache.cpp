@@ -12,6 +12,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <vulkan/vulkan_format_traits.hpp>
 #include <boost/container/small_vector.hpp>
 #include <bit>
 #include <numeric>
@@ -1678,9 +1679,19 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
     if (ENABLE_MSAA_RESOLVE_CONSUME) {
         InvalidateResolveShadow(dst.Handle());
     }
-    // As per the size-compatible formats section of vulkan, copy manually via ReinterpretImage
-    // these images that aren't size-compatible
-    if (BytesPerBlock(src.info.format) != BytesPerBlock(dst.info.format)) {
+    // Vulkan copy compatibility is defined by the actual backing VkFormats, not only by the
+    // guest PixelFormats. Xclipse can emulate an unsupported guest format with a different
+    // backing format, so the guest block sizes may match while vkCmdCopyImage is still illegal.
+    const VkFormat src_vk_format =
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, src.info.format).format;
+    const VkFormat dst_vk_format =
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, dst.info.format).format;
+    const bool guest_size_compatible =
+        BytesPerBlock(src.info.format) == BytesPerBlock(dst.info.format);
+    const bool host_size_compatible =
+        ::vk::blockSize(static_cast<::vk::Format>(src_vk_format)) ==
+        ::vk::blockSize(static_cast<::vk::Format>(dst_vk_format));
+    if (!guest_size_compatible || !host_size_compatible) {
         device.GetXclipseTelemetry().RecordImageCopy(false);
 #ifdef _WIN32
         // On Windows, linear images cause device loss when used in image copies.
@@ -2693,13 +2704,18 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
         supports_depth_comparison =
             (properties3.optimalTilingFeatures &
              VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT) != 0;
+        supports_linear_filter =
+            (properties3.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
         supports_minmax_filter = (properties3.optimalTilingFeatures &
                                   VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_MINMAX_BIT) != 0;
     } else {
+        const VkFormatFeatureFlags features =
+            device->GetPhysical().GetFormatProperties(format_info.format).optimalTilingFeatures;
         supports_depth_comparison = true;
+        supports_linear_filter = (features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
         supports_minmax_filter =
-            (device->GetPhysical().GetFormatProperties(format_info.format).optimalTilingFeatures &
-             VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT) != 0;
+            (features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT) != 0;
     }
     requires_border_color_format = NeedsExplicitBorderColorFormat(format_info.format);
     swizzle_mapping = VkComponentMapping{
@@ -3017,7 +3033,9 @@ Sampler::Sampler(TextureCacheRuntime& runtime, const Tegra::Texture::TSCEntry& t
 Sampler::VariantKey Sampler::MakeKey(const ImageView& image_view, bool is_depth) const noexcept {
     VariantKey key{};
     key.reduce_anisotropy = has_added_anisotropy && !image_view.SupportsAnisotropy();
-    key.force_nearest = has_linear_filtering && IsPixelFormatInteger(image_view.format);
+    key.force_nearest =
+        has_linear_filtering &&
+        (IsPixelFormatInteger(image_view.format) || !image_view.SupportsLinearFilter());
     key.drop_depth_comparison =
         is_depth && has_depth_comparison && !image_view.SupportsDepthComparison();
     key.drop_reduction = has_minmax_reduction && !image_view.SupportsMinmaxFilter();
