@@ -13,7 +13,12 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     telemetry.RecordGpuWait(true);
     telemetry.RecordTransferConsumerBarrier();
     telemetry.RecordComputeConsumerBarrier();
+    telemetry.RecordFrame();
+    telemetry.RecordDescriptorSetUpdate();
+    telemetry.RecordDescriptorPushUpdate();
     telemetry.RecordDescriptorBufferAllocation(64);
+    telemetry.RecordDescriptorBufferUse(true);
+    telemetry.RecordDescriptorFrameWaitRequest();
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE_FALSE(snapshot.enabled);
@@ -21,6 +26,11 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     REQUIRE(snapshot.queue_submits == 0);
     REQUIRE(snapshot.transfer_consumer_barriers == 0);
     REQUIRE(snapshot.compute_consumer_barriers == 0);
+    REQUIRE(snapshot.frame_count == 0);
+    REQUIRE(snapshot.descriptor_set_updates == 0);
+    REQUIRE(snapshot.descriptor_push_updates == 0);
+    REQUIRE(snapshot.descriptor_buffer_uses == 0);
+    REQUIRE(snapshot.descriptor_frame_wait_requests == 0);
     REQUIRE(snapshot.descriptor_bytes == 0);
 }
 
@@ -41,10 +51,17 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordAllCommandsBarrier();
     telemetry.RecordTransferConsumerBarrier();
     telemetry.RecordComputeConsumerBarrier();
+    telemetry.RecordFrame();
+    telemetry.RecordFrame();
     telemetry.RecordDescriptorSetAllocation(2);
+    telemetry.RecordDescriptorSetUpdate();
+    telemetry.RecordDescriptorPushUpdate();
     telemetry.RecordDescriptorBufferAllocation(96);
+    telemetry.RecordDescriptorBufferUse(false);
+    telemetry.RecordDescriptorBufferUse(true);
     telemetry.RecordDescriptorBufferWrap(false);
     telemetry.RecordDescriptorBufferWrap(true);
+    telemetry.RecordDescriptorFrameWaitRequest();
     telemetry.RecordBcnGpuDecode(4096);
     telemetry.RecordBcnGpuDecodeFallback();
 
@@ -69,11 +86,17 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.all_commands_barriers == 1);
     REQUIRE(snapshot.transfer_consumer_barriers == 1);
     REQUIRE(snapshot.compute_consumer_barriers == 1);
+    REQUIRE(snapshot.frame_count == 2);
     REQUIRE(snapshot.descriptor_set_allocations == 2);
+    REQUIRE(snapshot.descriptor_set_updates == 1);
+    REQUIRE(snapshot.descriptor_push_updates == 1);
     REQUIRE(snapshot.descriptor_buffer_allocations == 1);
+    REQUIRE(snapshot.descriptor_buffer_uses == 2);
+    REQUIRE(snapshot.descriptor_buffer_reuses == 1);
     REQUIRE(snapshot.descriptor_bytes == 96);
     REQUIRE(snapshot.descriptor_buffer_wraps == 2);
     REQUIRE(snapshot.descriptor_stalls == 1);
+    REQUIRE(snapshot.descriptor_frame_wait_requests == 1);
     REQUIRE(snapshot.bcn_gpu_decode_dispatches == 1);
     REQUIRE(snapshot.bcn_gpu_decode_bytes == 4096);
     REQUIRE(snapshot.bcn_gpu_decode_fallbacks == 1);
