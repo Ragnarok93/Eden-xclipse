@@ -85,17 +85,47 @@ TEST_CASE("Xclipse isolated GTT pressure uses conservative bands", "[video_core]
             Vulkan::MemoryPressureClass::High);
 }
 
-TEST_CASE("Xclipse texture GC activates only for high and critical pressure",
+TEST_CASE("Xclipse texture GC requires Eden memory contribution",
           "[video_core][xclipse]") {
     using Vulkan::MemoryPressureClass;
+    using Vulkan::XclipseMemoryPressureSample;
     using Vulkan::XclipseTextureGcPressure;
 
-    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Normal) ==
+    XclipseMemoryPressureSample sample{};
+    sample.memory_budget_used_percent = 13;
+    sample.process_rss_percent = 5;
+
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Normal, sample) ==
             XclipseTextureGcPressure::None);
-    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated) ==
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
             XclipseTextureGcPressure::None);
-    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High) ==
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::None);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::None);
+
+    // The observed Xclipse failure mode: Eden itself occupies a large fraction of 8 GiB RAM
+    // while Android has only Elevated free-memory pressure.
+    sample.process_rss_percent = 50;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
             XclipseTextureGcPressure::High);
-    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical) ==
+
+    // Moderate Eden contribution under High pressure asks for the existing high-priority LRU.
+    sample.process_rss_percent = 20;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::High);
+
+    // Critical system pressure only invokes aggressive GC when Eden's contribution is heavy.
+    sample.process_rss_percent = 35;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::Critical);
+
+    sample.process_rss_percent = 5;
+    sample.memory_budget_used_percent = 45;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::High);
+
+    sample.memory_budget_used_percent = 65;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
             XclipseTextureGcPressure::Critical);
 }

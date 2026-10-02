@@ -910,13 +910,15 @@ void RasterizerVulkan::TickFrame() {
                 sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
             const s32 rss_mib =
                 sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+            const s32 rss_pct =
+                sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
             const s32 gtt_pct =
                 sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
             LOG_INFO(Render_Vulkan,
                      "XCLIPSE MEMORY PRESSURE state={} budget_pct={} ram_available_pct={} "
-                     "rss_mib={} gtt_pct={} psi_some={:.2f} psi_full={:.2f} trend={}",
+                     "rss_mib={} rss_pct={} gtt_pct={} psi_some={:.2f} psi_full={:.2f} trend={}",
                      MemoryPressureClassName(pressure_update.pressure), budget_pct,
-                     ram_available_pct, rss_mib, gtt_pct,
+                     ram_available_pct, rss_mib, rss_pct, gtt_pct,
                      sample.psi_some_avg10.value_or(-1.0f),
                      sample.psi_full_avg10.value_or(-1.0f),
                      pressure_update.psi_trending_up);
@@ -934,6 +936,8 @@ void RasterizerVulkan::TickFrame() {
             sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
         const s32 rss_mib =
             sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+        const s32 rss_pct =
+            sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
         const s32 gtt_pct =
             sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
         LOG_INFO(Render_Vulkan,
@@ -944,8 +948,8 @@ void RasterizerVulkan::TickFrame() {
                  "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
                  "depth_native_blits={} depth_shader_blits={} native_resolves={} "
                  "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
-                 "texture_gc={} budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
-                 "psi_some={:.2f} psi_full={:.2f}",
+                 "texture_gc={} budget_pct={} ram_available_pct={} rss_mib={} rss_pct={} "
+                 "gtt_pct={} psi_some={:.2f} psi_full={:.2f}",
                  snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
                  snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
                  snapshot.wait_descriptor_buffer, snapshot.scheduler_finishes,
@@ -960,9 +964,9 @@ void RasterizerVulkan::TickFrame() {
                  snapshot.native_image_copies, snapshot.reinterpret_copies,
                  memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
                  memory_monitor_enabled
-                     ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure))
+                     ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure, sample))
                      : "off",
-                 budget_pct, ram_available_pct, rss_mib, gtt_pct,
+                 budget_pct, ram_available_pct, rss_mib, rss_pct, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),
                  sample.psi_full_avg10.value_or(-1.0f));
     }
@@ -974,10 +978,10 @@ void RasterizerVulkan::TickFrame() {
     staging_pool.TickFrame();
     {
         std::scoped_lock lock{texture_cache.mutex};
+        const auto& pressure = xclipse_memory_pressure.LastSnapshot();
         const auto gc_pressure =
-            memory_monitor_enabled
-                ? TextureGcPressureFor(xclipse_memory_pressure.LastSnapshot().pressure)
-                : XclipseTextureGcPressure::None;
+            memory_monitor_enabled ? TextureGcPressureFor(pressure.pressure, pressure.sample)
+                                   : XclipseTextureGcPressure::None;
         texture_cache.TickFrame(gc_pressure != XclipseTextureGcPressure::None,
                                 gc_pressure == XclipseTextureGcPressure::Critical);
     }

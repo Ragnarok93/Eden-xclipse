@@ -128,7 +128,8 @@ void TextureCache<P>::RunGarbageCollector(bool force_high_priority_gc,
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
+    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
+                          force_high_priority_gc, force_aggressive_gc](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -165,10 +166,14 @@ void TextureCache<P>::RunGarbageCollector(bool force_high_priority_gc,
         return false;
     };
     Configure(false);
-    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+    const auto RunPass = [&] {
+        const u64 oldest_tick = frame_tick > ticks_to_destroy ? frame_tick - ticks_to_destroy : 0;
+        lru_cache.ForEachItemBelow(oldest_tick, Cleanup);
+    };
+    RunPass();
     if (force_aggressive_gc || total_used_memory >= critical_memory) {
         Configure(true);
-        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+        RunPass();
     }
 }
 

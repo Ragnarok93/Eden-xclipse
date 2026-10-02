@@ -144,12 +144,16 @@ void ReadSystemMemory(XclipseMemoryPressureSample& sample) {
 
     std::ifstream self_status("/proc/self/status");
     std::string line;
+    unsigned long long rss_kib{};
     while (std::getline(self_status, line)) {
-        unsigned long long rss_kib{};
         if (std::sscanf(line.c_str(), "VmRSS: %llu kB", &rss_kib) == 1) {
             sample.process_rss_mib = static_cast<u32>(rss_kib / 1024);
             break;
         }
+    }
+    if (total_kib != 0 && rss_kib != 0) {
+        sample.process_rss_percent =
+            static_cast<u32>(std::min<u64>(100, rss_kib * 100 / total_kib));
     }
 #endif
 }

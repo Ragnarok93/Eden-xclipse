@@ -27,20 +27,6 @@ enum class XclipseTextureGcPressure : u8 {
     Critical = 2,
 };
 
-[[nodiscard]] constexpr XclipseTextureGcPressure TextureGcPressureFor(
-    MemoryPressureClass pressure) noexcept {
-    switch (pressure) {
-    case MemoryPressureClass::High:
-        return XclipseTextureGcPressure::High;
-    case MemoryPressureClass::Critical:
-        return XclipseTextureGcPressure::Critical;
-    case MemoryPressureClass::Normal:
-    case MemoryPressureClass::Elevated:
-    default:
-        return XclipseTextureGcPressure::None;
-    }
-}
-
 [[nodiscard]] constexpr const char* TextureGcPressureName(
     XclipseTextureGcPressure pressure) noexcept {
     switch (pressure) {
@@ -76,12 +62,49 @@ struct XclipseMemoryPressureSample {
     std::optional<u32> ram_available_percent;
     // Current process RSS in MiB from /proc/self/status.
     std::optional<u32> process_rss_mib;
+    // Process RSS as a percentage of total system RAM. This is used only to decide whether
+    // Eden is materially contributing to already-detected system pressure.
+    std::optional<u32> process_rss_percent;
     // Optional SGPU/GTT used percentage exposed by the kernel.
     std::optional<u32> gtt_used_percent;
     // Linux PSI memory avg10 values, when readable.
     std::optional<float> psi_some_avg10;
     std::optional<float> psi_full_avg10;
 };
+
+[[nodiscard]] inline XclipseTextureGcPressure TextureGcPressureFor(
+    MemoryPressureClass pressure, const XclipseMemoryPressureSample& sample) noexcept {
+    // Do not evict textures merely because the rest of Android is under pressure. Escalate
+    // Eden's existing LRU only when Eden itself has a meaningful share of either system RAM
+    // or the Vulkan budget. These bands are intentionally conservative and independently
+    // observable in telemetry.
+    const bool meaningful_contribution =
+        (sample.process_rss_percent && *sample.process_rss_percent >= 15) ||
+        (sample.memory_budget_used_percent && *sample.memory_budget_used_percent >= 40);
+    const bool heavy_contribution =
+        (sample.process_rss_percent && *sample.process_rss_percent >= 30) ||
+        (sample.memory_budget_used_percent && *sample.memory_budget_used_percent >= 60);
+
+    switch (pressure) {
+    case MemoryPressureClass::Elevated:
+        // An unusually large Eden process can justify early high-priority trimming even just
+        // above the global High threshold. This matches the observed ~4 GiB RSS / 11% free case.
+        return heavy_contribution ? XclipseTextureGcPressure::High
+                                  : XclipseTextureGcPressure::None;
+    case MemoryPressureClass::High:
+        return meaningful_contribution ? XclipseTextureGcPressure::High
+                                       : XclipseTextureGcPressure::None;
+    case MemoryPressureClass::Critical:
+        if (heavy_contribution) {
+            return XclipseTextureGcPressure::Critical;
+        }
+        return meaningful_contribution ? XclipseTextureGcPressure::High
+                                       : XclipseTextureGcPressure::None;
+    case MemoryPressureClass::Normal:
+    default:
+        return XclipseTextureGcPressure::None;
+    }
+}
 
 struct XclipseMemoryPressureSnapshot {
     MemoryPressureClass pressure{MemoryPressureClass::Normal};
@@ -95,8 +118,8 @@ class XclipseMemoryPressureController {
 public:
     XclipseMemoryPressureController() = default;
 
-    /// Samples Xclipse pressure at most once per second. This is diagnostic-only; callers decide
-    /// whether and how to feed the signal into existing Eden cache policy.
+    /// Samples Xclipse pressure at most once per second. Consumers may use the sampled state only
+    /// through conservative, independently disableable policy such as TextureGcPressureFor().
     [[nodiscard]] XclipseMemoryPressureSnapshot Tick(const Device& device, bool enabled);
 
     /// Deterministic injection path used by tests.
