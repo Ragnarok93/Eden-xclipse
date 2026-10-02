@@ -83,9 +83,27 @@ void XclipseTelemetry::RecordComputeConsumerBarrier() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordFrame() noexcept {
+    if (Enabled()) {
+        frame_count.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordDescriptorSetAllocation(u64 sets) noexcept {
     if (Enabled()) {
         descriptor_set_allocations.fetch_add(sets, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorSetUpdate() noexcept {
+    if (Enabled()) {
+        descriptor_set_updates.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorPushUpdate() noexcept {
+    if (Enabled()) {
+        descriptor_push_updates.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -97,6 +115,16 @@ void XclipseTelemetry::RecordDescriptorBufferAllocation(u64 bytes) noexcept {
     descriptor_bytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
+void XclipseTelemetry::RecordDescriptorBufferUse(bool reused) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    descriptor_buffer_uses.fetch_add(1, std::memory_order_relaxed);
+    if (reused) {
+        descriptor_buffer_reuses.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     if (!Enabled()) {
         return;
@@ -104,6 +132,12 @@ void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     descriptor_buffer_wraps.fetch_add(1, std::memory_order_relaxed);
     if (stalled) {
         descriptor_stalls.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
+    if (Enabled()) {
+        descriptor_frame_wait_requests.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -149,13 +183,20 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
             transfer_consumer_barriers.load(std::memory_order_relaxed),
         .compute_consumer_barriers =
             compute_consumer_barriers.load(std::memory_order_relaxed),
+        .frame_count = frame_count.load(std::memory_order_relaxed),
         .descriptor_set_allocations =
             descriptor_set_allocations.load(std::memory_order_relaxed),
+        .descriptor_set_updates = descriptor_set_updates.load(std::memory_order_relaxed),
+        .descriptor_push_updates = descriptor_push_updates.load(std::memory_order_relaxed),
         .descriptor_buffer_allocations =
             descriptor_buffer_allocations.load(std::memory_order_relaxed),
+        .descriptor_buffer_uses = descriptor_buffer_uses.load(std::memory_order_relaxed),
+        .descriptor_buffer_reuses = descriptor_buffer_reuses.load(std::memory_order_relaxed),
         .descriptor_bytes = descriptor_bytes.load(std::memory_order_relaxed),
         .descriptor_buffer_wraps = descriptor_buffer_wraps.load(std::memory_order_relaxed),
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
+        .descriptor_frame_wait_requests =
+            descriptor_frame_wait_requests.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
