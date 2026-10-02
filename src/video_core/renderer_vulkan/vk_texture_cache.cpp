@@ -1411,6 +1411,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
             UNIMPLEMENTED_MSG("Stencil-only MSAA resolve is not supported");
             return;
         }
+        device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
         blit_image_helper.ResolveDepthStencil(dst_framebuffer, src, dst_region, src_region);
         return;
     }
@@ -1436,19 +1437,23 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
                                                filter, operation);
             return;
         }
-        device.GetXclipseTelemetry().RecordDepthStencilBlit(true);
     }
     ASSERT(!(is_dst_msaa && !is_src_msaa));
     ASSERT(operation == Fermi2D::Operation::SrcCopy);
 
     const bool is_msaa_to_msaa = is_src_msaa && is_dst_msaa;
     if (is_msaa_to_msaa && aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT) {
+        device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColorMSAA(dst_framebuffer, src, dst_region, src_region);
         return;
     }
     if (is_msaa_to_msaa) {
+        device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
         blit_image_helper.BlitDepthStencilMSAA(dst_framebuffer, src, dst_region, src_region);
         return;
+    }
+    if (aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+        device.GetXclipseTelemetry().RecordDepthStencilBlit(true);
     }
 
     const bool is_resolve = is_src_msaa && !is_dst_msaa;
