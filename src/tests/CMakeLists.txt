@@ -22,6 +22,7 @@ add_executable(tests
     video_core/vulkan_device_profile.cpp
     video_core/xclipse_bcn_decode.cpp
     video_core/xclipse_pipeline_policy.cpp
+    video_core/xclipse_memory_pressure.cpp
     video_core/xclipse_telemetry.cpp
     input_common/calibration_configuration_job.cpp
 )
