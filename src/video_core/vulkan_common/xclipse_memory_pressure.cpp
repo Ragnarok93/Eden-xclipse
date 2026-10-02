@@ -282,7 +282,7 @@ XclipseMemoryPressureSample XclipseMemoryPressureController::ReadSample(const De
     XclipseMemoryPressureSample sample{};
 
     if (device.CanReportMemoryUsage()) {
-        const u64 budget = device.GetDeviceLocalMemory();
+        const u64 budget = device.GetDeviceMemoryBudget();
         const u64 usage = device.GetDeviceMemoryUsage();
         if (budget != 0) {
             sample.memory_budget_used_percent =
