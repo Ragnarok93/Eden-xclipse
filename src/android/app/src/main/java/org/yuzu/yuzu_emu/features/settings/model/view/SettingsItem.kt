@@ -1030,6 +1030,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_MEMORY_PRESSURE_MONITOR,
+                    titleId = R.string.xclipse_memory_pressure_monitor,
+                    descriptionId = R.string.xclipse_memory_pressure_monitor_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
