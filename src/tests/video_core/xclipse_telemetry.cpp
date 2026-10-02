@@ -19,6 +19,12 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     telemetry.RecordDescriptorBufferAllocation(64);
     telemetry.RecordDescriptorBufferUse(true);
     telemetry.RecordDescriptorFrameWaitRequest();
+    telemetry.RecordColorShaderBlit();
+    telemetry.RecordDepthStencilBlit(true);
+    telemetry.RecordDepthStencilBlit(false);
+    telemetry.RecordNativeResolve();
+    telemetry.RecordImageCopy(true);
+    telemetry.RecordImageCopy(false);
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE_FALSE(snapshot.enabled);
@@ -32,6 +38,12 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     REQUIRE(snapshot.descriptor_buffer_uses == 0);
     REQUIRE(snapshot.descriptor_frame_wait_requests == 0);
     REQUIRE(snapshot.descriptor_bytes == 0);
+    REQUIRE(snapshot.color_shader_blits == 0);
+    REQUIRE(snapshot.depth_stencil_native_blits == 0);
+    REQUIRE(snapshot.depth_stencil_shader_blits == 0);
+    REQUIRE(snapshot.native_resolves == 0);
+    REQUIRE(snapshot.native_image_copies == 0);
+    REQUIRE(snapshot.reinterpret_copies == 0);
 }
 
 TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[video_core]") {
@@ -64,6 +76,12 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordDescriptorFrameWaitRequest();
     telemetry.RecordBcnGpuDecode(4096);
     telemetry.RecordBcnGpuDecodeFallback();
+    telemetry.RecordColorShaderBlit();
+    telemetry.RecordDepthStencilBlit(true);
+    telemetry.RecordDepthStencilBlit(false);
+    telemetry.RecordNativeResolve();
+    telemetry.RecordImageCopy(true);
+    telemetry.RecordImageCopy(false);
 
     const auto snapshot = telemetry.Snapshot();
     REQUIRE(snapshot.enabled);
@@ -100,4 +118,10 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.bcn_gpu_decode_dispatches == 1);
     REQUIRE(snapshot.bcn_gpu_decode_bytes == 4096);
     REQUIRE(snapshot.bcn_gpu_decode_fallbacks == 1);
+    REQUIRE(snapshot.color_shader_blits == 1);
+    REQUIRE(snapshot.depth_stencil_native_blits == 1);
+    REQUIRE(snapshot.depth_stencil_shader_blits == 1);
+    REQUIRE(snapshot.native_resolves == 1);
+    REQUIRE(snapshot.native_image_copies == 1);
+    REQUIRE(snapshot.reinterpret_copies == 1);
 }

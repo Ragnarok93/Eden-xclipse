@@ -235,31 +235,12 @@ bool HasValidatedImageCreation(const FormatCapabilitySnapshot& format) {
            SupportsAdvertisedNativeBcnPath(format);
 }
 
-bool IsXclipseBasicNativeBcFormat(VkFormat format) {
-    switch (format) {
-    case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
-    case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
-    case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
-    case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
-    case VK_FORMAT_BC2_UNORM_BLOCK:
-    case VK_FORMAT_BC2_SRGB_BLOCK:
-    case VK_FORMAT_BC3_UNORM_BLOCK:
-    case VK_FORMAT_BC3_SRGB_BLOCK:
-        return true;
-    default:
-        return false;
-    }
-}
-
-bool SupportsXclipseRuntimeNativeBcnPath(VkFormat format,
+bool SupportsXclipseRuntimeNativeBcnPath(VkFormat,
                                          const FormatCapabilitySnapshot& capability) {
-    // Samsung's Xclipse Vulkan format table exposes BC1-BC3 as the basic native family.
-    // For those formats a successful image-create probe plus the advertised sampled/filter/
-    // transfer usage is enough to retain the native path. BC4-BC7 stay on emulation until their
-    // actual operations are validated; we never synthesize missing format properties.
-    if (IsXclipseBasicNativeBcFormat(format)) {
-        return HasValidatedImageCreation(capability);
-    }
+    // Image creation alone is not enough evidence for the native compressed-texture path.
+    // Sampling, linear filtering, and transfer behavior must all be execution-validated first.
+    // Until those probes exist, preserve Eden's conversion path instead of trusting Samsung's
+    // advertised BC operation bits.
     return SupportsValidatedNativeBcnPath(capability);
 }
 
@@ -1327,6 +1308,13 @@ void Device::LogXclipseTelemetry() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE RENDER color_shader_blits={} depth_native_blits={} "
+             "depth_shader_blits={} native_resolves={} native_image_copies={} "
+             "reinterpret_copies={}",
+             t.color_shader_blits, t.depth_stencil_native_blits,
+             t.depth_stencil_shader_blits, t.native_resolves, t.native_image_copies,
+             t.reinterpret_copies);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }

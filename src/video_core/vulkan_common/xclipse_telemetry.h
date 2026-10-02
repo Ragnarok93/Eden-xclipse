@@ -48,6 +48,13 @@ struct XclipseTelemetrySnapshot {
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
     u64 bcn_gpu_decode_fallbacks{};
+
+    u64 color_shader_blits{};
+    u64 depth_stencil_native_blits{};
+    u64 depth_stencil_shader_blits{};
+    u64 native_resolves{};
+    u64 native_image_copies{};
+    u64 reinterpret_copies{};
 };
 
 class XclipseTelemetry {
@@ -79,6 +86,10 @@ public:
     void RecordDescriptorFrameWaitRequest() noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
+    void RecordColorShaderBlit() noexcept;
+    void RecordDepthStencilBlit(bool native) noexcept;
+    void RecordNativeResolve() noexcept;
+    void RecordImageCopy(bool native) noexcept;
 
     [[nodiscard]] XclipseTelemetrySnapshot Snapshot() const noexcept;
 
@@ -123,6 +134,13 @@ private:
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
     std::atomic<u64> bcn_gpu_decode_fallbacks{};
+
+    std::atomic<u64> color_shader_blits{};
+    std::atomic<u64> depth_stencil_native_blits{};
+    std::atomic<u64> depth_stencil_shader_blits{};
+    std::atomic<u64> native_resolves{};
+    std::atomic<u64> native_image_copies{};
+    std::atomic<u64> reinterpret_copies{};
 };
 
 } // namespace Vulkan

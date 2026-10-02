@@ -940,7 +940,9 @@ void RasterizerVulkan::TickFrame() {
                  "XCLIPSE RUNTIME frame={} submits={} host_waits={} finishes={} "
                  "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
                  "buffer_reuses={} buffer_allocations={} buffer_waits={} stalls={} "
-                 "bcn_dispatches={} bcn_fallbacks={} memory_monitor={} pressure={} "
+                 "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
+                 "depth_native_blits={} depth_shader_blits={} native_resolves={} "
+                 "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
                  "budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
                  "psi_some={:.2f} psi_full={:.2f}",
                  snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
@@ -950,6 +952,9 @@ void RasterizerVulkan::TickFrame() {
                  snapshot.descriptor_buffer_allocations,
                  snapshot.descriptor_frame_wait_requests, snapshot.descriptor_stalls,
                  snapshot.bcn_gpu_decode_dispatches, snapshot.bcn_gpu_decode_fallbacks,
+                 snapshot.color_shader_blits, snapshot.depth_stencil_native_blits,
+                 snapshot.depth_stencil_shader_blits, snapshot.native_resolves,
+                 snapshot.native_image_copies, snapshot.reinterpret_copies,
                  memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
                  budget_pct, ram_available_pct, rss_mib, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),

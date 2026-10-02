@@ -155,6 +155,34 @@ void XclipseTelemetry::RecordBcnGpuDecodeFallback() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordColorShaderBlit() noexcept {
+    if (Enabled()) {
+        color_shader_blits.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDepthStencilBlit(bool native) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (native ? depth_stencil_native_blits : depth_stencil_shader_blits)
+        .fetch_add(1, std::memory_order_relaxed);
+}
+
+void XclipseTelemetry::RecordNativeResolve() noexcept {
+    if (Enabled()) {
+        native_resolves.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordImageCopy(bool native) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (native ? native_image_copies : reinterpret_copies)
+        .fetch_add(1, std::memory_order_relaxed);
+}
+
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
     return {
         .enabled = Enabled(),
@@ -202,6 +230,14 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
         .bcn_gpu_decode_fallbacks =
             bcn_gpu_decode_fallbacks.load(std::memory_order_relaxed),
+        .color_shader_blits = color_shader_blits.load(std::memory_order_relaxed),
+        .depth_stencil_native_blits =
+            depth_stencil_native_blits.load(std::memory_order_relaxed),
+        .depth_stencil_shader_blits =
+            depth_stencil_shader_blits.load(std::memory_order_relaxed),
+        .native_resolves = native_resolves.load(std::memory_order_relaxed),
+        .native_image_copies = native_image_copies.load(std::memory_order_relaxed),
+        .reinterpret_copies = reinterpret_copies.load(std::memory_order_relaxed),
     };
 }
 
