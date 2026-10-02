@@ -88,3 +88,13 @@ TEST_CASE("Vulkan image copy bounds reject zero extents",
     copy.extent = {32, 32, 0};
     REQUIRE_FALSE(Vulkan::ValidateImageCopyBounds(info, info, copy).InBounds());
 }
+
+
+TEST_CASE("Vulkan buffer-image copy nonempty predicate includes layer count",
+          "[video_core][vulkan][xclipse]") {
+    REQUIRE(Vulkan::ImageCopyExtentIsNonEmpty({1, 1, 1}, 1));
+    REQUIRE_FALSE(Vulkan::ImageCopyExtentIsNonEmpty({0, 1, 1}, 1));
+    REQUIRE_FALSE(Vulkan::ImageCopyExtentIsNonEmpty({1, 0, 1}, 1));
+    REQUIRE_FALSE(Vulkan::ImageCopyExtentIsNonEmpty({1, 1, 0}, 1));
+    REQUIRE_FALSE(Vulkan::ImageCopyExtentIsNonEmpty({1, 1, 1}, 0));
+}

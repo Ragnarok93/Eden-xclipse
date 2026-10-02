@@ -20,10 +20,15 @@ struct ImageCopyBounds {
     }
 };
 
+[[nodiscard]] inline bool ImageCopyExtentIsNonEmpty(VideoCommon::Extent3D extent,
+                                                    s32 num_layers = 1) noexcept {
+    return extent.width != 0 && extent.height != 0 && extent.depth != 0 && num_layers > 0;
+}
+
 [[nodiscard]] inline bool ImageCopyExtentFits(VideoCommon::Offset3D offset,
                                               VideoCommon::Extent3D extent,
                                               VideoCommon::Extent3D limit) noexcept {
-    if (extent.width == 0 || extent.height == 0 || extent.depth == 0 ||
+    if (!ImageCopyExtentIsNonEmpty(extent) ||
         offset.x < 0 || offset.y < 0 || offset.z < 0) {
         return false;
     }
