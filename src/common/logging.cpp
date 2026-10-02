@@ -310,15 +310,15 @@ struct FileBackend final : public Backend {
         const auto write_limit = Settings::values.extended_logging.GetValue() ? 1_GiB : 100_MiB;
         const bool write_limit_exceeded = bytes_written > write_limit;
 
-        // Keep the tail useful after a native/UI crash without forcing an fs flush for every log
-        // line during normal rendering. Warnings and errors are durable immediately; lower-severity
-        // traffic is flushed at most every 250 ms or every 64 KiB.
+        // Keep the tail useful after a native/UI crash without turning warning/assert floods
+        // into synchronous storage I/O. The continuous log is made durable every 250 ms or 64 KiB;
+        // explicit line-flush mode and rollover still force an immediate flush.
         const auto now = std::chrono::steady_clock::now();
         const bool periodic_flush =
             pending_bytes >= 64 * 1024 ||
             now - last_flush >= std::chrono::milliseconds{250};
-        const bool force_flush = Settings::values.log_flush_line.GetValue() ||
-                                 entry.log_level >= Level::Warning || write_limit_exceeded;
+        const bool force_flush =
+            Settings::values.log_flush_line.GetValue() || write_limit_exceeded;
         if (force_flush || periodic_flush) {
             file->Flush();
             pending_bytes = 0;
