@@ -21,6 +21,39 @@ enum class MemoryPressureClass : u8 {
     Critical = 3,
 };
 
+enum class XclipseTextureGcPressure : u8 {
+    None = 0,
+    High = 1,
+    Critical = 2,
+};
+
+[[nodiscard]] constexpr XclipseTextureGcPressure TextureGcPressureFor(
+    MemoryPressureClass pressure) noexcept {
+    switch (pressure) {
+    case MemoryPressureClass::High:
+        return XclipseTextureGcPressure::High;
+    case MemoryPressureClass::Critical:
+        return XclipseTextureGcPressure::Critical;
+    case MemoryPressureClass::Normal:
+    case MemoryPressureClass::Elevated:
+    default:
+        return XclipseTextureGcPressure::None;
+    }
+}
+
+[[nodiscard]] constexpr const char* TextureGcPressureName(
+    XclipseTextureGcPressure pressure) noexcept {
+    switch (pressure) {
+    case XclipseTextureGcPressure::High:
+        return "high";
+    case XclipseTextureGcPressure::Critical:
+        return "critical";
+    case XclipseTextureGcPressure::None:
+    default:
+        return "none";
+    }
+}
+
 [[nodiscard]] constexpr const char* MemoryPressureClassName(
     MemoryPressureClass pressure) noexcept {
     switch (pressure) {

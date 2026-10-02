@@ -84,3 +84,18 @@ TEST_CASE("Xclipse isolated GTT pressure uses conservative bands", "[video_core]
     REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
             Vulkan::MemoryPressureClass::High);
 }
+
+TEST_CASE("Xclipse texture GC activates only for high and critical pressure",
+          "[video_core][xclipse]") {
+    using Vulkan::MemoryPressureClass;
+    using Vulkan::XclipseTextureGcPressure;
+
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Normal) ==
+            XclipseTextureGcPressure::None);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated) ==
+            XclipseTextureGcPressure::None);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High) ==
+            XclipseTextureGcPressure::High);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical) ==
+            XclipseTextureGcPressure::Critical);
+}

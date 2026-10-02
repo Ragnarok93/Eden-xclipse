@@ -944,7 +944,7 @@ void RasterizerVulkan::TickFrame() {
                  "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
                  "depth_native_blits={} depth_shader_blits={} native_resolves={} "
                  "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
-                 "budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
+                 "texture_gc={} budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
                  "psi_some={:.2f} psi_full={:.2f}",
                  snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
                  snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
@@ -959,6 +959,9 @@ void RasterizerVulkan::TickFrame() {
                  snapshot.depth_stencil_shader_blits, snapshot.native_resolves,
                  snapshot.native_image_copies, snapshot.reinterpret_copies,
                  memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
+                 memory_monitor_enabled
+                     ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure))
+                     : "off",
                  budget_pct, ram_available_pct, rss_mib, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),
                  sample.psi_full_avg10.value_or(-1.0f));
@@ -971,7 +974,12 @@ void RasterizerVulkan::TickFrame() {
     staging_pool.TickFrame();
     {
         std::scoped_lock lock{texture_cache.mutex};
-        texture_cache.TickFrame();
+        const auto gc_pressure =
+            memory_monitor_enabled
+                ? TextureGcPressureFor(xclipse_memory_pressure.LastSnapshot().pressure)
+                : XclipseTextureGcPressure::None;
+        texture_cache.TickFrame(gc_pressure != XclipseTextureGcPressure::None,
+                                gc_pressure == XclipseTextureGcPressure::Critical);
     }
     {
         std::scoped_lock lock{buffer_cache.mutex};
