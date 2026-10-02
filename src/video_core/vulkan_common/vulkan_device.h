@@ -981,6 +981,9 @@ FN_MAX_LIMIT_LIST
 
     u64 GetDeviceMemoryUsage() const;
 
+    /// Returns the live VK_EXT_memory_budget heap budget before Eden's integrated-GPU cache cap.
+    u64 GetDeviceMemoryBudget() const;
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
