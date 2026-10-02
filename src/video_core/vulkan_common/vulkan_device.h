@@ -1140,6 +1140,9 @@ private:
     /// Runs bounded device-level probes before pipeline caches are loaded.
     void RunXclipseValidationProbes();
 
+    /// Executes transfer + linear-sampling validation for exact BC1-BC3 formats.
+    void RunXclipseBcnNativeValidationProbes();
+
     /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
     void RunXclipseSubgroupValidationProbes();
 
