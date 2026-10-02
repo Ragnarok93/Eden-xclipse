@@ -296,6 +296,7 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             return false;
         }
         WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
+        device.GetXclipseTelemetry().RecordDescriptorBufferUse(false);
         descriptor_buffer_offset = alloc.offset;
         descriptor_buffer_chunk = alloc.chunk;
     }
@@ -329,11 +330,13 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
+            device.GetXclipseTelemetry().RecordDescriptorPushUpdate();
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else {
             const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
             const vk::Device& dev{device.GetLogical()};
+            device.GetXclipseTelemetry().RecordDescriptorSetUpdate();
             dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
             cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
                                       descriptor_set, nullptr);
