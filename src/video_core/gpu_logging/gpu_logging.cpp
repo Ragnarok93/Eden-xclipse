@@ -54,22 +54,32 @@ void GPULogger::Initialize(LogLevel level, DriverType driver) {
     const auto crashes_dir = log_dir / "gpu_crashes";
     [[maybe_unused]] const bool crashes_dir_created = CreateDir(crashes_dir);
 
-    // Open GPU log file
+    // Keep one canonical GPU log across emulation sessions and Android process restarts. This
+    // preserves the sequence leading into a crash instead of replacing it on every game launch.
     const auto gpu_log_path = log_dir / "eden_gpu.log";
+    using namespace Common::Literals;
+    constexpr u64 gpu_log_rollover_size = 256_MiB;
+    {
+        Common::FS::IOFile existing{gpu_log_path, FileAccessMode::Read, FileType::TextFile};
+        if (existing.IsOpen() && existing.GetSize() >= gpu_log_rollover_size) {
+            existing.Close();
+            const auto old_log_path = log_dir / "eden_gpu.log.old.txt";
+            RemoveFile(old_log_path);
+            [[maybe_unused]] const bool log_renamed = RenameFile(gpu_log_path, old_log_path);
+        }
+    }
 
-    // Rotate old log
-    const auto old_log_path = log_dir / "eden_gpu.log.old.txt";
-    RemoveFile(old_log_path);
-    [[maybe_unused]] const bool log_renamed = RenameFile(gpu_log_path, old_log_path);
-
-    // Open new log file
     gpu_log_file = std::make_unique<Common::FS::IOFile>(
-        gpu_log_path, Common::FS::FileAccessMode::Write, Common::FS::FileType::TextFile);
+        gpu_log_path, Common::FS::FileAccessMode::Append, Common::FS::FileType::TextFile);
 
     if (!gpu_log_file->IsOpen()) {
         LOG_ERROR(Render_Vulkan, "[GPU Logging] Failed to open GPU log file");
         return;
     }
+
+    bytes_written = gpu_log_file->GetSize();
+    pending_log_bytes = 0;
+    last_log_flush = std::chrono::steady_clock::now();
 
     // Initialize ring buffer
     call_ring_buffer.resize(ring_buffer_size);
@@ -107,13 +117,18 @@ void GPULogger::Initialize(LogLevel level, DriverType driver) {
         break;
     }
 
+    const auto wall_clock_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::system_clock::now().time_since_epoch())
+                                   .count();
     const auto header = fmt::format(
-        "=== Eden GPU Logging Started ===\n"
-        "Timestamp: {}\n"
+        "\n=== Eden GPU Logging Session Started ===\n"
+        "Epoch Timestamp (ms): {}\n"
+        "Monotonic Timestamp: {}\n"
         "Log Level: {}\n"
         "Driver: {}\n"
         "Ring Buffer Size: {}\n"
-        "================================\n\n",
+        "========================================\n\n",
+        wall_clock_ms,
         FormatTimestamp(std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch())),
         level_name, driver_name, ring_buffer_size);
@@ -697,12 +712,19 @@ void GPULogger::WriteToLog(const std::string& message) {
     }
 
     std::lock_guard lock(file_mutex);
-    bytes_written += gpu_log_file->WriteString(message);
+    const u64 written = gpu_log_file->WriteString(message);
+    bytes_written += written;
+    pending_log_bytes += written;
 
-    // Flush on errors or if we've written a lot
-    using namespace Common::Literals;
-    if (bytes_written % (1_MiB) == 0) {
+    // Preserve useful tail data across native crashes without flushing every Vulkan log line.
+    // The previous modulo-based flush almost never fired because writes rarely landed on an exact
+    // 1 MiB boundary.
+    const auto now = std::chrono::steady_clock::now();
+    if (pending_log_bytes >= 64 * 1024 ||
+        now - last_log_flush >= std::chrono::milliseconds{250}) {
         gpu_log_file->Flush();
+        pending_log_bytes = 0;
+        last_log_flush = now;
     }
 }
 
