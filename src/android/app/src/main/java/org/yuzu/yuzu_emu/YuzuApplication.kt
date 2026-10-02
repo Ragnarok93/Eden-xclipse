@@ -6,7 +6,9 @@
 
 package org.yuzu.yuzu_emu
 
+import android.app.ActivityManager
 import android.app.Application
+import android.app.ApplicationExitInfo
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -17,6 +19,7 @@ import java.security.KeyStore
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import android.content.res.Configuration
+import android.os.Build
 import android.os.LocaleList
 import org.yuzu.yuzu_emu.features.settings.model.IntSetting
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
@@ -43,6 +46,73 @@ class YuzuApplication : Application() {
                 // handler so crash semantics remain unchanged.
             }
             previousHandler?.uncaughtException(thread, throwable)
+        }
+    }
+
+    private fun logPreviousProcessExit() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return
+        }
+
+        try {
+            val activityManager = getSystemService(ActivityManager::class.java)
+            val exits = activityManager.getHistoricalProcessExitReasons(packageName, 0, 4)
+            if (exits.isEmpty()) {
+                return
+            }
+
+            val preferences = getSharedPreferences("diagnostics", MODE_PRIVATE)
+            val lastLoggedTimestamp = preferences.getLong("last_process_exit_timestamp", 0L)
+            val newest = exits.firstOrNull { it.timestamp > lastLoggedTimestamp } ?: return
+
+            val reasonName = when (newest.reason) {
+                ApplicationExitInfo.REASON_EXIT_SELF -> "exit_self"
+                ApplicationExitInfo.REASON_SIGNALED -> "signaled"
+                ApplicationExitInfo.REASON_LOW_MEMORY -> "low_memory"
+                ApplicationExitInfo.REASON_CRASH -> "crash"
+                ApplicationExitInfo.REASON_CRASH_NATIVE -> "crash_native"
+                ApplicationExitInfo.REASON_ANR -> "anr"
+                ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "initialization_failure"
+                ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "permission_change"
+                ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "excessive_resource_usage"
+                ApplicationExitInfo.REASON_USER_REQUESTED -> "user_requested"
+                ApplicationExitInfo.REASON_USER_STOPPED -> "user_stopped"
+                ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "dependency_died"
+                else -> "other"
+            }
+
+            Log.warning(
+                "[AndroidExit] previous process exit reason=$reasonName(${newest.reason}) " +
+                    "status=${newest.status} importance=${newest.importance} " +
+                    "timestamp=${newest.timestamp} pss=${newest.pss} rss=${newest.rss} " +
+                    "process=${newest.processName} description=${newest.description.orEmpty()}"
+            )
+
+            if (newest.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                newest.reason == ApplicationExitInfo.REASON_ANR
+            ) {
+                newest.traceInputStream?.use { input ->
+                    val buffer = ByteArray(8192)
+                    val trace = StringBuilder()
+                    val maxTraceBytes = 128 * 1024
+                    var total = 0
+                    while (total < maxTraceBytes) {
+                        val count = input.read(buffer, 0, minOf(buffer.size, maxTraceBytes - total))
+                        if (count <= 0) {
+                            break
+                        }
+                        trace.append(String(buffer, 0, count, Charsets.UTF_8))
+                        total += count
+                    }
+                    if (trace.isNotEmpty()) {
+                        Log.critical("[AndroidExitTrace]\n$trace")
+                    }
+                }
+            }
+
+            preferences.edit().putLong("last_process_exit_timestamp", newest.timestamp).apply()
+        } catch (throwable: Throwable) {
+            Log.warning("[AndroidExit] Unable to read previous process exit info: $throwable")
         }
     }
 
@@ -90,6 +160,7 @@ class YuzuApplication : Application() {
         NativeLibrary.logDeviceInfo()
         PowerStateUpdater.start()
         Log.logDeviceInfo()
+        logPreviousProcessExit()
         ControllerNavigationGlobalHook.install(this)
 
         createNotificationChannels()
