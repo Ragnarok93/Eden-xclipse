@@ -562,14 +562,14 @@ TransformBufferCopies(std::span<const VideoCommon::BufferCopy> copies, size_t bu
 [[nodiscard]] boost::container::small_vector<VkBufferImageCopy, 16> TransformBufferImageCopies(
     std::span<const BufferImageCopy> copies, size_t buffer_offset, VkImageAspectFlags aspect_mask) {
     struct Maker {
-        VkBufferImageCopy operator()(const BufferImageCopy& copy) const {
+        VkBufferImageCopy operator()(const BufferImageCopy& copy, VkImageAspectFlags aspect) const {
             return VkBufferImageCopy{
                 .bufferOffset = copy.buffer_offset + buffer_offset,
                 .bufferRowLength = copy.buffer_row_length,
                 .bufferImageHeight = copy.buffer_image_height,
                 .imageSubresource =
                     {
-                        .aspectMask = aspect_mask,
+                        .aspectMask = aspect,
                         .mipLevel = static_cast<u32>(copy.image_subresource.base_level),
                         .baseArrayLayer = static_cast<u32>(copy.image_subresource.base_layer),
                         .layerCount = static_cast<u32>(copy.image_subresource.num_layers),
@@ -589,20 +589,26 @@ TransformBufferCopies(std::span<const VideoCommon::BufferCopy> copies, size_t bu
             };
         }
         size_t buffer_offset;
-        VkImageAspectFlags aspect_mask;
     };
-    if (aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-        boost::container::small_vector<VkBufferImageCopy, 16> result(copies.size() * 2);
-        std::ranges::transform(copies, result.begin(),
-                               Maker{buffer_offset, VK_IMAGE_ASPECT_DEPTH_BIT});
-        std::ranges::transform(copies, result.begin() + copies.size(),
-                               Maker{buffer_offset, VK_IMAGE_ASPECT_STENCIL_BIT});
-        return result;
-    } else {
-        boost::container::small_vector<VkBufferImageCopy, 16> result(copies.size());
-        std::ranges::transform(copies, result.begin(), Maker{buffer_offset, aspect_mask});
-        return result;
+
+    boost::container::small_vector<VkBufferImageCopy, 16> result;
+    const bool depth_stencil =
+        aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+    result.reserve(copies.size() * (depth_stencil ? 2 : 1));
+    const Maker make{buffer_offset};
+    for (const auto& copy : copies) {
+        if (copy.image_extent.width == 0 || copy.image_extent.height == 0 ||
+            copy.image_extent.depth == 0 || copy.image_subresource.num_layers <= 0) {
+            continue;
+        }
+        if (depth_stencil) {
+            result.push_back(make(copy, VK_IMAGE_ASPECT_DEPTH_BIT));
+            result.push_back(make(copy, VK_IMAGE_ASPECT_STENCIL_BIT));
+        } else {
+            result.push_back(make(copy, aspect_mask));
+        }
     }
+    return result;
 }
 
 [[nodiscard]] VkImageSubresourceRange MakeSubresourceRange(VkImageAspectFlags aspect_mask,

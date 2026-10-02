@@ -23,7 +23,8 @@ struct ImageCopyBounds {
 [[nodiscard]] inline bool ImageCopyExtentFits(VideoCommon::Offset3D offset,
                                               VideoCommon::Extent3D extent,
                                               VideoCommon::Extent3D limit) noexcept {
-    if (offset.x < 0 || offset.y < 0 || offset.z < 0) {
+    if (extent.width == 0 || extent.height == 0 || extent.depth == 0 ||
+        offset.x < 0 || offset.y < 0 || offset.z < 0) {
         return false;
     }
     return static_cast<u64>(offset.x) + extent.width <= limit.width &&

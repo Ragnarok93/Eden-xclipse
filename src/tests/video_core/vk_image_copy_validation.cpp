@@ -68,3 +68,23 @@ TEST_CASE("Vulkan 3D image copy validates z extent and fixed array layer",
     copy.extent.depth = 3;
     REQUIRE_FALSE(Vulkan::ValidateImageCopyBounds(info, info, copy).InBounds());
 }
+
+
+TEST_CASE("Vulkan image copy bounds reject zero extents",
+          "[video_core][vulkan][xclipse]") {
+    VideoCommon::ImageInfo info{};
+    info.type = VideoCommon::ImageType::e2D;
+    info.size = {32, 32, 1};
+    info.resources = {.levels = 1, .layers = 1};
+
+    VideoCommon::ImageCopy copy{};
+    copy.extent = {32, 32, 1};
+    REQUIRE(Vulkan::ValidateImageCopyBounds(info, info, copy).InBounds());
+
+    copy.extent.width = 0;
+    REQUIRE_FALSE(Vulkan::ValidateImageCopyBounds(info, info, copy).InBounds());
+    copy.extent = {32, 0, 1};
+    REQUIRE_FALSE(Vulkan::ValidateImageCopyBounds(info, info, copy).InBounds());
+    copy.extent = {32, 32, 0};
+    REQUIRE_FALSE(Vulkan::ValidateImageCopyBounds(info, info, copy).InBounds());
+}
