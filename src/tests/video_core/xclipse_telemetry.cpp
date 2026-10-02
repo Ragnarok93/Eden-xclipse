@@ -10,6 +10,9 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     telemetry.RecordPipelineCacheLookup(true);
     telemetry.RecordPipelineCreate(true, 100, false);
     telemetry.RecordQueueSubmit(4, true);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::Fence);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::DescriptorBuffer);
     telemetry.RecordGpuWait(true);
     telemetry.RecordTransferConsumerBarrier();
     telemetry.RecordComputeConsumerBarrier();
@@ -30,6 +33,11 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     REQUIRE_FALSE(snapshot.enabled);
     REQUIRE(snapshot.pipeline_creates == 0);
     REQUIRE(snapshot.queue_submits == 0);
+    REQUIRE(snapshot.host_waits == 0);
+    REQUIRE(snapshot.wait_unknown == 0);
+    REQUIRE(snapshot.wait_buffer_cache == 0);
+    REQUIRE(snapshot.wait_fence == 0);
+    REQUIRE(snapshot.wait_descriptor_buffer == 0);
     REQUIRE(snapshot.transfer_consumer_barriers == 0);
     REQUIRE(snapshot.compute_consumer_barriers == 0);
     REQUIRE(snapshot.frame_count == 0);
@@ -57,8 +65,10 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordPipelinePolicyViolations(3);
     telemetry.RecordQueueSubmit(7, true);
     telemetry.RecordQueueSubmit(3, false);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache);
+    telemetry.RecordGpuWait(false, Vulkan::XclipseWaitSource::Fence);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::DescriptorBuffer);
     telemetry.RecordGpuWait(true);
-    telemetry.RecordGpuWait(false);
     telemetry.RecordSchedulerFinish();
     telemetry.RecordAllCommandsBarrier();
     telemetry.RecordTransferConsumerBarrier();
@@ -98,8 +108,12 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.commands_submitted == 10);
     REQUIRE(snapshot.sync2_submits == 1);
     REQUIRE(snapshot.legacy_submits == 1);
-    REQUIRE(snapshot.host_waits == 2);
-    REQUIRE(snapshot.timeline_waits == 1);
+    REQUIRE(snapshot.host_waits == 4);
+    REQUIRE(snapshot.timeline_waits == 3);
+    REQUIRE(snapshot.wait_unknown == 1);
+    REQUIRE(snapshot.wait_buffer_cache == 1);
+    REQUIRE(snapshot.wait_fence == 1);
+    REQUIRE(snapshot.wait_descriptor_buffer == 1);
     REQUIRE(snapshot.scheduler_finishes == 1);
     REQUIRE(snapshot.all_commands_barriers == 1);
     REQUIRE(snapshot.transfer_consumer_barriers == 1);

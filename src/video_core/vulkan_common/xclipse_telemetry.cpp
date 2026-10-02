@@ -49,13 +49,28 @@ void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2) noexcept {
     (sync2 ? sync2_submits : legacy_submits).fetch_add(1, std::memory_order_relaxed);
 }
 
-void XclipseTelemetry::RecordGpuWait(bool timeline) noexcept {
+void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) noexcept {
     if (!Enabled()) {
         return;
     }
     host_waits.fetch_add(1, std::memory_order_relaxed);
     if (timeline) {
         timeline_waits.fetch_add(1, std::memory_order_relaxed);
+    }
+    switch (source) {
+    case XclipseWaitSource::BufferCache:
+        wait_buffer_cache.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::Fence:
+        wait_fence.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::DescriptorBuffer:
+        wait_descriptor_buffer.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::Unknown:
+    default:
+        wait_unknown.fetch_add(1, std::memory_order_relaxed);
+        break;
     }
 }
 
@@ -206,6 +221,10 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .host_waits = host_waits.load(std::memory_order_relaxed),
         .timeline_waits = timeline_waits.load(std::memory_order_relaxed),
         .scheduler_finishes = scheduler_finishes.load(std::memory_order_relaxed),
+        .wait_unknown = wait_unknown.load(std::memory_order_relaxed),
+        .wait_buffer_cache = wait_buffer_cache.load(std::memory_order_relaxed),
+        .wait_fence = wait_fence.load(std::memory_order_relaxed),
+        .wait_descriptor_buffer = wait_descriptor_buffer.load(std::memory_order_relaxed),
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
         .transfer_consumer_barriers =
             transfer_consumer_barriers.load(std::memory_order_relaxed),

@@ -9,6 +9,13 @@
 
 namespace Vulkan {
 
+enum class XclipseWaitSource : u8 {
+    Unknown,
+    BufferCache,
+    Fence,
+    DescriptorBuffer,
+};
+
 struct XclipseTelemetrySnapshot {
     bool enabled{};
 
@@ -29,6 +36,10 @@ struct XclipseTelemetrySnapshot {
     u64 host_waits{};
     u64 timeline_waits{};
     u64 scheduler_finishes{};
+    u64 wait_unknown{};
+    u64 wait_buffer_cache{};
+    u64 wait_fence{};
+    u64 wait_descriptor_buffer{};
     u64 all_commands_barriers{};
     u64 transfer_consumer_barriers{};
     u64 compute_consumer_barriers{};
@@ -71,7 +82,8 @@ public:
     void RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept;
     void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2) noexcept;
-    void RecordGpuWait(bool timeline) noexcept;
+    void RecordGpuWait(bool timeline,
+                       XclipseWaitSource source = XclipseWaitSource::Unknown) noexcept;
     void RecordSchedulerFinish() noexcept;
     void RecordAllCommandsBarrier() noexcept;
     void RecordTransferConsumerBarrier() noexcept;
@@ -115,6 +127,10 @@ private:
     std::atomic<u64> host_waits{};
     std::atomic<u64> timeline_waits{};
     std::atomic<u64> scheduler_finishes{};
+    std::atomic<u64> wait_unknown{};
+    std::atomic<u64> wait_buffer_cache{};
+    std::atomic<u64> wait_fence{};
+    std::atomic<u64> wait_descriptor_buffer{};
     std::atomic<u64> all_commands_barriers{};
     std::atomic<u64> transfer_consumer_barriers{};
     std::atomic<u64> compute_consumer_barriers{};

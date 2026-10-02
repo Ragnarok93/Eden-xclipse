@@ -937,16 +937,19 @@ void RasterizerVulkan::TickFrame() {
         const s32 gtt_pct =
             sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE RUNTIME frame={} submits={} host_waits={} finishes={} "
+                 "XCLIPSE RUNTIME frame={} submits={} host_waits={} wait_unknown={} "
+                 "buffer_cache_waits={} fence_waits={} descriptor_waits={} finishes={} "
                  "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
-                 "buffer_reuses={} buffer_allocations={} buffer_waits={} stalls={} "
+                 "buffer_reuses={} buffer_allocations={} descriptor_wait_requests={} stalls={} "
                  "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
                  "depth_native_blits={} depth_shader_blits={} native_resolves={} "
                  "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
                  "budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
                  "psi_some={:.2f} psi_full={:.2f}",
                  snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
-                 snapshot.scheduler_finishes, snapshot.descriptor_set_allocations,
+                 snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
+                 snapshot.wait_descriptor_buffer, snapshot.scheduler_finishes,
+                 snapshot.descriptor_set_allocations,
                  snapshot.descriptor_set_updates, snapshot.descriptor_push_updates,
                  snapshot.descriptor_buffer_uses, snapshot.descriptor_buffer_reuses,
                  snapshot.descriptor_buffer_allocations,

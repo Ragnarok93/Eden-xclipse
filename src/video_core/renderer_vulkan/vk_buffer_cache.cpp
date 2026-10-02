@@ -427,7 +427,7 @@ bool BufferCacheRuntime::IsFree(u64 tick) {
 }
 
 void BufferCacheRuntime::Wait(u64 tick) {
-    scheduler.Wait(tick);
+    scheduler.Wait(tick, 0.0, XclipseWaitSource::BufferCache);
 }
 
 void BufferCacheRuntime::Finish() {
