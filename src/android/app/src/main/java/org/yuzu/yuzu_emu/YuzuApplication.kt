@@ -35,7 +35,7 @@ class YuzuApplication : Application() {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 Log.critical(
-                    "[AndroidCrash] Uncaught exception on thread '${thread.name}'\\n" +
+                    "[AndroidCrash] Uncaught exception on thread '${thread.name}'\n" +
                         throwable.stackTraceToString()
                 )
             } catch (_: Throwable) {
