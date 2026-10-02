@@ -712,6 +712,9 @@ struct Values {
                                              Category::RendererDebug};
     Setting<bool> xclipse_runtime_telemetry{linkage, true, "xclipse_runtime_telemetry",
                                             Category::RendererDebug};
+    Setting<bool> xclipse_memory_pressure_monitor{linkage, true,
+                                                  "xclipse_memory_pressure_monitor",
+                                                  Category::RendererDebug};
     Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
                                          Category::RendererDebug};
     Setting<bool> xclipse_pipeline_policy{linkage, true, "xclipse_pipeline_policy",
