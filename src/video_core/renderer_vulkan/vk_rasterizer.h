@@ -231,6 +231,7 @@ private:
     boost::container::static_vector<VkSampler, MAX_TEXTURES> sampler_handles;
 
     u32 draw_counter = 0;
+    u64 xclipse_runtime_frame_counter{};
 };
 
 } // namespace Vulkan
