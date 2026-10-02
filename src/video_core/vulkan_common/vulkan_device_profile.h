@@ -129,6 +129,7 @@ struct VulkanDevicePolicy {
 };
 
 [[nodiscard]] XclipseHardwareProfile DetectXclipseHardware(const VulkanDeviceIdentity& identity);
+void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept;
 [[nodiscard]] std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept;
 
 } // namespace Vulkan
