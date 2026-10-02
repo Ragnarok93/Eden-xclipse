@@ -654,7 +654,7 @@
     <string name="xclipse_runtime_telemetry">Xclipse Runtime Telemetry</string>
     <string name="xclipse_runtime_telemetry_description">Record Xclipse pipeline, synchronization, descriptor, BC decode, and memory telemetry in the continuous debug log. Disable for telemetry-overhead A/B testing.</string>
     <string name="xclipse_gpu_bcn_decode">Xclipse GPU BCn Decoder</string>
-    <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
+    <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, accelerate BC4/BC5 decoding with the validated RGTC compute path. BC6H/BC7 remain on Eden's CPU fallback until the BPTC shader path passes an on-device correctness self-test. Restart emulation after changing this setting.</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy</string>
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
     <string name="xclipse_sync_policy">Xclipse Synchronization Policy</string>
