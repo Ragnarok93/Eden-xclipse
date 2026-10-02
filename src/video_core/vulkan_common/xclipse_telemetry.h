@@ -33,11 +33,17 @@ struct XclipseTelemetrySnapshot {
     u64 transfer_consumer_barriers{};
     u64 compute_consumer_barriers{};
 
+    u64 frame_count{};
     u64 descriptor_set_allocations{};
+    u64 descriptor_set_updates{};
+    u64 descriptor_push_updates{};
     u64 descriptor_buffer_allocations{};
+    u64 descriptor_buffer_uses{};
+    u64 descriptor_buffer_reuses{};
     u64 descriptor_bytes{};
     u64 descriptor_buffer_wraps{};
     u64 descriptor_stalls{};
+    u64 descriptor_frame_wait_requests{};
 
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
@@ -63,9 +69,14 @@ public:
     void RecordAllCommandsBarrier() noexcept;
     void RecordTransferConsumerBarrier() noexcept;
     void RecordComputeConsumerBarrier() noexcept;
+    void RecordFrame() noexcept;
     void RecordDescriptorSetAllocation(u64 sets = 1) noexcept;
+    void RecordDescriptorSetUpdate() noexcept;
+    void RecordDescriptorPushUpdate() noexcept;
     void RecordDescriptorBufferAllocation(u64 bytes) noexcept;
+    void RecordDescriptorBufferUse(bool reused) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
+    void RecordDescriptorFrameWaitRequest() noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
 
@@ -97,11 +108,17 @@ private:
     std::atomic<u64> transfer_consumer_barriers{};
     std::atomic<u64> compute_consumer_barriers{};
 
+    std::atomic<u64> frame_count{};
     std::atomic<u64> descriptor_set_allocations{};
+    std::atomic<u64> descriptor_set_updates{};
+    std::atomic<u64> descriptor_push_updates{};
     std::atomic<u64> descriptor_buffer_allocations{};
+    std::atomic<u64> descriptor_buffer_uses{};
+    std::atomic<u64> descriptor_buffer_reuses{};
     std::atomic<u64> descriptor_bytes{};
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
+    std::atomic<u64> descriptor_frame_wait_requests{};
 
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
