@@ -210,7 +210,7 @@ private:
     GuestDescriptorQueue guest_descriptor_queue;
     ComputePassDescriptorQueue compute_pass_descriptor_queue;
     DescriptorBufferRing descriptor_buffer_ring;
-    XclipseMemoryPressureController xclipse_memory_pressure;
+    // 1 Hz diagnostic sampler only; it does not alter cache or eviction policy.\n    XclipseMemoryPressureController xclipse_memory_pressure;
     BlitImageHelper blit_image;
     RenderPassCache render_pass_cache;
 
