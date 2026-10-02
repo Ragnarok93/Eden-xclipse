@@ -2516,13 +2516,26 @@ void Device::ReleaseCustomBorderColorSamplers(size_t count) const {
 }
 
 u64 Device::GetDeviceMemoryUsage() const {
-    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
-    budget.pNext = nullptr;
     physical.GetMemoryProperties(&budget);
     u64 result{};
     for (const size_t heap : valid_heap_memory) {
         result += budget.heapUsage[heap];
+    }
+    return result;
+}
+
+u64 Device::GetDeviceMemoryBudget() const {
+    if (!CanReportMemoryUsage()) {
+        return device_access_memory;
+    }
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    physical.GetMemoryProperties(&budget);
+    u64 result{};
+    for (const size_t heap : valid_heap_memory) {
+        result += budget.heapBudget[heap];
     }
     return result;
 }
