@@ -170,10 +170,17 @@ public:
             return;
         }
 
+        // Sample/occlusion queries only have useful work to measure inside a graphics render
+        // pass. Deferred clears can request the counter while no pass is active; beginning it
+        // there and ending it in the next pass violates Vulkan query-scope rules.
+        if (!scheduler.IsRenderPassActive()) {
+            return;
+        }
+
         ReserveHostQuery();
 
         scheduler.Record([query_pool = current_query_pool,
-                                 query_index = current_bank_slot](vk::CommandBuffer cmdbuf) {
+                          query_index = current_bank_slot](vk::CommandBuffer cmdbuf) {
             const bool use_precise = Settings::IsGPULevelHigh();
             cmdbuf.BeginQuery(query_pool, static_cast<u32>(query_index),
                               use_precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
