@@ -894,34 +894,15 @@ void RasterizerVulkan::TickFrame() {
     draw_counter = 0;
     auto& telemetry = device.GetXclipseTelemetry();
     telemetry.RecordFrame();
+    ++xclipse_runtime_frame_counter;
 
     const bool memory_monitor_enabled =
         Settings::values.xclipse_memory_pressure_monitor.GetValue();
-    const auto pressure_update = xclipse_memory_pressure.Tick(device, memory_monitor_enabled);
-    if (pressure_update.sampled && pressure_update.changed) {
-        const auto& sample = pressure_update.sample;
-        const s32 budget_pct = sample.memory_budget_used_percent
-                                   ? static_cast<s32>(*sample.memory_budget_used_percent)
-                                   : -1;
-        const s32 ram_available_pct =
-            sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
-        const s32 rss_mib =
-            sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
-        const s32 gtt_pct =
-            sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
-        LOG_INFO(Render_Vulkan,
-                 "XCLIPSE MEMORY PRESSURE state={} budget_pct={} ram_available_pct={} "
-                 "rss_mib={} gtt_pct={} psi_some={:.2f} psi_full={:.2f} trend={}",
-                 MemoryPressureClassName(pressure_update.pressure), budget_pct,
-                 ram_available_pct, rss_mib, gtt_pct, sample.psi_some_avg10.value_or(-1.0f),
-                 sample.psi_full_avg10.value_or(-1.0f), pressure_update.psi_trending_up);
-    }
-
-    if (telemetry.Enabled()) {
-        const auto snapshot = telemetry.Snapshot();
-        if (snapshot.frame_count != 0 && snapshot.frame_count % 300 == 0) {
-            const auto& pressure = xclipse_memory_pressure.LastSnapshot();
-            const auto& sample = pressure.sample;
+    if (xclipse_runtime_frame_counter % 30 == 0) {
+        const auto pressure_update =
+            xclipse_memory_pressure.Tick(device, memory_monitor_enabled);
+        if (pressure_update.sampled && pressure_update.changed) {
+            const auto& sample = pressure_update.sample;
             const s32 budget_pct = sample.memory_budget_used_percent
                                        ? static_cast<s32>(*sample.memory_budget_used_percent)
                                        : -1;
@@ -932,25 +913,49 @@ void RasterizerVulkan::TickFrame() {
             const s32 gtt_pct =
                 sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
             LOG_INFO(Render_Vulkan,
-                     "XCLIPSE RUNTIME frame={} submits={} host_waits={} finishes={} "
-                     "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
-                     "buffer_reuses={} buffer_allocations={} buffer_waits={} stalls={} "
-                     "bcn_dispatches={} bcn_fallbacks={} memory_monitor={} pressure={} "
-                     "budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
-                     "psi_some={:.2f} psi_full={:.2f}",
-                     snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
-                     snapshot.scheduler_finishes, snapshot.descriptor_set_allocations,
-                     snapshot.descriptor_set_updates, snapshot.descriptor_push_updates,
-                     snapshot.descriptor_buffer_uses, snapshot.descriptor_buffer_reuses,
-                     snapshot.descriptor_buffer_allocations,
-                     snapshot.descriptor_frame_wait_requests, snapshot.descriptor_stalls,
-                     snapshot.bcn_gpu_decode_dispatches, snapshot.bcn_gpu_decode_fallbacks,
-                     memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
-                     budget_pct, ram_available_pct, rss_mib, gtt_pct,
+                     "XCLIPSE MEMORY PRESSURE state={} budget_pct={} ram_available_pct={} "
+                     "rss_mib={} gtt_pct={} psi_some={:.2f} psi_full={:.2f} trend={}",
+                     MemoryPressureClassName(pressure_update.pressure), budget_pct,
+                     ram_available_pct, rss_mib, gtt_pct,
                      sample.psi_some_avg10.value_or(-1.0f),
-                     sample.psi_full_avg10.value_or(-1.0f));
+                     sample.psi_full_avg10.value_or(-1.0f),
+                     pressure_update.psi_trending_up);
         }
     }
+
+    if (telemetry.Enabled() && xclipse_runtime_frame_counter % 300 == 0) {
+        const auto snapshot = telemetry.Snapshot();
+        const auto& pressure = xclipse_memory_pressure.LastSnapshot();
+        const auto& sample = pressure.sample;
+        const s32 budget_pct = sample.memory_budget_used_percent
+                                   ? static_cast<s32>(*sample.memory_budget_used_percent)
+                                   : -1;
+        const s32 ram_available_pct =
+            sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
+        const s32 rss_mib =
+            sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+        const s32 gtt_pct =
+            sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE RUNTIME frame={} submits={} host_waits={} finishes={} "
+                 "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
+                 "buffer_reuses={} buffer_allocations={} buffer_waits={} stalls={} "
+                 "bcn_dispatches={} bcn_fallbacks={} memory_monitor={} pressure={} "
+                 "budget_pct={} ram_available_pct={} rss_mib={} gtt_pct={} "
+                 "psi_some={:.2f} psi_full={:.2f}",
+                 snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
+                 snapshot.scheduler_finishes, snapshot.descriptor_set_allocations,
+                 snapshot.descriptor_set_updates, snapshot.descriptor_push_updates,
+                 snapshot.descriptor_buffer_uses, snapshot.descriptor_buffer_reuses,
+                 snapshot.descriptor_buffer_allocations,
+                 snapshot.descriptor_frame_wait_requests, snapshot.descriptor_stalls,
+                 snapshot.bcn_gpu_decode_dispatches, snapshot.bcn_gpu_decode_fallbacks,
+                 memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
+                 budget_pct, ram_available_pct, rss_mib, gtt_pct,
+                 sample.psi_some_avg10.value_or(-1.0f),
+                 sample.psi_full_avg10.value_or(-1.0f));
+    }
+
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();
     descriptor_buffer_ring.TickFrame();
