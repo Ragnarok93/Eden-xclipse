@@ -1310,11 +1310,20 @@ void Device::LogXclipseTelemetry() const {
              t.queue_submits, commands_per_submit, t.sync2_submits, t.legacy_submits, t.host_waits,
              t.timeline_waits, t.scheduler_finishes, t.all_commands_barriers,
              t.transfer_consumer_barriers, t.compute_consumer_barriers);
+    const double descriptor_buffer_reuse_rate =
+        t.descriptor_buffer_uses != 0
+            ? static_cast<double>(t.descriptor_buffer_reuses) /
+                  static_cast<double>(t.descriptor_buffer_uses) * 100.0
+            : 0.0;
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE DESCRIPTORS set_allocations={} buffer_allocations={} descriptor_bytes={} "
-             "ring_wraps={} stalls={}",
-             t.descriptor_set_allocations, t.descriptor_buffer_allocations, t.descriptor_bytes,
-             t.descriptor_buffer_wraps, t.descriptor_stalls);
+             "XCLIPSE DESCRIPTORS frames={} set_allocations={} set_updates={} push_updates={} "
+             "buffer_allocations={} buffer_uses={} buffer_reuses={} reuse_rate={:.1f}% "
+             "descriptor_bytes={} ring_wraps={} frame_waits={} stalls={}",
+             t.frame_count, t.descriptor_set_allocations, t.descriptor_set_updates,
+             t.descriptor_push_updates, t.descriptor_buffer_allocations,
+             t.descriptor_buffer_uses, t.descriptor_buffer_reuses, descriptor_buffer_reuse_rate,
+             t.descriptor_bytes, t.descriptor_buffer_wraps, t.descriptor_frame_wait_requests,
+             t.descriptor_stalls);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
