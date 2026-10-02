@@ -892,6 +892,25 @@ void RasterizerVulkan::FlushCommands() {
 
 void RasterizerVulkan::TickFrame() {
     draw_counter = 0;
+    auto& telemetry = device.GetXclipseTelemetry();
+    telemetry.RecordFrame();
+    if (telemetry.Enabled()) {
+        const auto snapshot = telemetry.Snapshot();
+        if (snapshot.frame_count != 0 && snapshot.frame_count % 300 == 0) {
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE RUNTIME frame={} submits={} host_waits={} finishes={} "
+                     "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
+                     "buffer_reuses={} buffer_allocations={} buffer_waits={} stalls={} "
+                     "bcn_dispatches={} bcn_fallbacks={}",
+                     snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
+                     snapshot.scheduler_finishes, snapshot.descriptor_set_allocations,
+                     snapshot.descriptor_set_updates, snapshot.descriptor_push_updates,
+                     snapshot.descriptor_buffer_uses, snapshot.descriptor_buffer_reuses,
+                     snapshot.descriptor_buffer_allocations,
+                     snapshot.descriptor_frame_wait_requests, snapshot.descriptor_stalls,
+                     snapshot.bcn_gpu_decode_dispatches, snapshot.bcn_gpu_decode_fallbacks);
+        }
+    }
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();
     descriptor_buffer_ring.TickFrame();
