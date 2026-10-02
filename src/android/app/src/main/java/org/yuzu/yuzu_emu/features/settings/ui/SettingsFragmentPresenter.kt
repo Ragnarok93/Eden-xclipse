@@ -1521,6 +1521,8 @@ class SettingsFragmentPresenter(
             add(IntSetting.RENDERER_BACKEND.key)
             add(BooleanSetting.RENDERER_DEBUG.key)
             add(BooleanSetting.RENDERER_PATCH_OLD_QCOM_DRIVERS.key)
+            add(BooleanSetting.XCLIPSE_VALIDATION_PROBES.key)
+            add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
             add(BooleanSetting.XCLIPSE_GPU_BCN_DECODE.key)
             add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
             add(BooleanSetting.XCLIPSE_SYNC_POLICY.key)
