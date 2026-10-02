@@ -30,6 +30,22 @@ import java.util.Locale
 fun Context.getPublicFilesDir(): File = getExternalFilesDir(null) ?: filesDir
 
 class YuzuApplication : Application() {
+    private fun installCrashLogger() {
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                Log.critical(
+                    "[AndroidCrash] Uncaught exception on thread '${thread.name}'\\n" +
+                        throwable.stackTraceToString()
+                )
+            } catch (_: Throwable) {
+                // Native logging may not be initialized yet. Always delegate to Android's prior
+                // handler so crash semantics remain unchanged.
+            }
+            previousHandler?.uncaughtException(thread, throwable)
+        }
+    }
+
     private fun createNotificationChannels() {
         val name: CharSequence = getString(R.string.app_notification_channel_name)
         val description = getString(R.string.app_notification_channel_description)
@@ -59,6 +75,7 @@ class YuzuApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        installCrashLogger()
         application = this
         documentsTree = DocumentsTree()
         DirectoryInitialization.start()
