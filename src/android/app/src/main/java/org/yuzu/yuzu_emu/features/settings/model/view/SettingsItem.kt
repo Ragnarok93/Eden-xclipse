@@ -1016,6 +1016,20 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_VALIDATION_PROBES,
+                    titleId = R.string.xclipse_validation_probes,
+                    descriptionId = R.string.xclipse_validation_probes_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY,
+                    titleId = R.string.xclipse_runtime_telemetry,
+                    descriptionId = R.string.xclipse_runtime_telemetry_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
