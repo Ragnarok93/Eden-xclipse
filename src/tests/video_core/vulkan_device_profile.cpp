@@ -70,3 +70,26 @@ TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability ident
     policy.use_xclipse_sync_policy = true;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
 }
+
+TEST_CASE("VulkanDeviceProfile: Xclipse sync policy requires validated Sync2", "[video_core]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.capabilities.synchronization2 = Vulkan::CapabilityState::Advertised;
+
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, true);
+    REQUIRE_FALSE(policy.xclipse.synchronization2_validated);
+    REQUIRE_FALSE(policy.use_xclipse_sync_policy);
+
+    policy.capabilities.synchronization2 = Vulkan::CapabilityState::Validated;
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, true);
+    REQUIRE(policy.xclipse.synchronization2_validated);
+    REQUIRE(policy.use_xclipse_sync_policy);
+
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, false);
+    REQUIRE(policy.xclipse.synchronization2_validated);
+    REQUIRE_FALSE(policy.use_xclipse_sync_policy);
+
+    policy.xclipse.detected = false;
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_sync_policy);
+}
