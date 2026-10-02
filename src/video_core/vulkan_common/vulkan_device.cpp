@@ -590,6 +590,8 @@ void Device::BuildDevicePolicy() {
     device_policy.xclipse = DetectXclipseHardware(identity);
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
+    UpdateXclipseBcnDecodePolicy(device_policy,
+                                 Settings::values.xclipse_gpu_bcn_decode.GetValue());
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -1012,9 +1014,14 @@ void Device::RunXclipseSubgroupValidationProbes() {
 }
 
 void Device::RunXclipseValidationProbes() {
+    // GPU RGTC decode is fail-closed until an execution/readback probe validates the
+    // exact runtime shader and storage-image path on this device/driver.
+    device_policy.xclipse.rgtc_gpu_decode_validated = false;
     if (!device_policy.xclipse.detected || !Settings::values.xclipse_validation_probes.GetValue()) {
         UpdateXclipseSynchronizationPolicy(device_policy,
                                            Settings::values.xclipse_sync_policy.GetValue());
+        UpdateXclipseBcnDecodePolicy(device_policy,
+                                     Settings::values.xclipse_gpu_bcn_decode.GetValue());
         UpdateXclipseBcnProfile();
         device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
         return;
@@ -1188,6 +1195,8 @@ void Device::RunXclipseValidationProbes() {
 
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
+    UpdateXclipseBcnDecodePolicy(device_policy,
+                                 Settings::values.xclipse_gpu_bcn_decode.GetValue());
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -1239,7 +1248,8 @@ void Device::LogDevicePolicy() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
-             "sync2={} timeline={} descriptor_buffer={} sparse={} sync_policy={}",
+             "sync2={} timeline={} descriptor_buffer={} sparse={} sync_policy={} "
+             "rgtc_gpu_decode={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
                         BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
              bcn_state({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB}),
@@ -1253,7 +1263,11 @@ void Device::LogDevicePolicy() const {
              xclipse.allowed_wave_mask, xclipse.preferred_compute_wave,
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
              CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding),
-             device_policy.use_xclipse_sync_policy ? "validated-enabled" : "conservative-fallback");
+             device_policy.use_xclipse_sync_policy ? "validated-enabled" : "conservative-fallback",
+             device_policy.use_xclipse_bcn_gpu_decode
+                 ? "validated-enabled"
+                 : (xclipse.rgtc_gpu_decode_validated ? "validated-disabled"
+                                                      : "conservative-fallback"));
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SUBGROUP required_size={} ballot={} shuffle={} arithmetic={} quad={}",
              CapabilityStateName(caps.required_subgroup_size),

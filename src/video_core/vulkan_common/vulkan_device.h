@@ -292,6 +292,10 @@ public:
         return device_policy.xclipse.detected && device_policy.use_xclipse_sync_policy;
     }
 
+    bool UseXclipseBcnGpuDecode() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bcn_gpu_decode;
+    }
+
     XclipseTelemetry& GetXclipseTelemetry() const noexcept {
         return xclipse_telemetry;
     }

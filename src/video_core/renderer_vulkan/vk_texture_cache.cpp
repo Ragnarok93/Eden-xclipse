@@ -199,9 +199,8 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
 }
 
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
-    if (!device.IsXclipse() || !Settings::values.xclipse_gpu_bcn_decode.GetValue() ||
-        device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
-        MaxwellToVK::IsBcnNative(device, info.format)) {
+    if (!device.UseXclipseBcnGpuDecode() || device.HasBrokenCompute() ||
+        !IsPixelFormatBCn(info.format) || MaxwellToVK::IsBcnNative(device, info.format)) {
         return false;
     }
 
@@ -1022,8 +1021,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
         astc_decoder_pass.emplace(device, scheduler, descriptor_pool, staging_buffer_pool,
                                   compute_pass_descriptor_queue, memory_allocator);
     }
-    if (device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
-        !device.HasBrokenCompute()) {
+    if (device.UseXclipseBcnGpuDecode() && !device.HasBrokenCompute()) {
         constexpr std::array formats{
             PixelFormat::BC4_UNORM,
             PixelFormat::BC4_SNORM,
@@ -1047,7 +1045,7 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
         // retained for future validation work, but must not be selected merely because
         // Samsung advertises the destination storage formats.
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE BCN policy: BC4/BC5 GPU decode requested; "
+                 "XCLIPSE BCN policy: validated BC4/BC5 GPU decode enabled; "
                  "BC6H/BC7 remain on CPU fallback pending on-device validation");
     }
     if (!device.IsKhrImageFormatListSupported()) {

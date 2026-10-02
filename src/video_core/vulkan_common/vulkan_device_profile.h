@@ -118,6 +118,7 @@ struct XclipseHardwareProfile {
     bool descriptor_buffer_validated{};
     bool sparse_binding_validated{};
     bool synchronization2_validated{};
+    bool rgtc_gpu_decode_validated{};
 };
 
 struct VulkanDevicePolicy {
@@ -125,11 +126,13 @@ struct VulkanDevicePolicy {
     VulkanCapabilitySnapshot capabilities;
     XclipseHardwareProfile xclipse;
     bool use_xclipse_sync_policy{};
+    bool use_xclipse_bcn_gpu_decode{};
     std::uint64_t policy_hash{};
 };
 
 [[nodiscard]] XclipseHardwareProfile DetectXclipseHardware(const VulkanDeviceIdentity& identity);
 void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept;
+void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept;
 [[nodiscard]] std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept;
 
 } // namespace Vulkan

@@ -154,9 +154,14 @@ void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy,
                                      policy.xclipse.synchronization2_validated;
 }
 
+void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
+    policy.use_xclipse_bcn_gpu_decode =
+        policy.xclipse.detected && setting_enabled && policy.xclipse.rgtc_gpu_decode_validated;
+}
+
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
-    hash.Add("eden-xclipse-policy-v1");
+    hash.Add("eden-xclipse-policy-v2");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
@@ -208,7 +213,9 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.descriptor_buffer_validated);
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
+    hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
     hash.AddIntegral(policy.use_xclipse_sync_policy);
+    hash.AddIntegral(policy.use_xclipse_bcn_gpu_decode);
 
     return hash.Value();
 }
