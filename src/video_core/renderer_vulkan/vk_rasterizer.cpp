@@ -898,9 +898,14 @@ void RasterizerVulkan::TickFrame() {
 
     const bool memory_monitor_enabled =
         Settings::values.xclipse_memory_pressure_monitor.GetValue();
+    XclipseTextureGcPressure texture_gc_pulse = XclipseTextureGcPressure::None;
     if (xclipse_runtime_frame_counter % 30 == 0) {
         const auto pressure_update =
             xclipse_memory_pressure.Tick(device, memory_monitor_enabled);
+        if (memory_monitor_enabled && pressure_update.sampled) {
+            texture_gc_pulse =
+                TextureGcPressureFor(pressure_update.pressure, pressure_update.sample);
+        }
         if (pressure_update.sampled && pressure_update.changed) {
             const auto& sample = pressure_update.sample;
             const s32 budget_pct = sample.memory_budget_used_percent
@@ -948,8 +953,8 @@ void RasterizerVulkan::TickFrame() {
                  "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
                  "depth_native_blits={} depth_shader_blits={} native_resolves={} "
                  "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
-                 "texture_gc={} budget_pct={} ram_available_pct={} rss_mib={} rss_pct={} "
-                 "gtt_pct={} psi_some={:.2f} psi_full={:.2f}",
+                 "texture_gc_policy={} texture_gc_pulse={} budget_pct={} ram_available_pct={} "
+                 "rss_mib={} rss_pct={} gtt_pct={} psi_some={:.2f} psi_full={:.2f}",
                  snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
                  snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
                  snapshot.wait_descriptor_buffer, snapshot.scheduler_finishes,
@@ -966,6 +971,7 @@ void RasterizerVulkan::TickFrame() {
                  memory_monitor_enabled
                      ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure, sample))
                      : "off",
+                 memory_monitor_enabled ? TextureGcPressureName(texture_gc_pulse) : "off",
                  budget_pct, ram_available_pct, rss_mib, rss_pct, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),
                  sample.psi_full_avg10.value_or(-1.0f));
@@ -978,12 +984,10 @@ void RasterizerVulkan::TickFrame() {
     staging_pool.TickFrame();
     {
         std::scoped_lock lock{texture_cache.mutex};
-        const auto& pressure = xclipse_memory_pressure.LastSnapshot();
-        const auto gc_pressure =
-            memory_monitor_enabled ? TextureGcPressureFor(pressure.pressure, pressure.sample)
-                                   : XclipseTextureGcPressure::None;
-        texture_cache.TickFrame(gc_pressure != XclipseTextureGcPressure::None,
-                                gc_pressure == XclipseTextureGcPressure::Critical);
+        // External Android pressure is a bounded nudge, not a persistent per-frame override.
+        // Normal Eden texture GC remains authoritative on all frames between fresh samples.
+        texture_cache.TickFrame(texture_gc_pulse != XclipseTextureGcPressure::None,
+                                texture_gc_pulse == XclipseTextureGcPressure::Critical);
     }
     {
         std::scoped_lock lock{buffer_cache.mutex};
