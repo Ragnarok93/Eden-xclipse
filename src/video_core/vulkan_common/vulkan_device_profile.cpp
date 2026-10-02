@@ -146,6 +146,14 @@ XclipseHardwareProfile DetectXclipseHardware(const VulkanDeviceIdentity& identit
     return profile;
 }
 
+void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy,
+                                        bool setting_enabled) noexcept {
+    policy.xclipse.synchronization2_validated =
+        policy.capabilities.synchronization2 == CapabilityState::Validated;
+    policy.use_xclipse_sync_policy = policy.xclipse.detected && setting_enabled &&
+                                     policy.xclipse.synchronization2_validated;
+}
+
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
     hash.Add("eden-xclipse-policy-v1");
