@@ -13,7 +13,7 @@
 #ifdef EDEN_PGO_GENERATE
 extern "C" void __llvm_profile_set_filename(const char*);
 extern "C" void __llvm_profile_reset_counters();
-extern "C" int __llvm_profile_write_file();
+extern "C" int __llvm_profile_dump();
 #endif
 
 namespace {
@@ -55,7 +55,9 @@ Java_org_yuzu_yuzu_1emu_utils_NativePgo_runStage(JNIEnv* env, jobject, jint stag
         result["detail"] = AndroidPgo::RunWorkload(stage);
         result["duration_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - started).count();
-        if (__llvm_profile_write_file() != 0 || !std::filesystem::exists(output) ||
+        // dump marks this snapshot complete, suppressing an atexit append that
+        // would otherwise count the final stage twice. reset_counters clears it.
+        if (__llvm_profile_dump() != 0 || !std::filesystem::exists(output) ||
             std::filesystem::file_size(output) == 0) {
             throw std::runtime_error("LLVM could not write profile data");
         }
