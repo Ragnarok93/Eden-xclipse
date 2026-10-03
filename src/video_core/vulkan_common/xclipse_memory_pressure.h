@@ -40,10 +40,34 @@ enum class XclipseTextureGcPressure : u8 {
     }
 }
 
-[[nodiscard]] constexpr bool ShouldAggressivelyReclaimStaging(
+[[nodiscard]] constexpr bool ShouldReclaimFreeStaging(
+    MemoryPressureClass pressure) noexcept {
+    return pressure != MemoryPressureClass::Normal;
+}
+
+[[nodiscard]] constexpr bool ShouldPreferStagingWaitReuse(
     MemoryPressureClass pressure) noexcept {
     return pressure == MemoryPressureClass::High ||
            pressure == MemoryPressureClass::Critical;
+}
+
+// Cached staging only; the persistent stream buffer is accounted separately. A zero limit means
+// normal Eden behavior (uncapped). These bands intentionally become strict only after Android
+// reports real system pressure.
+[[nodiscard]] constexpr u64 XclipseStagingCacheLimitBytes(
+    MemoryPressureClass pressure) noexcept {
+    constexpr u64 MiB = 1024ULL * 1024ULL;
+    switch (pressure) {
+    case MemoryPressureClass::Elevated:
+        return 384ULL * MiB;
+    case MemoryPressureClass::High:
+        return 192ULL * MiB;
+    case MemoryPressureClass::Critical:
+        return 96ULL * MiB;
+    case MemoryPressureClass::Normal:
+    default:
+        return 0;
+    }
 }
 
 [[nodiscard]] constexpr const char* MemoryPressureClassName(

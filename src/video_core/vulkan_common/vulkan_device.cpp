@@ -1848,11 +1848,13 @@ void Device::LogXclipseTelemetry() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} sync2_submits={} legacy_submits={} "
              "host_waits={} timeline_waits={} wait_unknown={} buffer_cache_waits={} "
-             "fence_waits={} descriptor_waits={} scheduler_finishes={} all_commands_barriers={} "
+             "fence_waits={} descriptor_waits={} staging_pressure_waits={} scheduler_finishes={} "
+             "all_commands_barriers={} "
              "transfer_consumer_barriers={} compute_consumer_barriers={}",
              t.queue_submits, commands_per_submit, t.sync2_submits, t.legacy_submits, t.host_waits,
              t.timeline_waits, t.wait_unknown, t.wait_buffer_cache, t.wait_fence,
-             t.wait_descriptor_buffer, t.scheduler_finishes, t.all_commands_barriers,
+             t.wait_descriptor_buffer, t.wait_staging_pressure, t.scheduler_finishes,
+             t.all_commands_barriers,
              t.transfer_consumer_barriers, t.compute_consumer_barriers);
     const double descriptor_buffer_reuse_rate =
         t.descriptor_buffer_uses != 0

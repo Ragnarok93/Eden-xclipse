@@ -120,14 +120,24 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
     it->deferred = false;
 }
 
-void StagingBufferPool::TickFrame(bool aggressive_reclaim) {
-    if (aggressive_reclaim) {
+StagingPressureReclaimResult StagingBufferPool::ApplyMemoryPressure(
+    MemoryPressureClass pressure) {
+    memory_pressure = device.IsXclipse() ? pressure : MemoryPressureClass::Normal;
+
+    StagingPressureReclaimResult result{
+        .before_cached_bytes = CachedBytes(),
+    };
+    if (ShouldReclaimFreeStaging(memory_pressure)) {
         ReleaseAllFree(MemoryUsage::DeviceLocal);
         ReleaseAllFree(MemoryUsage::Upload);
         ReleaseAllFree(MemoryUsage::Download);
-        return;
     }
+    result.after_cached_bytes = CachedBytes();
+    result.released_bytes = result.before_cached_bytes - result.after_cached_bytes;
+    return result;
+}
 
+void StagingBufferPool::TickFrame() {
     current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
 
     ReleaseCache(MemoryUsage::DeviceLocal);
@@ -149,6 +159,11 @@ StagingBufferPoolStats StagingBufferPool::Stats() const {
         .released_bytes = released_bytes,
         .pressure_releases = pressure_release_count,
         .pressure_released_bytes = pressure_released_bytes,
+        .pressure_waits = pressure_wait_count,
+        .pressure_wait_reused_bytes = pressure_wait_reused_bytes,
+        .cache_limit_hits = cache_limit_hits,
+        .over_limit_allocations = over_limit_allocations,
+        .cache_limit_bytes = XclipseStagingCacheLimitBytes(memory_pressure),
     };
 
     const auto accumulate_activity = [this, &stats](const StagingBuffersCache& cache) {
@@ -167,6 +182,24 @@ StagingBufferPoolStats StagingBufferPool::Stats() const {
     accumulate_activity(device_local_cache);
     accumulate_activity(upload_cache);
     accumulate_activity(download_cache);
+
+    for (size_t log2 = 0; log2 < upload_cache.size(); ++log2) {
+        const auto& entries = upload_cache[log2].entries;
+        if (entries.empty()) {
+            continue;
+        }
+        const u64 bytes = u64{1} << log2;
+        stats.largest_upload_bucket_bytes = (std::max)(stats.largest_upload_bucket_bytes, bytes);
+        for (const auto& entry : entries) {
+            if (!entry.deferred && scheduler.IsFree(entry.tick)) {
+                stats.largest_free_upload_bucket_bytes =
+                    (std::max)(stats.largest_free_upload_bucket_bytes, bytes);
+            } else {
+                stats.largest_active_upload_bucket_bytes =
+                    (std::max)(stats.largest_active_upload_bucket_bytes, bytes);
+            }
+        }
+    }
     return stats;
 }
 
@@ -218,6 +251,37 @@ StagingBufferRef StagingBufferPool::GetStagingBuffer(size_t size, MemoryUsage us
     if (const std::optional<StagingBufferRef> ref = TryGetReservedBuffer(size, usage, deferred)) {
         return *ref;
     }
+
+    const u32 log2_size = Common::Log2Ceil<u32>(u32(size));
+    const u64 allocation_bytes = u64{1} << log2_size;
+    const u64 cache_limit = XclipseStagingCacheLimitBytes(memory_pressure);
+    if (device.IsXclipse() && cache_limit != 0 &&
+        CachedBytes() + allocation_bytes > cache_limit) {
+        ++cache_limit_hits;
+
+        // Reclaim every already-free bucket before growing the unified-memory footprint.
+        ReleaseAllFree(MemoryUsage::DeviceLocal);
+        ReleaseAllFree(MemoryUsage::Upload);
+        ReleaseAllFree(MemoryUsage::Download);
+        if (const std::optional<StagingBufferRef> ref =
+                TryGetReservedBuffer(size, usage, deferred)) {
+            return *ref;
+        }
+
+        // Under High/Critical pressure, trading one bounded GPU wait for an existing compatible
+        // allocation is preferable to another potentially-hundreds-of-MiB power-of-two buffer.
+        if (ShouldPreferStagingWaitReuse(memory_pressure)) {
+            if (const std::optional<StagingBufferRef> ref =
+                    TryWaitAndReuseBuffer(size, usage, deferred)) {
+                return *ref;
+            }
+        }
+
+        // Some single requests are themselves larger than the pressure ceiling. They must still
+        // succeed, but keep them visible so the next on-device log can distinguish unavoidable
+        // working-set size from avoidable cache growth.
+        ++over_limit_allocations;
+    }
     return CreateStagingBuffer(size, usage, deferred);
 }
 
@@ -244,6 +308,36 @@ std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t s
     it->deferred = deferred;
     ++reuse_count;
     return it->Ref();
+}
+
+std::optional<StagingBufferRef> StagingBufferPool::TryWaitAndReuseBuffer(
+    size_t size, MemoryUsage usage, bool deferred) {
+    if (deferred || !ShouldPreferStagingWaitReuse(memory_pressure)) {
+        return std::nullopt;
+    }
+
+    StagingBuffers& cache_level = GetCache(usage)[Common::Log2Ceil(size)];
+    auto& entries = cache_level.entries;
+    auto candidate = entries.end();
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        if (it->deferred) {
+            continue;
+        }
+        if (candidate == entries.end() || it->tick < candidate->tick) {
+            candidate = it;
+        }
+    }
+    if (candidate == entries.end()) {
+        return std::nullopt;
+    }
+
+    scheduler.Wait(candidate->tick, 0.0, XclipseWaitSource::StagingPressure);
+    candidate->tick = scheduler.CurrentTick();
+    candidate->deferred = false;
+    ++reuse_count;
+    ++pressure_wait_count;
+    pressure_wait_reused_bytes += u64{1} << candidate->log2_level;
+    return candidate->Ref();
 }
 
 StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage usage, bool deferred) {

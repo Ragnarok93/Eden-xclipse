@@ -15,6 +15,7 @@
 
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
 
 namespace Vulkan {
 
@@ -46,6 +47,20 @@ struct StagingBufferPoolStats {
     u64 released_bytes{};
     u64 pressure_releases{};
     u64 pressure_released_bytes{};
+    u64 pressure_waits{};
+    u64 pressure_wait_reused_bytes{};
+    u64 cache_limit_hits{};
+    u64 over_limit_allocations{};
+    u64 cache_limit_bytes{};
+    u64 largest_upload_bucket_bytes{};
+    u64 largest_free_upload_bucket_bytes{};
+    u64 largest_active_upload_bucket_bytes{};
+};
+
+struct StagingPressureReclaimResult {
+    u64 before_cached_bytes{};
+    u64 after_cached_bytes{};
+    u64 released_bytes{};
 };
 
 class StagingBufferPool {
@@ -63,9 +78,13 @@ public:
         return *stream_buffer;
     }
 
-    /// Run normal incremental cache cleanup. When aggressive_reclaim is true, purge every
-    /// cached staging buffer that is already GPU-free; active/deferred work is never waited on.
-    void TickFrame(bool aggressive_reclaim = false);
+    /// Apply the latest Android/Xclipse pressure state. Every fresh Elevated-or-higher sample
+    /// immediately drops GPU-free cache entries; active/deferred allocations are never destroyed.
+    [[nodiscard]] StagingPressureReclaimResult ApplyMemoryPressure(
+        MemoryPressureClass pressure);
+
+    /// Run normal incremental cache cleanup.
+    void TickFrame();
 
     [[nodiscard]] StagingBufferPoolStats Stats() const;
 
@@ -117,6 +136,8 @@ private:
                                                          bool deferred);
 
     StagingBufferRef CreateStagingBuffer(size_t size, MemoryUsage usage, bool deferred);
+    std::optional<StagingBufferRef> TryWaitAndReuseBuffer(size_t size, MemoryUsage usage,
+                                                          bool deferred);
 
     StagingBuffersCache& GetCache(MemoryUsage usage);
 
@@ -164,6 +185,11 @@ private:
     u64 released_bytes{};
     u64 pressure_release_count{};
     u64 pressure_released_bytes{};
+    u64 pressure_wait_count{};
+    u64 pressure_wait_reused_bytes{};
+    u64 cache_limit_hits{};
+    u64 over_limit_allocations{};
+    MemoryPressureClass memory_pressure{MemoryPressureClass::Normal};
 };
 
 } // namespace Vulkan

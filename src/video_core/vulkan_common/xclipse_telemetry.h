@@ -14,6 +14,7 @@ enum class XclipseWaitSource : u8 {
     BufferCache,
     Fence,
     DescriptorBuffer,
+    StagingPressure,
 };
 
 struct XclipseTelemetrySnapshot {
@@ -40,6 +41,7 @@ struct XclipseTelemetrySnapshot {
     u64 wait_buffer_cache{};
     u64 wait_fence{};
     u64 wait_descriptor_buffer{};
+    u64 wait_staging_pressure{};
     u64 all_commands_barriers{};
     u64 transfer_consumer_barriers{};
     u64 compute_consumer_barriers{};
@@ -131,6 +133,7 @@ private:
     std::atomic<u64> wait_buffer_cache{};
     std::atomic<u64> wait_fence{};
     std::atomic<u64> wait_descriptor_buffer{};
+    std::atomic<u64> wait_staging_pressure{};
     std::atomic<u64> all_commands_barriers{};
     std::atomic<u64> transfer_consumer_barriers{};
     std::atomic<u64> compute_consumer_barriers{};

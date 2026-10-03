@@ -131,12 +131,25 @@ TEST_CASE("Xclipse texture GC requires Eden memory contribution",
 }
 
 
-TEST_CASE("Xclipse staging reclaim starts only at high pressure",
+TEST_CASE("Xclipse staging containment escalates with Android pressure",
           "[video_core][xclipse]") {
     using Vulkan::MemoryPressureClass;
 
-    REQUIRE_FALSE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::Normal));
-    REQUIRE_FALSE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::Elevated));
-    REQUIRE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::High));
-    REQUIRE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::Critical));
+    REQUIRE_FALSE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::Normal));
+    REQUIRE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::Elevated));
+    REQUIRE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::High));
+    REQUIRE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::Critical));
+
+    REQUIRE_FALSE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::Normal));
+    REQUIRE_FALSE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::Elevated));
+    REQUIRE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::High));
+    REQUIRE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::Critical));
+
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Normal) == 0);
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Elevated) ==
+            384ULL * 1024ULL * 1024ULL);
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::High) ==
+            192ULL * 1024ULL * 1024ULL);
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Critical) ==
+            96ULL * 1024ULL * 1024ULL);
 }

@@ -67,6 +67,9 @@ void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) no
     case XclipseWaitSource::DescriptorBuffer:
         wait_descriptor_buffer.fetch_add(1, std::memory_order_relaxed);
         break;
+    case XclipseWaitSource::StagingPressure:
+        wait_staging_pressure.fetch_add(1, std::memory_order_relaxed);
+        break;
     case XclipseWaitSource::Unknown:
     default:
         wait_unknown.fetch_add(1, std::memory_order_relaxed);
@@ -225,6 +228,7 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .wait_buffer_cache = wait_buffer_cache.load(std::memory_order_relaxed),
         .wait_fence = wait_fence.load(std::memory_order_relaxed),
         .wait_descriptor_buffer = wait_descriptor_buffer.load(std::memory_order_relaxed),
+        .wait_staging_pressure = wait_staging_pressure.load(std::memory_order_relaxed),
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
         .transfer_consumer_barriers =
             transfer_consumer_barriers.load(std::memory_order_relaxed),
