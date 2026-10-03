@@ -5,8 +5,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <condition_variable>
 #include <cstddef>
 #include <fstream>
+#include <limits>
 #include <iostream>
 #include <memory>
 #include <span>
@@ -620,11 +622,53 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
 
     struct {
         std::mutex mutex;
+        std::condition_variable_any slot_available;
         size_t total{};
         size_t built{};
+        size_t in_flight{};
+        size_t peak_in_flight{};
         bool has_loaded{};
         std::unique_ptr<PipelineStatistics> statistics;
     } state;
+
+    // Xclipse shares its 8 GiB system memory with the CPU and GPU. Loading a large disk shader
+    // cache previously queued every owning FileEnvironment at once (often >1000 pipelines),
+    // creating a large transient host-memory spike before two compiler workers could drain it.
+    // Keep enough work queued to saturate the workers without retaining the whole cache in RAM.
+    constexpr size_t XCLIPSE_DISK_PIPELINE_BACKLOG = 32;
+    const size_t max_in_flight =
+        device.IsXclipse() ? XCLIPSE_DISK_PIPELINE_BACKLOG
+                           : (std::numeric_limits<size_t>::max)();
+
+    const auto reserve_load_slot = [&]() -> bool {
+        std::unique_lock lock{state.mutex};
+        if (max_in_flight != (std::numeric_limits<size_t>::max)()) {
+            const bool ready = state.slot_available.wait(
+                lock, stop_loading, [&] { return state.in_flight < max_in_flight; });
+            if (!ready) {
+                return false;
+            }
+        }
+        ++state.in_flight;
+        state.peak_in_flight = std::max(state.peak_in_flight, state.in_flight);
+        ++state.total;
+        return true;
+    };
+
+    const auto complete_load_slot = [&]() {
+        std::unique_lock lock{state.mutex};
+        ++state.built;
+        ASSERT(state.in_flight != 0);
+        --state.in_flight;
+        const size_t built = state.built;
+        const size_t total = state.total;
+        const bool report_progress = state.has_loaded;
+        lock.unlock();
+        state.slot_available.notify_one();
+        if (report_progress) {
+            callback(VideoCore::LoadCallbackStage::Build, built, total);
+        }
+    };
 
     if (device.IsKhrPipelineExecutablePropertiesEnabled()) {
         state.statistics = std::make_unique<PipelineStatistics>(device);
@@ -633,19 +677,20 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         ComputePipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
 
-        workers.QueueWork([this, key, env_ = std::move(env), &state, &callback]() mutable {
+        if (!reserve_load_slot()) {
+            return;
+        }
+        workers.QueueWork([this, key, env_ = std::move(env), &state, &complete_load_slot]() mutable {
             ShaderPools pools;
             auto pipeline{CreateComputePipeline(pools, key, env_, state.statistics.get(), false)};
-            std::scoped_lock lock{state.mutex};
-            if (pipeline) {
-                compute_cache.emplace(key, std::move(pipeline));
+            {
+                std::scoped_lock lock{state.mutex};
+                if (pipeline) {
+                    compute_cache.emplace(key, std::move(pipeline));
+                }
             }
-            ++state.built;
-            if (state.has_loaded) {
-                callback(VideoCore::LoadCallbackStage::Build, state.built, state.total);
-            }
+            complete_load_slot();
         });
-        ++state.total;
     }};
     const auto load_graphics{[&](std::ifstream& file, std::vector<FileEnvironment> envs) {
         GraphicsPipelineCacheKey key;
@@ -679,35 +724,41 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
             return;
         }
 
-        workers.QueueWork([this, key, envs_ = std::move(envs), &state, &callback]() mutable {
-            ShaderPools pools;
-            boost::container::static_vector<Shader::Environment*, 5> env_ptrs;
-            for (auto& env : envs_) {
-                env_ptrs.push_back(&env);
-            }
-            auto pipeline{CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs),
-                                                 state.statistics.get(), false)};
-
-            std::scoped_lock lock{state.mutex};
-            if (pipeline) {
-                graphics_cache.emplace(key, std::move(pipeline));
-            }
-            ++state.built;
-            if (state.has_loaded) {
-                callback(VideoCore::LoadCallbackStage::Build, state.built, state.total);
-            }
-        });
-        ++state.total;
+        if (!reserve_load_slot()) {
+            return;
+        }
+        workers.QueueWork(
+            [this, key, envs_ = std::move(envs), &state, &complete_load_slot]() mutable {
+                ShaderPools pools;
+                boost::container::static_vector<Shader::Environment*, 5> env_ptrs;
+                for (auto& env : envs_) {
+                    env_ptrs.push_back(&env);
+                }
+                auto pipeline{CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs),
+                                                     state.statistics.get(), false)};
+                {
+                    std::scoped_lock lock{state.mutex};
+                    if (pipeline) {
+                        graphics_cache.emplace(key, std::move(pipeline));
+                    }
+                }
+                complete_load_slot();
+            });
     }};
     VideoCommon::LoadPipelines(stop_loading, pipeline_cache_filename, CACHE_VERSION, load_compute,
                                load_graphics);
 
-    LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
-
-    std::unique_lock lock{state.mutex};
-    callback(VideoCore::LoadCallbackStage::Build, 0, state.total);
-    state.has_loaded = true;
-    lock.unlock();
+    {
+        std::unique_lock lock{state.mutex};
+        LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
+        if (device.IsXclipse()) {
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE PIPELINE LOAD backlog_limit={} peak_in_flight={} built_at_parse_end={}",
+                     max_in_flight, state.peak_in_flight, state.built);
+        }
+        callback(VideoCore::LoadCallbackStage::Build, state.built, state.total);
+        state.has_loaded = true;
+    }
 
     workers.WaitForRequests(stop_loading);
 
