@@ -3180,8 +3180,12 @@ Sampler::VariantKey Sampler::MakeKey(const ImageView& image_view, bool is_depth)
     key.force_nearest =
         has_linear_filtering &&
         (IsPixelFormatInteger(image_view.format) || !image_view.SupportsLinearFilter());
+    // Vulkan forbids a comparison-enabled sampler with a view whose format lacks
+    // depth-comparison sampling support, even when the shader performs an ordinary
+    // non-Dref sample. Genuine Dref descriptors already pass is_depth=true, so removing
+    // the is_depth gate only sanitizes the previously-illegal non-Dref pairing.
     key.drop_depth_comparison =
-        is_depth && has_depth_comparison && !image_view.SupportsDepthComparison();
+        has_depth_comparison && !image_view.SupportsDepthComparison();
     key.drop_reduction = has_minmax_reduction && !image_view.SupportsMinmaxFilter();
     key.drop_custom_border = has_custom_border_colors && image_view.RequiresBorderColorFormat();
     key.srgb_border = has_srgb_border_color && IsPixelFormatSRGB(image_view.format);
