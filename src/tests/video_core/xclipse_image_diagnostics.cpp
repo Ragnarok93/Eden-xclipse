@@ -13,12 +13,15 @@ TEST_CASE("Xclipse image diagnostics have independent bounded budgets",
 
     XclipseImageDiagnosticBudget budget;
     REQUIRE_FALSE(budget.TryConsume(XclipseImageDiagnosticCategory::Count));
+    REQUIRE_FALSE(budget.HasRemaining(XclipseImageDiagnosticCategory::Count));
 
     for (std::uint64_t i = 0; i < XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT; ++i) {
         REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::Upload3dLayout));
     }
 
     REQUIRE_FALSE(budget.TryConsume(XclipseImageDiagnosticCategory::Upload3dLayout));
+    REQUIRE_FALSE(budget.HasRemaining(XclipseImageDiagnosticCategory::Upload3dLayout));
+    REQUIRE(budget.HasRemaining(XclipseImageDiagnosticCategory::ImageCopyBounds));
     REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::ImageCopyBounds));
     REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::ReinterpretCopy));
 
@@ -32,4 +35,29 @@ TEST_CASE("Xclipse image diagnostics have independent bounded budgets",
         REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerDepthComparison));
     }
     REQUIRE_FALSE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerDepthComparison));
+    REQUIRE_FALSE(budget.HasRemaining(XclipseImageDiagnosticCategory::SamplerDepthComparison));
+}
+
+TEST_CASE("Xclipse image diagnostics remember depth-compare bindings once",
+          "[video_core][xclipse]") {
+    using Vulkan::XclipseImageDiagnosticBindingSet;
+
+    XclipseImageDiagnosticBindingSet bindings;
+    REQUIRE(bindings.TryRemember(0x100, 0x200));
+    REQUIRE_FALSE(bindings.TryRemember(0x100, 0x200));
+    REQUIRE(bindings.TryRemember(0x101, 0x200));
+    REQUIRE(bindings.TryRemember(0x100, 0x201));
+}
+
+TEST_CASE("Xclipse image diagnostics bound remembered depth-compare bindings",
+          "[video_core][xclipse]") {
+    using Vulkan::XCLIPSE_IMAGE_DIAGNOSTIC_BINDING_LIMIT;
+    using Vulkan::XclipseImageDiagnosticBindingSet;
+
+    XclipseImageDiagnosticBindingSet bindings;
+    for (std::uint64_t index = 0; index < XCLIPSE_IMAGE_DIAGNOSTIC_BINDING_LIMIT; ++index) {
+        REQUIRE(bindings.TryRemember(0x100 + index, 0x200 + index));
+    }
+
+    REQUIRE_FALSE(bindings.TryRemember(0x300, 0x400));
 }

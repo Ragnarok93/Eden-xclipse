@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <limits>
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -62,6 +64,15 @@ constexpr bool ENABLE_MSAA_TILER_RESOLVE = true;
 constexpr bool ENABLE_MSAA_RESOLVE_CONSUME = true;
 constexpr bool ENABLE_MSAA_COLOR_DISCARD = true;
 constexpr bool ENABLE_MSAA_DEPTH_STENCIL_DISCARD = true;
+
+template <typename Handle>
+[[nodiscard]] u64 VulkanHandleValue(Handle handle) noexcept {
+    if constexpr (std::is_pointer_v<Handle>) {
+        return static_cast<u64>(reinterpret_cast<std::uintptr_t>(handle));
+    } else {
+        return static_cast<u64>(handle);
+    }
+}
 
 XclipseImageDiagnosticBudget xclipse_image_diagnostic_budget;
 
@@ -3283,36 +3294,51 @@ VkSampler Sampler::Emplace(VariantKey key) {
     return *variants.back().sampler;
 }
 
-VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth) {
+VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
+                             VkImageView descriptor_view) {
     VariantKey key = MakeKey(image_view, is_depth);
     if (variants.size() >= MAX_VARIANTS) {
         key.srgb_border = false;
         key.swizzle = {};
     }
-    if (const VkSampler existing = Find(key); existing != VK_NULL_HANDLE) {
-        return existing;
+
+    const VkSampler existing = Find(key);
+    const bool create_variant = existing == VK_NULL_HANDLE;
+    const VkSampler sampler_handle = create_variant ? Emplace(key) : existing;
+    if (key.drop_depth_comparison && device_ptr->IsXclipse() &&
+        device_ptr->GetXclipseTelemetry().Enabled() &&
+        xclipse_image_diagnostic_budget.HasRemaining(
+            XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
+        if (!depth_compare_diagnostic_bindings) {
+            depth_compare_diagnostic_bindings =
+                std::make_unique<XclipseImageDiagnosticBindingSet>();
+        }
+        if (depth_compare_diagnostic_bindings->TryRemember(
+                VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle)) &&
+            ShouldLogXclipseImageDiagnostic(
+                *device_ptr, XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
+            const VkFormat backing_vk_format =
+                MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, true,
+                                           image_view.format)
+                    .format;
+            const bool effective_compare_enable =
+                base_ci.compareEnable != VK_FALSE && !key.drop_depth_comparison;
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE IMAGE SAMPLER depth-compare [diag=depth-compare] "
+                     "image_id={} gpu={:#x} descriptor_view={:#x} sampler={:#x} "
+                     "guest_fmt={} backing_vk_format={} "
+                     "shader_dref={} compare_requested={} depth_compare_feature={} "
+                     "compare_dropped={} effective_compare_enable={} compare_op={}",
+                     image_view.image_id.Value(), image_view.GpuAddr(),
+                     VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle),
+                     static_cast<u32>(image_view.format),
+                     static_cast<u32>(backing_vk_format), is_depth,
+                     has_depth_comparison, image_view.SupportsDepthComparison(),
+                     key.drop_depth_comparison, effective_compare_enable,
+                     static_cast<u32>(base_ci.compareOp));
+        }
     }
-    if (key.drop_depth_comparison &&
-        ShouldLogXclipseImageDiagnostic(
-            *device_ptr, XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
-        const VkFormat backing_vk_format =
-            MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, true,
-                                       image_view.format)
-                .format;
-        const bool effective_compare_enable =
-            base_ci.compareEnable != VK_FALSE && !key.drop_depth_comparison;
-        LOG_INFO(Render_Vulkan,
-                 "XCLIPSE IMAGE SAMPLER depth-compare [diag=depth-compare] "
-                 "image_id={} gpu={:#x} guest_fmt={} backing_vk_format={} "
-                 "shader_dref={} compare_requested={} depth_compare_feature={} "
-                 "compare_dropped={} effective_compare_enable={} compare_op={}",
-                 image_view.image_id.Value(), image_view.GpuAddr(),
-                 static_cast<u32>(image_view.format), static_cast<u32>(backing_vk_format),
-                 is_depth, has_depth_comparison, image_view.SupportsDepthComparison(),
-                 key.drop_depth_comparison, effective_compare_enable,
-                 static_cast<u32>(base_ci.compareOp));
-    }
-    if (key.force_nearest &&
+    if (create_variant && key.force_nearest &&
         ShouldLogXclipseImageDiagnostic(
             *device_ptr, XclipseImageDiagnosticCategory::SamplerViewCapability)) {
         const VkFormat backing_vk_format =
@@ -3331,7 +3357,7 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth) {
                  image_view.range.base.layer, image_view.range.extent.layers,
                  key.force_nearest);
     }
-    return Emplace(key);
+    return sampler_handle;
 }
 
 Framebuffer::Framebuffer(TextureCacheRuntime& runtime, std::span<ImageView*, NUM_RT> color_buffers,

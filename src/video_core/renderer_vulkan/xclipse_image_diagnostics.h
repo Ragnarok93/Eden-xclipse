@@ -21,8 +21,44 @@ enum class XclipseImageDiagnosticCategory : std::size_t {
     Count,
 };
 
+inline constexpr std::size_t XCLIPSE_IMAGE_DIAGNOSTIC_BINDING_LIMIT = 64;
+
+class XclipseImageDiagnosticBindingSet {
+public:
+    [[nodiscard]] bool TryRemember(std::uint64_t image_view,
+                                   std::uint64_t sampler) noexcept {
+        if (count >= bindings.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+            if (bindings[index].image_view == image_view &&
+                bindings[index].sampler == sampler) {
+                return false;
+            }
+        }
+        bindings[count++] = Binding{image_view, sampler};
+        return true;
+    }
+
+private:
+    struct Binding {
+        std::uint64_t image_view;
+        std::uint64_t sampler;
+    };
+
+    std::array<Binding, XCLIPSE_IMAGE_DIAGNOSTIC_BINDING_LIMIT> bindings{};
+    std::size_t count{};
+};
+
 class XclipseImageDiagnosticBudget {
 public:
+    [[nodiscard]] bool HasRemaining(XclipseImageDiagnosticCategory category) const noexcept {
+        const auto index = static_cast<std::size_t>(category);
+        return index < counters.size() &&
+               counters[index].load(std::memory_order_relaxed) <
+                   XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT;
+    }
+
     [[nodiscard]] bool TryConsume(XclipseImageDiagnosticCategory category) noexcept {
         const auto index = static_cast<std::size_t>(category);
         if (index >= counters.size()) {
