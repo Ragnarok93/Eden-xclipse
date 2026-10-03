@@ -17,6 +17,8 @@ add_library(yuzu-android SHARED
     android_config.cpp
     android_config.h
     native_input.cpp
+    native_pgo.cpp
+    pgo_workloads.cpp
     native_post_processing.cpp
 )
 
