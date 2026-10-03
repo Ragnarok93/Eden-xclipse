@@ -21,5 +21,15 @@ TEST_CASE("Xclipse image diagnostics have independent bounded budgets",
     REQUIRE_FALSE(budget.TryConsume(XclipseImageDiagnosticCategory::Upload3dLayout));
     REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::ImageCopyBounds));
     REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::ReinterpretCopy));
-    REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerViewCapability));
+
+    for (std::uint64_t i = 0; i < XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT; ++i) {
+        REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerViewCapability));
+    }
+    REQUIRE_FALSE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerViewCapability));
+    REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerDepthComparison));
+
+    for (std::uint64_t i = 1; i < XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT; ++i) {
+        REQUIRE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerDepthComparison));
+    }
+    REQUIRE_FALSE(budget.TryConsume(XclipseImageDiagnosticCategory::SamplerDepthComparison));
 }

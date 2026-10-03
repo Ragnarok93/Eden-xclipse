@@ -3292,24 +3292,44 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth) {
     if (const VkSampler existing = Find(key); existing != VK_NULL_HANDLE) {
         return existing;
     }
-    if ((key.drop_depth_comparison || key.force_nearest) &&
+    if (key.drop_depth_comparison &&
+        ShouldLogXclipseImageDiagnostic(
+            *device_ptr, XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
+        const VkFormat backing_vk_format =
+            MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, true,
+                                       image_view.format)
+                .format;
+        const bool effective_compare_enable =
+            base_ci.compareEnable != VK_FALSE && !key.drop_depth_comparison;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE IMAGE SAMPLER depth-compare [diag=depth-compare] "
+                 "image_id={} gpu={:#x} guest_fmt={} backing_vk_format={} "
+                 "shader_dref={} compare_requested={} depth_compare_feature={} "
+                 "compare_dropped={} effective_compare_enable={} compare_op={}",
+                 image_view.image_id.Value(), image_view.GpuAddr(),
+                 static_cast<u32>(image_view.format), static_cast<u32>(backing_vk_format),
+                 is_depth, has_depth_comparison, image_view.SupportsDepthComparison(),
+                 key.drop_depth_comparison, effective_compare_enable,
+                 static_cast<u32>(base_ci.compareOp));
+    }
+    if (key.force_nearest &&
         ShouldLogXclipseImageDiagnostic(
             *device_ptr, XclipseImageDiagnosticCategory::SamplerViewCapability)) {
-        const VkFormat host_format =
-            MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, false,
+        const VkFormat backing_vk_format =
+            MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, true,
                                        image_view.format)
                 .format;
         LOG_INFO(Render_Vulkan,
                  "XCLIPSE IMAGE SAMPLER sanitized [diag=sampler-view] "
-                 "image_id={} gpu={:#x} guest_fmt={} host_fmt={} "
+                 "image_id={} gpu={:#x} guest_fmt={} backing_vk_format={} "
                  "size={}x{}x{} base_mip={} levels={} base_layer={} layers={} "
-                 "drop_depth_compare={} force_nearest={}",
+                 "force_nearest={}",
                  image_view.image_id.Value(), image_view.GpuAddr(),
-                 static_cast<u32>(image_view.format), static_cast<u32>(host_format),
+                 static_cast<u32>(image_view.format), static_cast<u32>(backing_vk_format),
                  image_view.size.width, image_view.size.height, image_view.size.depth,
                  image_view.range.base.level, image_view.range.extent.levels,
                  image_view.range.base.layer, image_view.range.extent.layers,
-                 key.drop_depth_comparison, key.force_nearest);
+                 key.force_nearest);
     }
     return Emplace(key);
 }

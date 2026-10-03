@@ -17,6 +17,7 @@ enum class XclipseImageDiagnosticCategory : std::size_t {
     ImageCopyBounds,
     ReinterpretCopy,
     SamplerViewCapability,
+    SamplerDepthComparison,
     Count,
 };
 
