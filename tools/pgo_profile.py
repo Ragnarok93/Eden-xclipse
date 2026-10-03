@@ -98,7 +98,12 @@ def main():
         subprocess.run([str(args.toolchain / "llvm-profdata"), "merge", "-failure-mode=any",
                         *files, "-o", str(temporary)], check=True)
         # llvm-profdata validates format; retain all records (no -sparse) for PGO.
-        subprocess.run([str(args.toolchain / "llvm-profdata"), "show", str(temporary)], check=True)
+        summary = subprocess.check_output(
+            [str(args.toolchain / "llvm-profdata"), "show", str(temporary)], text=True)
+        count = re.search(r"Maximum function count:\s*(\d+)", summary)
+        if not count or int(count.group(1)) == 0:
+            raise ValueError("Training produced no executed profile counters")
+        print(summary, end="")
         args.output.write_bytes(temporary.read_bytes())
 
 

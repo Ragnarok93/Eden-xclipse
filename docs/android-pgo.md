@@ -17,7 +17,9 @@ main application log. Close/cancel or a 180-second stage timeout terminates only
 the training process. Orientation changes retain the running activity. Each
 successful stage writes a separate profile before moving to the next stage.
 
-Select **Export profiling results** when finished and provide the ZIP for the
+Select **Export profiling results** when finished; **Export latest PGO results**
+in the debug menu also recovers retained results after cancellation or a crash.
+Exporting runs off the UI thread. Export the results and provide the ZIP for the
 profile-use build. Instrumentation has runtime overhead: use this APK for training,
 and benchmark the later **USE** APK against an otherwise identical non-PGO build.
 

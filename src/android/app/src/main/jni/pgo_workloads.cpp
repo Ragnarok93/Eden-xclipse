@@ -77,6 +77,14 @@ void DecodeTextures() {
             }
         }
         VideoCommon::DecompressBCn(input, output, copy, format);
+        // Independently known result: zero endpoints decode to black in every
+        // format. BC4/5 have no alpha, BC6 stores three half-float channels.
+        const u32 color_bytes = bpp == 8 ? 6 : std::min(bpp, 3U);
+        for (size_t pixel = 0; pixel < output.size(); pixel += bpp) {
+            for (u32 channel = 0; channel < color_bytes; ++channel) {
+                Check(output[pixel + channel] == 0, "Zero-endpoint BCn fixture is not black");
+            }
+        }
         const auto expected = output;
         for (unsigned iteration = 0; iteration < 12; ++iteration) {
             std::fill(output.begin(), output.end(), 0xCD);

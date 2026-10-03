@@ -2,7 +2,6 @@
 package org.yuzu.yuzu_emu.activities
 
 import android.app.Activity
-import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -12,15 +11,13 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
+import org.yuzu.yuzu_emu.utils.PgoProfileExporter
 import org.yuzu.yuzu_emu.utils.NativePgo
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 /** Isolated worker process: cancelling or timing out cannot kill emulation. */
 class PgoTrainingActivity : Activity() {
@@ -52,7 +49,7 @@ class PgoTrainingActivity : Activity() {
         export = Button(this).apply {
             text = "Export profiling results"
             isEnabled = false
-            setOnClickListener { exportResults() }
+            setOnClickListener { PgoProfileExporter.export(this@PgoTrainingActivity, session) }
         }
         layout.addView(status)
         layout.addView(export)
@@ -136,28 +133,6 @@ class PgoTrainingActivity : Activity() {
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
-    }
-
-    private fun exportResults() {
-        try {
-            val archive = File(cacheDir, "eden-pgo-${session.name}.zip")
-            ZipOutputStream(archive.outputStream()).use { zip ->
-                session.listFiles()?.filter { it.extension == "profraw" || it.name == "manifest.json" }
-                    ?.sortedBy { it.name }?.forEach { file ->
-                        zip.putNextEntry(ZipEntry(file.name))
-                        file.inputStream().use { it.copyTo(zip) }
-                        zip.closeEntry()
-                    }
-            }
-            val uri = FileProvider.getUriForFile(this, "$packageName.provider", archive)
-            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                type = "application/zip"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }, "Export Eden PGO profile"))
-        } catch (error: Exception) {
-            status.text = "Export failed: ${error.message}"
-        }
     }
 
     private fun stopWorker() {

@@ -1530,6 +1530,14 @@ class SettingsFragmentPresenter(
                             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
                     }
                 })
+                add(RunnableSetting(
+                    titleString = "Export latest PGO results",
+                    descriptionString = "Includes retained results after a profiling timeout or crash.",
+                    isRunnable = !NativeLibrary.isRunning() &&
+                        org.yuzu.yuzu_emu.utils.PgoProfileExporter.hasResults(context)
+                ) {
+                    activity?.let { org.yuzu.yuzu_emu.utils.PgoProfileExporter.export(it) }
+                })
             }
             add(HeaderSetting(R.string.gpu))
 

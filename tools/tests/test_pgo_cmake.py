@@ -32,7 +32,8 @@ class BuildModes(unittest.TestCase):
                 path = self.root / file
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("int fixture() { return 1; }\n")
-            lines.append(f"add_library({target} STATIC {' '.join(files)})")
+            kind = "SHARED" if target == "yuzu-android" else "STATIC"
+            lines.append(f"add_library({target} {kind} {' '.join(files)})")
         lines.append(f'include("{MODULE}")')
         (self.root / "CMakeLists.txt").write_text("\n".join(lines))
 
@@ -55,6 +56,8 @@ class BuildModes(unittest.TestCase):
             trained = not item["file"].endswith(("untrained.cpp", "jni.cpp"))
             self.assertEqual("-fprofile-instr-generate" in item["command"], trained)
             self.assertEqual("-fprofile-update=atomic" in item["command"], trained)
+        link = (self.root / "build/CMakeFiles/yuzu-android.dir/link.txt").read_text()
+        self.assertIn("-fprofile-instr-generate", link)
 
     def test_use_only_applies_profile_to_trained_sources(self):
         profile = self.root / "profile.profdata"
@@ -65,6 +68,8 @@ class BuildModes(unittest.TestCase):
             trained = not item["file"].endswith(("untrained.cpp", "jni.cpp"))
             self.assertEqual("-fprofile-instr-use=" in item["command"], trained)
             self.assertNotIn("-fprofile-instr-generate", item["command"])
+        link = (self.root / "build/CMakeFiles/yuzu-android.dir/link.txt").read_text()
+        self.assertNotIn("-fprofile-instr-generate", link)
 
     def test_missing_profile_or_invalid_mode_fail_closed(self):
         for mode in ("USE", "INVALID"):
