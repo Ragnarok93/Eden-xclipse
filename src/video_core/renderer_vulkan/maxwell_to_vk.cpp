@@ -367,7 +367,10 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         }
         break;
     }
-    return {device.GetSupportedFormat(tuple.format, usage, format_type), attachable, storage};
+    const VkFormat requested_format{tuple.format};
+    const VkFormat supported_format{device.GetSupportedFormat(tuple.format, usage, format_type)};
+    return {supported_format, attachable, storage, requested_format,
+            supported_format != requested_format};
 }
 
 VkShaderStageFlagBits ShaderStage(Shader::Stage stage) {

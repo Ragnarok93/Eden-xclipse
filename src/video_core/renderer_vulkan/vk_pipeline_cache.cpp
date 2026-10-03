@@ -36,6 +36,8 @@
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
+#include "video_core/renderer_vulkan/vk_fragment_output.h"
+#include "video_core/renderer_vulkan/xclipse_fragment_output_diagnostics.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
@@ -252,21 +254,18 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
 
         info.dual_source_blend = key.state.attachment0_dual_source_blend != 0;
 
-        if (device.IsMoltenVK()) {
-            for (size_t i = 0; i < 8; ++i) {
-                const auto format = static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[i]);
-                const auto pixel_format = VideoCore::Surface::PixelFormatFromRenderTargetFormat(format);
-                if (VideoCore::Surface::IsPixelFormatInteger(pixel_format)) {
-                    if (VideoCore::Surface::IsPixelFormatSignedInteger(pixel_format)) {
-                        info.color_output_types[i] = Shader::AttributeType::SignedInt;
-                    } else {
-                        info.color_output_types[i] = Shader::AttributeType::UnsignedInt;
-                    }
-                } else {
-                    info.color_output_types[i] = Shader::AttributeType::Float;
-                }
+        std::array<VideoCore::Surface::PixelFormat, Maxwell::NumRenderTargets> color_formats;
+        color_formats.fill(VideoCore::Surface::PixelFormat::Invalid);
+        for (size_t i = 0; i < color_formats.size(); ++i) {
+            const auto format =
+                static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[i]);
+            if (format != Tegra::RenderTargetFormat::NONE) {
+                color_formats[i] =
+                    VideoCore::Surface::PixelFormatFromRenderTargetFormat(format);
             }
         }
+        info.color_output_types =
+            MakeFragmentColorOutputTypes(color_formats, info.dual_source_blend);
         break;
     }
     default:
@@ -302,6 +301,92 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
     info.force_early_z = key.state.early_z != 0;
     info.y_negate = key.state.y_negate != 0;
     return info;
+}
+
+void LogXclipseFragmentOutputDiagnostics(const GraphicsPipelineCacheKey& key,
+                                        const Shader::RuntimeInfo& runtime_info,
+                                        const Shader::IR::Program& program,
+                                        const Shader::Profile& profile, const Device& device) {
+    static XclipseFragmentOutputDiagnosticBudget budget;
+    if (!device.IsXclipse() || !device.GetXclipseTelemetry().Enabled()) {
+        return;
+    }
+
+    for (size_t output = 0; output < runtime_info.color_output_types.size(); ++output) {
+        const bool dual_source = runtime_info.dual_source_blend && output <= 1;
+        const size_t attachment = dual_source ? 0 : output;
+        const auto guest_rt_format =
+            static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[attachment]);
+        const bool attachment_enabled = guest_rt_format != Tegra::RenderTargetFormat::NONE;
+        const auto guest_pixel_format =
+            attachment_enabled
+                ? VideoCore::Surface::PixelFormatFromRenderTargetFormat(guest_rt_format)
+                : VideoCore::Surface::PixelFormat::Invalid;
+        const auto guest_type = FragmentOutputTypeForPixelFormat(guest_pixel_format);
+        const auto shader_type = runtime_info.color_output_types[output];
+        MaxwellToVK::FormatInfo format_info{};
+        if (attachment_enabled) {
+            format_info = MaxwellToVK::SurfaceFormat(
+                device, FormatType::Optimal, true, guest_pixel_format);
+        }
+        const auto backing_type = FragmentOutputTypeForVkFormat(format_info.format);
+        const bool referenced = program.info.stores_frag_color[output];
+        const bool forced_declaration = profile.need_declared_frag_colors;
+        const bool candidate_declared = referenced || forced_declaration || dual_source;
+        const bool declared_after_prune = ShouldDeclareFragmentColorOutput(
+            shader_type, referenced, forced_declaration, dual_source);
+        const bool unattached_output = !attachment_enabled && candidate_declared;
+        const bool numeric_class_mismatch =
+            attachment_enabled && (shader_type != guest_type || shader_type != backing_type);
+        if (!unattached_output && !numeric_class_mismatch) {
+            continue;
+        }
+
+        const auto category =
+            unattached_output ? XclipseFragmentOutputDiagnosticCategory::OutputWithoutAttachment
+                              : XclipseFragmentOutputDiagnosticCategory::NumericClassMismatch;
+        if (!budget.TryConsume(category)) {
+            continue;
+        }
+
+        const auto& blend = key.state.attachments[attachment];
+        const auto mask = blend.Mask();
+        u32 write_mask{};
+        for (size_t component = 0; component < mask.size(); ++component) {
+            if (mask[component]) {
+                write_mask |= u32{1} << component;
+            }
+        }
+        const u32 location = dual_source ? 0 : static_cast<u32>(output);
+        const u32 index = dual_source ? static_cast<u32>(output) : 0;
+        const char* emulation_reason = "none";
+        if (format_info.host_substitution) {
+            emulation_reason = "GetSupportedFormat alternative";
+        } else if (attachment_enabled && guest_type != backing_type) {
+            emulation_reason = "SurfaceFormat numeric-class change";
+        }
+
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE FRAGMENT OUTPUT diag={} pipeline_key={:016x} location={} index={} "
+                    "shader_type={} guest_type={} backing_type={} guest_rt_format={} "
+                    "guest_pixel_format={} attachment_enabled={} write_mask=0x{:x} "
+                    "blend_enable={} blend_raw=0x{:08x} blend_rgb={}/{}/{} "
+                    "blend_alpha={}/{}/{} referenced={} forced_declaration={} "
+                    "candidate_declared={} declared_after_prune={} attachment_api=render-pass "
+                    "requested_format={} backing_format={} format_emulation={}",
+                    XclipseFragmentOutputDiagnosticName(category), key.Hash(), location, index,
+                    FragmentOutputTypeName(shader_type), FragmentOutputTypeName(guest_type),
+                    FragmentOutputTypeName(backing_type), static_cast<u32>(guest_rt_format),
+                    static_cast<u32>(guest_pixel_format), attachment_enabled, write_mask,
+                    blend.enable.Value(), blend.raw, static_cast<u32>(blend.EquationRGB()),
+                    static_cast<u32>(blend.SourceRGBFactor()),
+                    static_cast<u32>(blend.DestRGBFactor()),
+                    static_cast<u32>(blend.EquationAlpha()),
+                    static_cast<u32>(blend.SourceAlphaFactor()),
+                    static_cast<u32>(blend.DestAlphaFactor()), referenced, forced_declaration,
+                    candidate_declared, declared_after_prune, format_info.requested_format,
+                    format_info.format, emulation_reason);
+    }
 }
 
 size_t GetTotalPipelineWorkers() {
@@ -908,6 +993,9 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
 
         const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
         ConvertLegacyToGeneric(program, runtime_info);
+        if (program.stage == Shader::Stage::Fragment) {
+            LogXclipseFragmentOutputDiagnostics(key, runtime_info, program, profile, device);
+        }
         const std::vector<u32> code{EmitSPIRV(profile, runtime_info, program, binding)};
         device.SaveShader(code);
         modules[stage_index] = BuildShader(device, code);

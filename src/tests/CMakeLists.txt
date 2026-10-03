@@ -26,6 +26,7 @@ add_executable(tests
     video_core/xclipse_memory_pressure.cpp
     video_core/xclipse_telemetry.cpp
     video_core/xclipse_image_diagnostics.cpp
+    video_core/vk_fragment_output.cpp
     input_common/calibration_configuration_job.cpp
 )
 

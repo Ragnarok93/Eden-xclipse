@@ -489,6 +489,9 @@ void EmitSetPatch(EmitContext& ctx, IR::Patch patch, Id value) {
 void EmitSetFragColor(EmitContext& ctx, u32 index, u32 component, Id value) {
     const Id component_id{ctx.Const(component)};
     const AttributeType type{ctx.runtime_info.color_output_types[index]};
+    if (!ShouldEmitFragmentColorStore(type)) {
+        return;
+    }
     if (type == AttributeType::Float) {
         const Id pointer{ctx.OpAccessChain(ctx.output_f32, ctx.frag_color.at(index), component_id)};
         ctx.OpStore(pointer, value);
