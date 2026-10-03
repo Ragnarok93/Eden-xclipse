@@ -5,7 +5,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <algorithm>
-#include <atomic>
 #include <limits>
 #include <array>
 #include <optional>
@@ -31,6 +30,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_image_copy_validation.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
+#include "video_core/renderer_vulkan/xclipse_image_diagnostics.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/formatter.h"
 #include "video_core/texture_cache/samples_helper.h"
@@ -63,15 +63,14 @@ constexpr bool ENABLE_MSAA_RESOLVE_CONSUME = true;
 constexpr bool ENABLE_MSAA_COLOR_DISCARD = true;
 constexpr bool ENABLE_MSAA_DEPTH_STENCIL_DISCARD = true;
 
-std::atomic<u32> xclipse_image_diagnostic_count{};
-constexpr u32 XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT = 64;
+XclipseImageDiagnosticBudget xclipse_image_diagnostic_budget;
 
-[[nodiscard]] bool ShouldLogXclipseImageDiagnostic(const Device& device) {
+[[nodiscard]] bool ShouldLogXclipseImageDiagnostic(
+    const Device& device, XclipseImageDiagnosticCategory category) {
     if (!device.IsXclipse() || !device.GetXclipseTelemetry().Enabled()) {
         return false;
     }
-    return xclipse_image_diagnostic_count.fetch_add(1, std::memory_order_relaxed) <
-           XCLIPSE_IMAGE_DIAGNOSTIC_LIMIT;
+    return xclipse_image_diagnostic_budget.TryConsume(category);
 }
 
 [[nodiscard]] constexpr bool NeedsExplicitBorderColorFormat(VkFormat format) {
@@ -1723,9 +1722,11 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 continue;
             }
             rejected_region = true;
-            if (ShouldLogXclipseImageDiagnostic(device)) {
+            if (ShouldLogXclipseImageDiagnostic(
+                    device, XclipseImageDiagnosticCategory::ImageCopyBounds)) {
                 LOG_WARNING(Render_Vulkan,
-                            "XCLIPSE IMAGE COPY rejected src_gpu={:#x} dst_gpu={:#x} "
+                            "XCLIPSE IMAGE COPY rejected [diag=copy-bounds] "
+                            "src_gpu={:#x} dst_gpu={:#x} "
                             "src_fmt={} dst_fmt={} src_size={}x{}x{} dst_size={}x{}x{} "
                             "src_mip={} src_layer={} dst_mip={} dst_layer={} "
                             "src_off=({},{},{}) dst_off=({},{},{}) extent={}x{}x{} "
@@ -1774,10 +1775,13 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
             return;
         }
 #endif
-        if (ShouldLogXclipseImageDiagnostic(device) && !copy_regions.empty()) {
+        if (!copy_regions.empty() &&
+            ShouldLogXclipseImageDiagnostic(
+                device, XclipseImageDiagnosticCategory::ReinterpretCopy)) {
             const auto& copy = copy_regions.front();
             LOG_INFO(Render_Vulkan,
-                     "XCLIPSE IMAGE COPY reinterpret src_gpu={:#x} dst_gpu={:#x} "
+                     "XCLIPSE IMAGE COPY reinterpret [diag=reinterpret-copy] "
+                     "src_gpu={:#x} dst_gpu={:#x} "
                      "src_guest_fmt={} dst_guest_fmt={} src_vk_fmt={} dst_vk_fmt={} regions={} "
                      "first_src_mip={} first_src_layer={} first_dst_mip={} first_dst_layer={} "
                      "first_extent={}x{}x{} layouts=GENERAL->TRANSFER_SRC/DST->GENERAL",
@@ -2347,10 +2351,13 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
     const bool was_initialized = std::exchange(initialized, true);
     const bool image_is_3d = info.type == ImageType::e3D;
 
-    if (image_is_3d && ShouldLogXclipseImageDiagnostic(runtime->device) && !copies.empty()) {
+    if (image_is_3d && !copies.empty() &&
+        ShouldLogXclipseImageDiagnostic(
+            runtime->device, XclipseImageDiagnosticCategory::Upload3dLayout)) {
         const auto& copy = copies.front();
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE IMAGE LAYOUT upload3d gpu={:#x} fmt={} size={}x{}x{} "
+                 "XCLIPSE IMAGE LAYOUT upload3d [diag=upload3d-layout] "
+                 "gpu={:#x} fmt={} size={}x{}x{} "
                  "mip={} layer={} extent={}x{}x{} layout={}->TRANSFER_DST_OPTIMAL->GENERAL "
                  "barrier_layers=VK_REMAINING_ARRAY_LAYERS",
                  gpu_addr, static_cast<u32>(info.format), info.size.width, info.size.height,
@@ -3286,13 +3293,15 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth) {
         return existing;
     }
     if ((key.drop_depth_comparison || key.force_nearest) &&
-        ShouldLogXclipseImageDiagnostic(*device_ptr)) {
+        ShouldLogXclipseImageDiagnostic(
+            *device_ptr, XclipseImageDiagnosticCategory::SamplerViewCapability)) {
         const VkFormat host_format =
             MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, false,
                                        image_view.format)
                 .format;
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE IMAGE SAMPLER sanitized image_id={} gpu={:#x} guest_fmt={} host_fmt={} "
+                 "XCLIPSE IMAGE SAMPLER sanitized [diag=sampler-view] "
+                 "image_id={} gpu={:#x} guest_fmt={} host_fmt={} "
                  "size={}x{}x{} base_mip={} levels={} base_layer={} layers={} "
                  "drop_depth_compare={} force_nearest={}",
                  image_view.image_id.Value(), image_view.GpuAddr(),

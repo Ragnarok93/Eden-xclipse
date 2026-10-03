@@ -25,6 +25,7 @@ add_executable(tests
     video_core/xclipse_pipeline_policy.cpp
     video_core/xclipse_memory_pressure.cpp
     video_core/xclipse_telemetry.cpp
+    video_core/xclipse_image_diagnostics.cpp
     input_common/calibration_configuration_job.cpp
 )
 
