@@ -6,7 +6,9 @@
 
 #pragma once
 
+#include <array>
 #include <climits>
+#include <optional>
 #include <vector>
 
 #include "common/common_types.h"
@@ -29,6 +31,23 @@ struct StagingBufferRef {
     u64 index;
 };
 
+struct StagingBufferPoolStats {
+    u64 stream_bytes{};
+    u64 cached_device_local_bytes{};
+    u64 cached_upload_bytes{};
+    u64 cached_download_bytes{};
+    u64 active_cached_bytes{};
+    u64 deferred_cached_bytes{};
+    u64 total_bytes{};
+    u64 peak_total_bytes{};
+    u64 allocations{};
+    u64 reuses{};
+    u64 releases{};
+    u64 released_bytes{};
+    u64 pressure_releases{};
+    u64 pressure_released_bytes{};
+};
+
 class StagingBufferPool {
 public:
     static constexpr size_t NUM_SYNCS = 16;
@@ -44,7 +63,11 @@ public:
         return *stream_buffer;
     }
 
-    void TickFrame();
+    /// Run normal incremental cache cleanup. When aggressive_reclaim is true, purge every
+    /// cached staging buffer that is already GPU-free; active/deferred work is never waited on.
+    void TickFrame(bool aggressive_reclaim = false);
+
+    [[nodiscard]] StagingBufferPoolStats Stats() const;
 
 private:
     struct StreamBufferCommit {
@@ -98,8 +121,12 @@ private:
     StagingBuffersCache& GetCache(MemoryUsage usage);
 
     void ReleaseCache(MemoryUsage usage);
+    void ReleaseAllFree(MemoryUsage usage);
 
-    void ReleaseLevel(StagingBuffersCache& cache, size_t log2);
+    void ReleaseLevel(StagingBuffersCache& cache, MemoryUsage usage, size_t log2);
+    void AccountAllocation(MemoryUsage usage, u64 bytes);
+    void AccountRelease(MemoryUsage usage, u64 bytes, u64 count, bool pressure);
+    [[nodiscard]] u64 CachedBytes() const noexcept;
     size_t Region(size_t iter) const noexcept {
         return iter / region_size;
     }
@@ -126,6 +153,17 @@ private:
     size_t current_delete_level = 0;
     u64 buffer_index = 0;
     u64 unique_ids{};
+
+    u64 cached_device_local_bytes{};
+    u64 cached_upload_bytes{};
+    u64 cached_download_bytes{};
+    u64 peak_total_bytes{};
+    u64 allocation_count{};
+    u64 reuse_count{};
+    u64 release_count{};
+    u64 released_bytes{};
+    u64 pressure_release_count{};
+    u64 pressure_released_bytes{};
 };
 
 } // namespace Vulkan

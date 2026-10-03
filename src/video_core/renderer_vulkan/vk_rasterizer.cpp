@@ -899,12 +899,15 @@ void RasterizerVulkan::TickFrame() {
     const bool memory_monitor_enabled =
         Settings::values.xclipse_memory_pressure_monitor.GetValue();
     XclipseTextureGcPressure texture_gc_pulse = XclipseTextureGcPressure::None;
+    bool staging_reclaim_pulse = false;
     if (xclipse_runtime_frame_counter % 30 == 0) {
         const auto pressure_update =
             xclipse_memory_pressure.Tick(device, memory_monitor_enabled);
         if (memory_monitor_enabled && pressure_update.sampled) {
             texture_gc_pulse =
                 TextureGcPressureFor(pressure_update.pressure, pressure_update.sample);
+            staging_reclaim_pulse =
+                ShouldAggressivelyReclaimStaging(pressure_update.pressure);
         }
         if (pressure_update.sampled && pressure_update.changed) {
             const auto& sample = pressure_update.sample;
@@ -975,13 +978,26 @@ void RasterizerVulkan::TickFrame() {
                  budget_pct, ram_available_pct, rss_mib, rss_pct, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),
                  sample.psi_full_avg10.value_or(-1.0f));
+
+        const auto staging = staging_pool.Stats();
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE STAGING stream_bytes={} upload_bytes={} download_bytes={} "
+                 "device_local_bytes={} active_cached_bytes={} deferred_cached_bytes={} "
+                 "total_bytes={} peak_total_bytes={} allocations={} reuses={} releases={} "
+                 "released_bytes={} pressure_releases={} pressure_released_bytes={}",
+                 staging.stream_bytes, staging.cached_upload_bytes,
+                 staging.cached_download_bytes, staging.cached_device_local_bytes,
+                 staging.active_cached_bytes, staging.deferred_cached_bytes,
+                 staging.total_bytes, staging.peak_total_bytes, staging.allocations,
+                 staging.reuses, staging.releases, staging.released_bytes,
+                 staging.pressure_releases, staging.pressure_released_bytes);
     }
 
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();
     descriptor_buffer_ring.TickFrame();
     fence_manager.TickFrame();
-    staging_pool.TickFrame();
+    staging_pool.TickFrame(staging_reclaim_pulse);
     {
         std::scoped_lock lock{texture_cache.mutex};
         // External Android pressure is a bounded nudge, not a persistent per-frame override.

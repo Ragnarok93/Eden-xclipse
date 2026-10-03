@@ -40,6 +40,12 @@ enum class XclipseTextureGcPressure : u8 {
     }
 }
 
+[[nodiscard]] constexpr bool ShouldAggressivelyReclaimStaging(
+    MemoryPressureClass pressure) noexcept {
+    return pressure == MemoryPressureClass::High ||
+           pressure == MemoryPressureClass::Critical;
+}
+
 [[nodiscard]] constexpr const char* MemoryPressureClassName(
     MemoryPressureClass pressure) noexcept {
     switch (pressure) {

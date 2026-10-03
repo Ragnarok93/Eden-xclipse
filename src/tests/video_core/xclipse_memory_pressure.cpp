@@ -129,3 +129,14 @@ TEST_CASE("Xclipse texture GC requires Eden memory contribution",
     REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
             XclipseTextureGcPressure::Critical);
 }
+
+
+TEST_CASE("Xclipse staging reclaim starts only at high pressure",
+          "[video_core][xclipse]") {
+    using Vulkan::MemoryPressureClass;
+
+    REQUIRE_FALSE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::Normal));
+    REQUIRE_FALSE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::Elevated));
+    REQUIRE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::High));
+    REQUIRE(Vulkan::ShouldAggressivelyReclaimStaging(MemoryPressureClass::Critical));
+}

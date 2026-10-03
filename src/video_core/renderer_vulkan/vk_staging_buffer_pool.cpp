@@ -96,6 +96,7 @@ StagingBufferPool::StagingBufferPool(const Device& device_, MemoryAllocator& mem
     }
     stream_pointer = stream_buffer.Mapped();
     ASSERT_MSG(!stream_pointer.empty(), "Stream buffer must be host visible!");
+    peak_total_bytes = static_cast<u64>(stream_buffer_size);
 }
 
 StagingBufferPool::~StagingBufferPool() = default;
@@ -119,12 +120,54 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
     it->deferred = false;
 }
 
-void StagingBufferPool::TickFrame() {
+void StagingBufferPool::TickFrame(bool aggressive_reclaim) {
+    if (aggressive_reclaim) {
+        ReleaseAllFree(MemoryUsage::DeviceLocal);
+        ReleaseAllFree(MemoryUsage::Upload);
+        ReleaseAllFree(MemoryUsage::Download);
+        return;
+    }
+
     current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
 
     ReleaseCache(MemoryUsage::DeviceLocal);
     ReleaseCache(MemoryUsage::Upload);
     ReleaseCache(MemoryUsage::Download);
+}
+
+StagingBufferPoolStats StagingBufferPool::Stats() const {
+    StagingBufferPoolStats stats{
+        .stream_bytes = static_cast<u64>(stream_buffer_size),
+        .cached_device_local_bytes = cached_device_local_bytes,
+        .cached_upload_bytes = cached_upload_bytes,
+        .cached_download_bytes = cached_download_bytes,
+        .total_bytes = static_cast<u64>(stream_buffer_size) + CachedBytes(),
+        .peak_total_bytes = peak_total_bytes,
+        .allocations = allocation_count,
+        .reuses = reuse_count,
+        .releases = release_count,
+        .released_bytes = released_bytes,
+        .pressure_releases = pressure_release_count,
+        .pressure_released_bytes = pressure_released_bytes,
+    };
+
+    const auto accumulate_activity = [this, &stats](const StagingBuffersCache& cache) {
+        for (size_t log2 = 0; log2 < cache.size(); ++log2) {
+            const u64 bytes = u64{1} << log2;
+            for (const auto& entry : cache[log2].entries) {
+                if (entry.deferred) {
+                    stats.deferred_cached_bytes += bytes;
+                    stats.active_cached_bytes += bytes;
+                } else if (!scheduler.IsFree(entry.tick)) {
+                    stats.active_cached_bytes += bytes;
+                }
+            }
+        }
+    };
+    accumulate_activity(device_local_cache);
+    accumulate_activity(upload_cache);
+    accumulate_activity(download_cache);
+    return stats;
 }
 
 StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
@@ -199,6 +242,7 @@ std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t s
     it->tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick();
     ASSERT(!it->deferred);
     it->deferred = deferred;
+    ++reuse_count;
     return it->Ref();
 }
 
@@ -242,6 +286,7 @@ StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage
         .tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick(),
         .deferred = deferred,
     });
+    AccountAllocation(usage, u64{1} << log2_size);
     return entry.Ref();
 }
 
@@ -260,23 +305,60 @@ StagingBufferPool::StagingBuffersCache& StagingBufferPool::GetCache(MemoryUsage 
 }
 
 void StagingBufferPool::ReleaseCache(MemoryUsage usage) {
-    ReleaseLevel(GetCache(usage), current_delete_level);
+    ReleaseLevel(GetCache(usage), usage, current_delete_level);
 }
 
-void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2) {
+void StagingBufferPool::ReleaseAllFree(MemoryUsage usage) {
+    auto& cache = GetCache(usage);
+    for (size_t log2 = cache.size(); log2-- > 0;) {
+        auto& staging = cache[log2];
+        auto& entries = staging.entries;
+        const size_t old_size = entries.size();
+        if (old_size == 0) {
+            staging.delete_index = 0;
+            staging.iterate_index = 0;
+            continue;
+        }
+
+        const auto is_deletable = [this](const StagingBuffer& entry) {
+            return !entry.deferred && scheduler.IsFree(entry.tick);
+        };
+        std::erase_if(entries, is_deletable);
+        const u64 removed = static_cast<u64>(old_size - entries.size());
+        if (removed != 0) {
+            AccountRelease(usage, removed * (u64{1} << log2), removed, true);
+        }
+        staging.delete_index = 0;
+        if (staging.iterate_index > entries.size()) {
+            staging.iterate_index = 0;
+        }
+    }
+}
+
+void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, MemoryUsage usage, size_t log2) {
     constexpr size_t deletions_per_tick = 16;
     auto& staging = cache[log2];
     auto& entries = staging.entries;
     const size_t old_size = entries.size();
+    if (old_size == 0) {
+        staging.delete_index = 0;
+        staging.iterate_index = 0;
+        return;
+    }
 
     const auto is_deletable = [this](const StagingBuffer& entry) {
-        return scheduler.IsFree(entry.tick);
+        return !entry.deferred && scheduler.IsFree(entry.tick);
     };
-    const size_t begin_offset = staging.delete_index;
+    const size_t begin_offset = (std::min)(staging.delete_index, old_size);
     const size_t end_offset = (std::min)(begin_offset + deletions_per_tick, old_size);
     const auto begin = entries.begin() + begin_offset;
     const auto end = entries.begin() + end_offset;
-    entries.erase(std::remove_if(begin, end, is_deletable), end);
+    const auto new_end = std::remove_if(begin, end, is_deletable);
+    const u64 removed = static_cast<u64>(std::distance(new_end, end));
+    entries.erase(new_end, end);
+    if (removed != 0) {
+        AccountRelease(usage, removed * (u64{1} << log2), removed, false);
+    }
 
     const size_t new_size = entries.size();
     staging.delete_index += deletions_per_tick;
@@ -286,6 +368,56 @@ void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, size_t log2) {
     if (staging.iterate_index > new_size) {
         staging.iterate_index = 0;
     }
+}
+
+void StagingBufferPool::AccountAllocation(MemoryUsage usage, u64 bytes) {
+    switch (usage) {
+    case MemoryUsage::DeviceLocal:
+        cached_device_local_bytes += bytes;
+        break;
+    case MemoryUsage::Upload:
+        cached_upload_bytes += bytes;
+        break;
+    case MemoryUsage::Download:
+        cached_download_bytes += bytes;
+        break;
+    default:
+        ASSERT_MSG(false, "Invalid staging memory usage={}", usage);
+        return;
+    }
+    ++allocation_count;
+    peak_total_bytes =
+        (std::max)(peak_total_bytes, static_cast<u64>(stream_buffer_size) + CachedBytes());
+}
+
+void StagingBufferPool::AccountRelease(MemoryUsage usage, u64 bytes, u64 count, bool pressure) {
+    u64* cached_bytes{};
+    switch (usage) {
+    case MemoryUsage::DeviceLocal:
+        cached_bytes = &cached_device_local_bytes;
+        break;
+    case MemoryUsage::Upload:
+        cached_bytes = &cached_upload_bytes;
+        break;
+    case MemoryUsage::Download:
+        cached_bytes = &cached_download_bytes;
+        break;
+    default:
+        ASSERT_MSG(false, "Invalid staging memory usage={}", usage);
+        return;
+    }
+    ASSERT(*cached_bytes >= bytes);
+    *cached_bytes -= bytes;
+    release_count += count;
+    released_bytes += bytes;
+    if (pressure) {
+        pressure_release_count += count;
+        pressure_released_bytes += bytes;
+    }
+}
+
+u64 StagingBufferPool::CachedBytes() const noexcept {
+    return cached_device_local_bytes + cached_upload_bytes + cached_download_bytes;
 }
 
 } // namespace Vulkan
