@@ -405,7 +405,7 @@
     <string name="firmware_installed_failure_description">Make sure the firmware nca files are at the root of the zip and try again.</string>
     <string name="firmware_uninstalled_failure">Firmware uninstallation failed</string>
     <string name="share_log">Share debug logs</string>
-    <string name="share_log_description">Share Eden\'s log file to debug issues</string>
+    <string name="share_log_description">Share Eden\'s continuous debug history and GPU log when available</string>
     <string name="share_log_missing">No log file found</string>
     <string name="share_gpu_log">Share GPU logs</string>
     <string name="share_gpu_log_description">Share Eden\'s GPU log file to debug graphics issues</string>
@@ -649,10 +649,18 @@
     <string name="renderer_debug_description">Sets the graphics API to a slow debugging mode.</string>
     <string name="patch_old_qcom_drivers">BCn Texture Patching</string>
     <string name="patch_old_qcom_drivers_description">Override automatic BCn texture format detection on Adreno GPUs. Normally auto-detected based on Android version (enabled on API 28+).</string>
+    <string name="xclipse_validation_probes">Xclipse Validation Probes</string>
+    <string name="xclipse_validation_probes_description">Run bounded live Xclipse Vulkan capability probes at renderer initialization. Disable only for A/B startup or driver troubleshooting.</string>
+    <string name="xclipse_runtime_telemetry">Xclipse Runtime Telemetry</string>
+    <string name="xclipse_runtime_telemetry_description">Record Xclipse pipeline, synchronization, descriptor, BC decode, and memory telemetry in the continuous debug log. Disable for telemetry-overhead A/B testing.</string>
+    <string name="xclipse_memory_pressure_monitor">Xclipse Memory Pressure Monitor</string>
+    <string name="xclipse_memory_pressure_monitor_description">Sample Vulkan budget use, Android memory availability, process RSS, memory PSI, and Samsung GTT counters. Eden\'s existing texture LRU is accelerated only when system pressure and Eden\'s own RAM or Vulkan-budget share both justify it; aggressive trimming is reserved for Critical pressure with heavy Eden usage. Disable for A/B testing.</string>
     <string name="xclipse_gpu_bcn_decode">Xclipse GPU BCn Decoder</string>
-    <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, decode unsupported BC4–BC7 textures with fused Vulkan compute paths instead of the CPU fallback. BC4/5 use narrow R8/RG8 destinations; BC6H uses RGBA16F; BC7 uses RGBA8. Restart emulation after changing this setting.</string>
+    <string name="xclipse_gpu_bcn_decode_description">Experimental. On Xclipse GPUs, accelerate BC4/BC5 decoding with the validated RGTC compute path. BC6H/BC7 remain on Eden\'s CPU fallback until the BPTC shader path passes an on-device correctness self-test. Restart emulation after changing this setting.</string>
     <string name="xclipse_pipeline_policy">Xclipse Pipeline Policy</string>
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
+    <string name="xclipse_sync_policy">Xclipse Synchronization Policy</string>
+    <string name="xclipse_sync_policy_description">Use dependency-specific upload and copy barriers plus GPU-ordered ASTC completion on Xclipse GPUs. Disable for A/B testing if upload, decode, or copy corruption appears.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>

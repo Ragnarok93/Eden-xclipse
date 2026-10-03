@@ -50,6 +50,9 @@ object NativeLibrary {
     @JvmField
     var sEmulationActivity = WeakReference<EmulationActivity?>(null)
 
+    @Volatile
+    private var pendingEmulationStarted = false
+
     init {
         try {
             System.loadLibrary("yuzu-android")
@@ -431,6 +434,11 @@ object NativeLibrary {
     fun setEmulationActivity(emulationActivity: EmulationActivity?) {
         Log.debug("[NativeLibrary] Registering EmulationActivity.")
         sEmulationActivity = WeakReference(emulationActivity)
+        if (emulationActivity != null && pendingEmulationStarted) {
+            pendingEmulationStarted = false
+            Log.info("[NativeLibrary] Delivering deferred emulation-start callback.")
+            emulationActivity.onEmulationStarted()
+        }
     }
 
     fun clearEmulationActivity() {
@@ -441,19 +449,37 @@ object NativeLibrary {
     @Keep
     @JvmStatic
     fun onEmulationStarted() {
-        sEmulationActivity.get()!!.onEmulationStarted()
+        val activity = sEmulationActivity.get()
+        if (activity == null) {
+            pendingEmulationStarted = true
+            Log.warning("[NativeLibrary] Emulation started before activity registration; deferring callback.")
+            return
+        }
+        pendingEmulationStarted = false
+        activity.onEmulationStarted()
     }
 
     @Keep
     @JvmStatic
     fun onEmulationStopped(status: Int) {
-        sEmulationActivity.get()!!.onEmulationStopped(status)
+        pendingEmulationStarted = false
+        val activity = sEmulationActivity.get()
+        if (activity == null) {
+            Log.info("[NativeLibrary] Emulation stopped with no registered activity.")
+            return
+        }
+        activity.onEmulationStopped(status)
     }
 
     @Keep
     @JvmStatic
     fun onProgramChanged(programIndex: Int) {
-        sEmulationActivity.get()!!.onProgramChanged(programIndex)
+        val activity = sEmulationActivity.get()
+        if (activity == null) {
+            Log.info("[NativeLibrary] Program changed with no registered activity.")
+            return
+        }
+        activity.onProgramChanged(programIndex)
     }
 
     /**

@@ -164,7 +164,9 @@ android {
             manifestPlaceholders += mapOf("appNameSuffix" to " Debug Release")
 
             versionNameSuffix = "-relWithDebInfo"
-            applicationIdSuffix = ".relWithDebInfo"
+            // Xclipse hardware-test builds intentionally share the existing debug package ID so
+            // optimized diagnostic APKs can upgrade prior test installs without losing data.
+            applicationIdSuffix = ".debug"
             isJniDebuggable = true
         }
 

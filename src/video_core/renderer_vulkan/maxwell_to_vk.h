@@ -35,6 +35,8 @@ struct FormatInfo {
     VkFormat format;
     bool attachable;
     bool storage;
+    VkFormat requested_format{VK_FORMAT_UNDEFINED};
+    bool host_substitution{};
 };
 
 /**

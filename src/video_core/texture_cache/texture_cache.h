@@ -114,18 +114,22 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
 }
 
 template <class P>
-void TextureCache<P>::RunGarbageCollector() {
+void TextureCache<P>::RunGarbageCollector(bool force_high_priority_gc,
+                                          bool force_aggressive_gc) {
     bool high_priority_mode = false;
     bool aggressive_mode = false;
     u64 ticks_to_destroy = 0;
     size_t num_iterations = 0;
     const auto Configure = [&](bool allow_aggressive) {
-        high_priority_mode = total_used_memory >= expected_memory;
-        aggressive_mode = allow_aggressive && total_used_memory >= critical_memory;
+        high_priority_mode = force_high_priority_gc || force_aggressive_gc ||
+                             total_used_memory >= expected_memory;
+        aggressive_mode =
+            allow_aggressive && (force_aggressive_gc || total_used_memory >= critical_memory);
         ticks_to_destroy = aggressive_mode ? 10ULL : high_priority_mode ? 25ULL : 50ULL;
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
-    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode](ImageId image_id) {
+    const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
+                          force_high_priority_gc, force_aggressive_gc](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -150,31 +154,37 @@ void TextureCache<P>::RunGarbageCollector() {
         }
         UnregisterImage(image_id);
         DeleteImage(image_id, image.scale_tick > frame_tick + 5);
-        if (aggressive_mode && total_used_memory < critical_memory) {
+        if (aggressive_mode && !force_aggressive_gc &&
+            total_used_memory < critical_memory) {
             num_iterations >>= 2;
             aggressive_mode = false;
-        } else if (high_priority_mode && total_used_memory < expected_memory) {
+        } else if (high_priority_mode && !force_high_priority_gc && !force_aggressive_gc &&
+                   total_used_memory < expected_memory) {
             num_iterations >>= 1;
             high_priority_mode = false;
         }
         return false;
     };
     Configure(false);
-    lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
-    if (total_used_memory >= critical_memory) {
+    const auto RunPass = [&] {
+        const u64 oldest_tick = frame_tick > ticks_to_destroy ? frame_tick - ticks_to_destroy : 0;
+        lru_cache.ForEachItemBelow(oldest_tick, Cleanup);
+    };
+    RunPass();
+    if (force_aggressive_gc || total_used_memory >= critical_memory) {
         Configure(true);
-        lru_cache.ForEachItemBelow(frame_tick - ticks_to_destroy, Cleanup);
+        RunPass();
     }
 }
 
 template <class P>
-void TextureCache<P>::TickFrame() {
+void TextureCache<P>::TickFrame(bool force_high_priority_gc, bool force_aggressive_gc) {
     // If we can obtain the memory info, use it instead of the estimate.
     if (runtime.CanReportMemoryUsage()) {
         total_used_memory = runtime.GetDeviceMemoryUsage();
     }
-    if (total_used_memory > minimum_memory) {
-        RunGarbageCollector();
+    if (force_high_priority_gc || force_aggressive_gc || total_used_memory > minimum_memory) {
+        RunGarbageCollector(force_high_priority_gc, force_aggressive_gc);
     }
     sentenced_images.Tick();
     sentenced_framebuffers.Tick();

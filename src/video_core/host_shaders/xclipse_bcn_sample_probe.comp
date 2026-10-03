@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D probe_texture;
+layout(binding = 1, std430) buffer ProbeOutput {
+    uint data[];
+} output_buffer;
+
+void main() {
+    const vec4 sampled = textureLod(probe_texture, vec2(0.5), 0.0);
+    const uvec4 rgba = uvec4(round(clamp(sampled, 0.0, 1.0) * 255.0));
+    // Keep the first 16 bytes available for the compressed upload block.
+    output_buffer.data[4] = rgba.r;
+    output_buffer.data[5] = rgba.g;
+    output_buffer.data[6] = rgba.b;
+    output_buffer.data[7] = rgba.a;
+}

@@ -892,6 +892,132 @@ void RasterizerVulkan::FlushCommands() {
 
 void RasterizerVulkan::TickFrame() {
     draw_counter = 0;
+    auto& telemetry = device.GetXclipseTelemetry();
+    telemetry.RecordFrame();
+    ++xclipse_runtime_frame_counter;
+
+    const bool memory_monitor_enabled =
+        Settings::values.xclipse_memory_pressure_monitor.GetValue();
+    XclipseTextureGcPressure texture_gc_pulse = XclipseTextureGcPressure::None;
+    const auto pressure_update =
+        xclipse_memory_pressure.Tick(device, memory_monitor_enabled);
+    if (!memory_monitor_enabled) {
+        static_cast<void>(staging_pool.ApplyMemoryPressure(MemoryPressureClass::Normal));
+    } else if (pressure_update.sampled) {
+        texture_gc_pulse =
+            TextureGcPressureFor(pressure_update.pressure, pressure_update.sample);
+
+        // Pressure sampling is time-gated inside XclipseMemoryPressureController, so call it every
+        // frame. On each fresh sample, immediately reclaim already-free staging before any later
+        // telemetry or allocations can obscure the actual returned footprint.
+        const auto staging_reclaim =
+            staging_pool.ApplyMemoryPressure(pressure_update.pressure);
+        if (pressure_update.changed || staging_reclaim.released_bytes != 0) {
+            const auto staging_after = staging_pool.Stats();
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE STAGING RECLAIM pressure={} cached_before={} cached_after={} "
+                     "released_bytes={} cache_limit={} largest_upload={} largest_free_upload={} "
+                     "largest_active_upload={}",
+                     MemoryPressureClassName(pressure_update.pressure),
+                     staging_reclaim.before_cached_bytes, staging_reclaim.after_cached_bytes,
+                     staging_reclaim.released_bytes, staging_after.cache_limit_bytes,
+                     staging_after.largest_upload_bucket_bytes,
+                     staging_after.largest_free_upload_bucket_bytes,
+                     staging_after.largest_active_upload_bucket_bytes);
+        }
+    }
+    if (pressure_update.sampled && pressure_update.changed) {
+        const auto& sample = pressure_update.sample;
+        const s32 budget_pct = sample.memory_budget_used_percent
+                                   ? static_cast<s32>(*sample.memory_budget_used_percent)
+                                   : -1;
+        const s32 ram_available_pct =
+            sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
+        const s32 rss_mib =
+            sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+        const s32 rss_pct =
+            sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
+        const s32 gtt_pct =
+            sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE MEMORY PRESSURE state={} budget_pct={} ram_available_pct={} "
+                 "rss_mib={} rss_pct={} gtt_pct={} psi_some={:.2f} psi_full={:.2f} trend={}",
+                 MemoryPressureClassName(pressure_update.pressure), budget_pct,
+                 ram_available_pct, rss_mib, rss_pct, gtt_pct,
+                 sample.psi_some_avg10.value_or(-1.0f),
+                 sample.psi_full_avg10.value_or(-1.0f),
+                 pressure_update.psi_trending_up);
+    }
+
+    if (telemetry.Enabled() && xclipse_runtime_frame_counter % 300 == 0) {
+        const auto snapshot = telemetry.Snapshot();
+        const auto& pressure = xclipse_memory_pressure.LastSnapshot();
+        const auto& sample = pressure.sample;
+        const s32 budget_pct = sample.memory_budget_used_percent
+                                   ? static_cast<s32>(*sample.memory_budget_used_percent)
+                                   : -1;
+        const s32 ram_available_pct =
+            sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
+        const s32 rss_mib =
+            sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+        const s32 rss_pct =
+            sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
+        const s32 gtt_pct =
+            sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE RUNTIME frame={} submits={} host_waits={} wait_unknown={} "
+                 "buffer_cache_waits={} fence_waits={} descriptor_waits={} "
+                 "staging_pressure_waits={} finishes={} "
+                 "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
+                 "buffer_reuses={} buffer_allocations={} descriptor_wait_requests={} stalls={} "
+                 "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
+                 "depth_native_blits={} depth_shader_blits={} native_resolves={} "
+                 "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
+                 "texture_gc_policy={} texture_gc_pulse={} budget_pct={} ram_available_pct={} "
+                 "rss_mib={} rss_pct={} gtt_pct={} psi_some={:.2f} psi_full={:.2f}",
+                 snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
+                 snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
+                 snapshot.wait_descriptor_buffer, snapshot.wait_staging_pressure,
+                 snapshot.scheduler_finishes,
+                 snapshot.descriptor_set_allocations,
+                 snapshot.descriptor_set_updates, snapshot.descriptor_push_updates,
+                 snapshot.descriptor_buffer_uses, snapshot.descriptor_buffer_reuses,
+                 snapshot.descriptor_buffer_allocations,
+                 snapshot.descriptor_frame_wait_requests, snapshot.descriptor_stalls,
+                 snapshot.bcn_gpu_decode_dispatches, snapshot.bcn_gpu_decode_fallbacks,
+                 snapshot.color_shader_blits, snapshot.depth_stencil_native_blits,
+                 snapshot.depth_stencil_shader_blits, snapshot.native_resolves,
+                 snapshot.native_image_copies, snapshot.reinterpret_copies,
+                 memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
+                 memory_monitor_enabled
+                     ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure, sample))
+                     : "off",
+                 memory_monitor_enabled ? TextureGcPressureName(texture_gc_pulse) : "off",
+                 budget_pct, ram_available_pct, rss_mib, rss_pct, gtt_pct,
+                 sample.psi_some_avg10.value_or(-1.0f),
+                 sample.psi_full_avg10.value_or(-1.0f));
+
+        const auto staging = staging_pool.Stats();
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE STAGING stream_bytes={} upload_bytes={} download_bytes={} "
+                 "device_local_bytes={} active_cached_bytes={} deferred_cached_bytes={} "
+                 "total_bytes={} peak_total_bytes={} cache_limit_bytes={} allocations={} reuses={} "
+                 "releases={} released_bytes={} pressure_releases={} pressure_released_bytes={} "
+                 "pressure_waits={} pressure_wait_reused_bytes={} cache_limit_hits={} "
+                 "over_limit_allocations={} largest_upload_bucket={} largest_free_upload_bucket={} "
+                 "largest_active_upload_bucket={}",
+                 staging.stream_bytes, staging.cached_upload_bytes,
+                 staging.cached_download_bytes, staging.cached_device_local_bytes,
+                 staging.active_cached_bytes, staging.deferred_cached_bytes,
+                 staging.total_bytes, staging.peak_total_bytes, staging.cache_limit_bytes,
+                 staging.allocations, staging.reuses, staging.releases, staging.released_bytes,
+                 staging.pressure_releases, staging.pressure_released_bytes,
+                 staging.pressure_waits, staging.pressure_wait_reused_bytes,
+                 staging.cache_limit_hits, staging.over_limit_allocations,
+                 staging.largest_upload_bucket_bytes, staging.largest_free_upload_bucket_bytes,
+                 staging.largest_active_upload_bucket_bytes);
+    }
+
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();
     descriptor_buffer_ring.TickFrame();
@@ -899,7 +1025,10 @@ void RasterizerVulkan::TickFrame() {
     staging_pool.TickFrame();
     {
         std::scoped_lock lock{texture_cache.mutex};
-        texture_cache.TickFrame();
+        // External Android pressure is a bounded nudge, not a persistent per-frame override.
+        // Normal Eden texture GC remains authoritative on all frames between fresh samples.
+        texture_cache.TickFrame(texture_gc_pulse != XclipseTextureGcPressure::None,
+                                texture_gc_pulse == XclipseTextureGcPressure::Critical);
     }
     {
         std::scoped_lock lock{buffer_cache.mutex};

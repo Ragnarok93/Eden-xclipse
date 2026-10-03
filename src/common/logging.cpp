@@ -240,13 +240,41 @@ struct ColorConsoleBackend final : public Backend {
 /// @brief Backend that writes to a file passed into the constructor
 struct FileBackend final : public Backend {
     explicit FileBackend(const std::filesystem::path filename) noexcept {
-        auto old_filename = filename;
-        old_filename += ".old.txt";
-        // Existence checks are done within the functions themselves.
-        // We don't particularly care if these succeed or not.
-        void(FS::RemoveFile(old_filename));
-        void(FS::RenameFile(filename, old_filename));
-        file.emplace(filename, FS::FileAccessMode::Write, FS::FileType::TextFile);
+        using namespace Common::Literals;
+
+        // Keep one canonical log across Android process restarts so crash/relaunch sequences remain
+        // inspectable as a single timeline. Only roll the file when the configured safety limit was
+        // already reached before this process started.
+        const u64 write_limit =
+            Settings::values.extended_logging.GetValue() ? 1_GiB : 100_MiB;
+        {
+            FS::IOFile existing{filename, FS::FileAccessMode::Read, FS::FileType::TextFile};
+            if (existing.IsOpen() && existing.GetSize() >= write_limit) {
+                existing.Close();
+                auto old_filename = filename;
+                old_filename += ".old.txt";
+                void(FS::RemoveFile(old_filename));
+                void(FS::RenameFile(filename, old_filename));
+            }
+        }
+
+        file.emplace(filename, FS::FileAccessMode::Append, FS::FileType::TextFile);
+        if (!file->IsOpen()) {
+            return;
+        }
+
+        bytes_written = static_cast<std::size_t>(file->GetSize());
+        const auto epoch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+        const auto session_header =
+            fmt::format("\n=== EDEN LOG SESSION START epoch_ms={} ===\n", epoch_ms);
+        const auto written = file->WriteString(session_header);
+        bytes_written += written;
+        pending_bytes += written;
+        file->Flush();
+        pending_bytes = 0;
+        last_flush = std::chrono::steady_clock::now();
     }
     ~FileBackend() noexcept override = default;
 
@@ -272,23 +300,35 @@ struct FileBackend final : public Backend {
                 boost::replace_all(message, username, "user");
         }
 #endif
-        bytes_written += file->WriteSpan(std::span<const char>{message.begin(), message.end()});
-
-        // Option to log each line rather than 4k buffers
-        if (Settings::values.log_flush_line.GetValue())
-            file->Flush();
+        const auto written =
+            file->WriteSpan(std::span<const char>{message.begin(), message.end()});
+        bytes_written += written;
+        pending_bytes += written;
 
         using namespace Common::Literals;
         // Prevent logs from exceeding a set maximum size in the event that log entries are spammed.
         const auto write_limit = Settings::values.extended_logging.GetValue() ? 1_GiB : 100_MiB;
         const bool write_limit_exceeded = bytes_written > write_limit;
-        if (entry.log_level >= Level::Error || write_limit_exceeded) {
-            // Stop writing after the write limit is exceeded.
-            // Don't close the file so we can print a stacktrace if necessary
-            if (write_limit_exceeded)
-                enabled = false;
+
+        // Keep the tail useful after a native/UI crash without turning warning/assert floods
+        // into synchronous storage I/O. The continuous log is made durable every 250 ms or 64 KiB;
+        // explicit line-flush mode and rollover still force an immediate flush.
+        const auto now = std::chrono::steady_clock::now();
+        const bool periodic_flush =
+            pending_bytes >= 64 * 1024 ||
+            now - last_flush >= std::chrono::milliseconds{250};
+        const bool force_flush =
+            Settings::values.log_flush_line.GetValue() || write_limit_exceeded;
+        if (force_flush || periodic_flush) {
             file->Flush();
+            pending_bytes = 0;
+            last_flush = now;
         }
+
+        // Stop writing after the write limit is exceeded. Keep the file open so a final flush can
+        // still happen during shutdown.
+        if (write_limit_exceeded)
+            enabled = false;
     }
 
     void Flush() noexcept override {
@@ -297,6 +337,8 @@ struct FileBackend final : public Backend {
 private:
     std::optional<FS::IOFile> file;
     std::size_t bytes_written = 0;
+    std::size_t pending_bytes = 0;
+    std::chrono::steady_clock::time_point last_flush{std::chrono::steady_clock::now()};
     bool enabled = true;
 };
 #endif

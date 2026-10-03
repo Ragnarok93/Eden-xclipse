@@ -1,4 +1,4 @@
-name: Xclipse Android Debug
+name: Xclipse Android Optimized Diagnostics
 
 on:
   push:
@@ -18,6 +18,20 @@ jobs:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
+      - name: Publish pending build status
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d "{\"state\":\"pending\",\"context\":\"xclipse/android-debug\",\"description\":\"Xclipse optimized diagnostic build running\",\"target_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -54,23 +68,43 @@ jobs:
         run: |
           cd src/android
           chmod +x ./gradlew
-          ./gradlew ':app:configureCMakeDebug[arm64-v8a]' \
+          ./gradlew ':app:configureCMakeRelWithDebInfo[arm64-v8a]' \
             -PYUZU_ANDROID_ARGS="-DUSE_CCACHE=false" \
             --info
 
-      - name: Build standard debug APK
+      - name: Build optimized diagnostic APK
         shell: bash
         env:
           CCACHE: "false"
         run: |
           chmod +x .ci/android/build.sh
-          .ci/android/build.sh --target standard --build-type Debug
+          .ci/android/build.sh --target standard --build-type RelWithDebInfo
 
-      - name: Upload debug artifacts
+      - name: Upload optimized diagnostic artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: eden-xclipse-debug-${{ github.sha }}
+          name: eden-xclipse-diagnostic-${{ github.sha }}
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish connector-visible build status
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ job.status }}" in
+            success) STATE=success ;;
+            failure) STATE=failure ;;
+            *) STATE=error ;;
+          esac
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d "{\"state\":\"${STATE}\",\"context\":\"xclipse/android-debug\",\"description\":\"Xclipse optimized diagnostic build ${STATE}\",\"target_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"

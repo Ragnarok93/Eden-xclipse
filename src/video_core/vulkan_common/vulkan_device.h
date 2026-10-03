@@ -288,6 +288,14 @@ public:
         return device_policy.xclipse.detected;
     }
 
+    bool UseXclipseSyncPolicy() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_sync_policy;
+    }
+
+    bool UseXclipseBcnGpuDecode() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bcn_gpu_decode;
+    }
+
     XclipseTelemetry& GetXclipseTelemetry() const noexcept {
         return xclipse_telemetry;
     }
@@ -977,6 +985,9 @@ FN_MAX_LIMIT_LIST
 
     u64 GetDeviceMemoryUsage() const;
 
+    /// Returns the live VK_EXT_memory_budget heap budget before Eden's integrated-GPU cache cap.
+    u64 GetDeviceMemoryBudget() const;
+
     u32 GetSetsPerPool() const {
         return sets_per_pool;
     }
@@ -1128,6 +1139,9 @@ private:
 
     /// Runs bounded device-level probes before pipeline caches are loaded.
     void RunXclipseValidationProbes();
+
+    /// Executes transfer + linear-sampling validation for exact BC1-BC3 formats.
+    void RunXclipseBcnNativeValidationProbes();
 
     /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
     void RunXclipseSubgroupValidationProbes();

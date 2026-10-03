@@ -130,12 +130,14 @@ public:
     }
 
     /// Waits for the given GPU tick, optionally pacing frames.
-    void Wait(u64 tick, double target_fps = 0.0) {
+    /// The source only tags an actual blocking wait for Xclipse diagnostics.
+    void Wait(u64 tick, double target_fps = 0.0,
+              XclipseWaitSource source = XclipseWaitSource::Unknown) {
         if (tick > 0) {
             if (tick >= master_semaphore->CurrentTick()) {
                 Flush();
             }
-            master_semaphore->Wait(tick);
+            master_semaphore->Wait(tick, source);
         }
         if (Settings::values.use_speed_limit.GetValue() && target_fps > 0.0) {
             auto now = std::chrono::steady_clock::now();

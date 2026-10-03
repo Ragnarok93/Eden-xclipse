@@ -166,6 +166,8 @@ private:
     std::unique_ptr<Common::FS::IOFile> gpu_log_file;
     mutable std::mutex file_mutex;
     u64 bytes_written = 0;
+    u64 pending_log_bytes = 0;
+    std::chrono::steady_clock::time_point last_log_flush{};
 
     // Feature flags
     bool track_vulkan_calls = true;
