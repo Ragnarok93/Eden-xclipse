@@ -53,6 +53,11 @@
 namespace Vulkan {
 using namespace Common::Literals;
 namespace {
+constexpr VkShaderStageFlags GuestShaderStages =
+    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+    VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT | VK_SHADER_STAGE_GEOMETRY_BIT |
+    VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
 namespace Alternatives {
 constexpr std::array STENCIL8_UINT{
     VK_FORMAT_D16_UNORM_S8_UINT,
@@ -593,6 +598,8 @@ void Device::BuildDevicePolicy() {
                                        Settings::values.xclipse_sync_policy.GetValue());
     UpdateXclipseBcnDecodePolicy(device_policy,
                                  Settings::values.xclipse_gpu_bcn_decode.GetValue());
+    UpdateXclipseSubgroupSizePolicy(
+        device_policy, Settings::values.xclipse_subgroup_size_control.GetValue());
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -1557,11 +1564,29 @@ void Device::RunXclipseValidationProbes() {
     // GPU RGTC decode is fail-closed until an execution/readback probe validates the
     // exact runtime shader and storage-image path on this device/driver.
     device_policy.xclipse.rgtc_gpu_decode_validated = false;
+    const auto update_subgroup_size_policy = [this] {
+        UpdateXclipseSubgroupSizePolicy(
+            device_policy, Settings::values.xclipse_subgroup_size_control.GetValue());
+        if (!device_policy.xclipse.detected) {
+            return;
+        }
+        is_warp_potentially_bigger =
+            !extensions.subgroup_size_control ||
+            properties.subgroup_size_control.maxSubgroupSize > GuestWarpSize;
+        if (CanRequireXclipseSubgroupSize(
+                device_policy, GuestWarpSize, extensions.subgroup_size_control,
+                static_cast<std::uint32_t>(
+                    properties.subgroup_size_control.requiredSubgroupSizeStages),
+                static_cast<std::uint32_t>(GuestShaderStages))) {
+            is_warp_potentially_bigger = false;
+        }
+    };
     if (!device_policy.xclipse.detected || !Settings::values.xclipse_validation_probes.GetValue()) {
         UpdateXclipseSynchronizationPolicy(device_policy,
                                            Settings::values.xclipse_sync_policy.GetValue());
         UpdateXclipseBcnDecodePolicy(device_policy,
                                      Settings::values.xclipse_gpu_bcn_decode.GetValue());
+        update_subgroup_size_policy();
         UpdateXclipseBcnProfile();
         device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
         return;
@@ -1744,6 +1769,7 @@ void Device::RunXclipseValidationProbes() {
                                        Settings::values.xclipse_sync_policy.GetValue());
     UpdateXclipseBcnDecodePolicy(device_policy,
                                  Settings::values.xclipse_gpu_bcn_decode.GetValue());
+    update_subgroup_size_policy();
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
 }
@@ -1796,7 +1822,7 @@ void Device::LogDevicePolicy() const {
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
              "sync2={} timeline={} descriptor_buffer={} sparse={} sync_policy={} "
-             "rgtc_gpu_decode={}",
+             "rgtc_gpu_decode={} subgroup32_policy={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
                         BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
              bcn_state({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB}),
@@ -1814,10 +1840,14 @@ void Device::LogDevicePolicy() const {
              device_policy.use_xclipse_bcn_gpu_decode
                  ? "validated-enabled"
                  : (xclipse.rgtc_gpu_decode_validated ? "validated-disabled"
-                                                      : "conservative-fallback"));
+                                                      : "conservative-fallback"),
+             device_policy.use_xclipse_subgroup_size_control ? "validated-enabled"
+                                                              : "conservative-fallback");
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE SUBGROUP required_size={} ballot={} shuffle={} arithmetic={} quad={}",
+             "XCLIPSE SUBGROUP required_size={} required_stages=0x{:x} ballot={} shuffle={} "
+             "arithmetic={} quad={}",
              CapabilityStateName(caps.required_subgroup_size),
+             caps.required_subgroup_size_stages,
              CapabilityStateName(caps.subgroup_ballot),
              CapabilityStateName(caps.subgroup_shuffle),
              CapabilityStateName(caps.subgroup_arithmetic),

@@ -86,6 +86,9 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             .pNext = nullptr,
             .requiredSubgroupSize = GuestWarpSize,
         };
+        const bool set_guest_subgroup_size =
+            device.IsXclipse() ? device.IsGuestWarpSizeSupported(VK_SHADER_STAGE_COMPUTE_BIT)
+                               : device.IsExtSubgroupSizeControlSupported();
         VkPipelineCreateFlags flags{};
         if (device.IsKhrPipelineExecutablePropertiesEnabled() && Settings::values.renderer_debug.GetValue()) {
             flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
@@ -99,8 +102,7 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             .flags = flags,
             .stage{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .pNext =
-                    device.IsExtSubgroupSizeControlSupported() ? &subgroup_size_ci : nullptr,
+                .pNext = set_guest_subgroup_size ? &subgroup_size_ci : nullptr,
                 .flags = 0,
                 .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                 .module = *spv_module,

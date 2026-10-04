@@ -118,7 +118,20 @@ PipelinePolicyReport InspectGraphicsPipeline(const VulkanDevicePolicy& policy,
                     reinterpret_cast<const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT*>(
                         current);
                 found_required_subgroup = true;
-                if (policy.capabilities.required_subgroup_size != CapabilityState::Validated) {
+                bool subgroup_size_validated =
+                    policy.capabilities.required_subgroup_size == CapabilityState::Validated;
+                if (policy.xclipse.detected) {
+                    const VkShaderStageFlags required_stages =
+                        policy.capabilities.required_subgroup_size_stages;
+                    const VkShaderStageFlags pipeline_stage =
+                        static_cast<VkShaderStageFlags>(create_info.pStages[stage].stage);
+                    subgroup_size_validated =
+                        policy.use_xclipse_subgroup_size_control && subgroup_size_validated &&
+                        IsXclipseSubgroupSizeValidated(policy,
+                                                       required->requiredSubgroupSize) &&
+                        (required_stages & pipeline_stage) == pipeline_stage;
+                }
+                if (!subgroup_size_validated) {
                     AddIssue(report, PipelinePolicyIssue::RequiredSubgroupUnvalidated);
                 }
                 const u32 min_size = policy.capabilities.min_subgroup_size;

@@ -127,12 +127,21 @@ struct VulkanDevicePolicy {
     XclipseHardwareProfile xclipse;
     bool use_xclipse_sync_policy{};
     bool use_xclipse_bcn_gpu_decode{};
+    bool use_xclipse_subgroup_size_control{};
     std::uint64_t policy_hash{};
 };
 
 [[nodiscard]] XclipseHardwareProfile DetectXclipseHardware(const VulkanDeviceIdentity& identity);
 void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept;
 void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept;
+void UpdateXclipseSubgroupSizePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept;
+[[nodiscard]] bool IsXclipseSubgroupSizeValidated(const VulkanDevicePolicy& policy,
+                                                  std::uint32_t subgroup_size) noexcept;
+[[nodiscard]] bool CanRequireXclipseSubgroupSize(const VulkanDevicePolicy& policy,
+                                                std::uint32_t subgroup_size,
+                                                bool subgroup_size_control_enabled,
+                                                std::uint32_t required_stage_mask,
+                                                std::uint32_t requested_stage_mask) noexcept;
 [[nodiscard]] std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept;
 
 } // namespace Vulkan

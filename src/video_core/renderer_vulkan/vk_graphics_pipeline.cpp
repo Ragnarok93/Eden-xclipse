@@ -1072,12 +1072,16 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         if (!spv_modules[stage]) {
             continue;
         }
+        const VkShaderStageFlagBits vk_stage =
+            MaxwellToVK::ShaderStage(Shader::StageFromIndex(stage));
         [[maybe_unused]] auto& stage_ci =
             shader_stages.emplace_back(VkPipelineShaderStageCreateInfo{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .pNext = nullptr,
+                .pNext = device.IsXclipse() && device.IsGuestWarpSizeSupported(vk_stage)
+                             ? &subgroup_size_ci
+                             : nullptr,
                 .flags = 0,
-                .stage = MaxwellToVK::ShaderStage(Shader::StageFromIndex(stage)),
+                .stage = vk_stage,
                 .module = *spv_modules[stage],
                 .pName = "main",
                 .pSpecializationInfo = nullptr,

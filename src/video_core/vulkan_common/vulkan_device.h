@@ -498,6 +498,13 @@ FN_MAX_LIMIT_LIST
 
     /// Returns true if the device can be forced to use the guest warp size.
     bool IsGuestWarpSizeSupported(VkShaderStageFlagBits stage) const {
+        if (IsXclipse()) {
+            return CanRequireXclipseSubgroupSize(
+                device_policy, GuestWarpSize, IsExtSubgroupSizeControlSupported(),
+                static_cast<std::uint32_t>(
+                    properties.subgroup_size_control.requiredSubgroupSizeStages),
+                static_cast<std::uint32_t>(stage));
+        }
         return properties.subgroup_size_control.requiredSubgroupSizeStages & stage;
     }
 

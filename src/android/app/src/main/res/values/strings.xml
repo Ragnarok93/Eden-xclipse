@@ -661,6 +661,8 @@
     <string name="xclipse_pipeline_policy_description">Validate Vulkan graphics pipelines against Xclipse-specific driver constraints and record policy violations. Disable for A/B compatibility testing.</string>
     <string name="xclipse_sync_policy">Xclipse Synchronization Policy</string>
     <string name="xclipse_sync_policy_description">Use dependency-specific upload and copy barriers plus GPU-ordered ASTC completion on Xclipse GPUs. Disable for A/B testing if upload, decode, or copy corruption appears.</string>
+    <string name="xclipse_subgroup_size_control">Xclipse Guest Warp Size Control</string>
+    <string name="xclipse_subgroup_size_control_description">Use 32-lane subgroups on Xclipse only after startup execution validation and Vulkan stage support confirm they are safe. Disable to keep conservative subgroup handling. Restart emulation after changing this setting.</string>
     <string name="fastmem">Fastmem</string>
 
     <string name="log">Logging</string>

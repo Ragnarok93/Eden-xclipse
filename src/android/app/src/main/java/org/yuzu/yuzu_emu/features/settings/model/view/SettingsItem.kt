@@ -1058,6 +1058,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_SUBGROUP_SIZE_CONTROL,
+                    titleId = R.string.xclipse_subgroup_size_control,
+                    descriptionId = R.string.xclipse_subgroup_size_control_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.USE_AUTO_STUB,
                     titleId = R.string.use_auto_stub,
                     descriptionId = R.string.use_auto_stub_description
