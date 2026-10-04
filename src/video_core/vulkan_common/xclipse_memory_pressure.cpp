@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -122,20 +123,30 @@ std::optional<std::string> DiscoverGttBase() {
 void ReadSystemMemory(XclipseMemoryPressureSample& sample) {
 #if defined(__linux__) || defined(__ANDROID__)
     std::ifstream file("/proc/meminfo");
-    std::string key;
-    u64 value{};
-    std::string unit;
+    std::string line;
     u64 total_kib{};
     u64 available_kib{};
     bool has_available{};
-    while (file >> key >> value >> unit) {
+    while (std::getline(file, line)) {
+        std::istringstream line_stream{line};
+        std::string key;
+        u64 value{};
+        if (!(line_stream >> key >> value)) {
+            continue;
+        }
         if (key == "MemTotal:") {
             total_kib = value;
         } else if (key == "MemAvailable:") {
             available_kib = value;
             has_available = true;
+        } else if (key == "SwapTotal:") {
+            sample.swap_total_kib = value;
+        } else if (key == "SwapFree:") {
+            sample.swap_free_kib = value;
         }
-        if (total_kib != 0 && has_available) {
+
+        if (total_kib != 0 && has_available && sample.swap_total_kib &&
+            sample.swap_free_kib) {
             break;
         }
     }
@@ -144,12 +155,14 @@ void ReadSystemMemory(XclipseMemoryPressureSample& sample) {
         sample.ram_available_percent =
             static_cast<u32>(std::min<u64>(100, available_kib * 100 / total_kib));
     }
+    sample.swap_used_kib =
+        XclipseSwapUsedKiB(sample.swap_total_kib, sample.swap_free_kib);
 
     std::ifstream self_status("/proc/self/status");
-    std::string line;
+    std::string status_line;
     unsigned long long rss_kib{};
-    while (std::getline(self_status, line)) {
-        if (std::sscanf(line.c_str(), "VmRSS: %llu kB", &rss_kib) == 1) {
+    while (std::getline(self_status, status_line)) {
+        if (std::sscanf(status_line.c_str(), "VmRSS: %llu kB", &rss_kib) == 1) {
             sample.process_rss_mib = static_cast<u32>(rss_kib / 1024);
             break;
         }

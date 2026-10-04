@@ -22,13 +22,26 @@ TEST_CASE("Xclipse pressure uses the strongest available signal", "[video_core][
             Vulkan::MemoryPressureClass::Critical);
 }
 
-TEST_CASE("Xclipse RSS and absolute MemAvailable remain diagnostic until calibrated",
+TEST_CASE("Xclipse RSS, MemAvailable and swap remain diagnostic until calibrated",
           "[video_core][xclipse]") {
     Vulkan::XclipseMemoryPressureSample sample{};
     sample.ram_available_kib = 512ULL * 1024ULL;
+    sample.swap_total_kib = 8ULL * 1024ULL * 1024ULL;
+    sample.swap_free_kib = 3ULL * 1024ULL * 1024ULL;
+    sample.swap_used_kib = 5ULL * 1024ULL * 1024ULL;
     sample.process_rss_mib = 3500;
     REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
             Vulkan::MemoryPressureClass::Normal);
+}
+
+TEST_CASE("Xclipse swap usage requires consistent kernel counters",
+          "[video_core][xclipse]") {
+    using Vulkan::XclipseSwapUsedKiB;
+
+    REQUIRE(XclipseSwapUsedKiB(8192ULL, 3072ULL) == 5120ULL);
+    REQUIRE_FALSE(XclipseSwapUsedKiB(std::nullopt, 3072ULL));
+    REQUIRE_FALSE(XclipseSwapUsedKiB(8192ULL, std::nullopt));
+    REQUIRE_FALSE(XclipseSwapUsedKiB(8192ULL, 9000ULL));
 }
 
 TEST_CASE("Xclipse pressure promotes immediately and demotes slowly",

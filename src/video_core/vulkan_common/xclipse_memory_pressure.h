@@ -101,6 +101,10 @@ struct XclipseMemoryPressureSample {
     std::optional<u32> ram_available_percent;
     // Absolute MemAvailable from /proc/meminfo in KiB; diagnostic only.
     std::optional<u64> ram_available_kib;
+    // Kernel-reported swap counters from /proc/meminfo in KiB; diagnostic only.
+    std::optional<u64> swap_total_kib;
+    std::optional<u64> swap_free_kib;
+    std::optional<u64> swap_used_kib;
     // Current process RSS in MiB from /proc/self/status.
     std::optional<u32> process_rss_mib;
     // Process RSS as a percentage of total system RAM. This is used only to decide whether
@@ -112,6 +116,14 @@ struct XclipseMemoryPressureSample {
     std::optional<float> psi_some_avg10;
     std::optional<float> psi_full_avg10;
 };
+
+[[nodiscard]] constexpr std::optional<u64> XclipseSwapUsedKiB(
+    std::optional<u64> total_kib, std::optional<u64> free_kib) noexcept {
+    if (!total_kib || !free_kib || *free_kib > *total_kib) {
+        return std::nullopt;
+    }
+    return *total_kib - *free_kib;
+}
 
 [[nodiscard]] inline XclipseTextureGcPressure TextureGcPressureFor(
     MemoryPressureClass pressure, const XclipseMemoryPressureSample& sample) noexcept {
