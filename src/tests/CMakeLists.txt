@@ -20,6 +20,7 @@ add_executable(tests
     core/internal_network/network.cpp
     video_core/memory_tracker.cpp
     video_core/vulkan_device_profile.cpp
+    video_core/vk_blit_image_policy.cpp
     video_core/vk_image_copy_validation.cpp
     video_core/xclipse_bcn_decode.cpp
     video_core/xclipse_pipeline_policy.cpp

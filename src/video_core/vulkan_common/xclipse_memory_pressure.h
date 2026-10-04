@@ -166,10 +166,12 @@ struct XclipseMemoryPressureSample {
 
     switch (pressure) {
     case MemoryPressureClass::Elevated:
-        // An unusually large Eden process can justify early high-priority trimming even just
-        // above the global High threshold. This matches the observed ~4 GiB RSS / 11% free case.
-        return heavy_contribution ? XclipseTextureGcPressure::High
-                                  : XclipseTextureGcPressure::None;
+        // An unusually large Eden process can justify the existing aggressive LRU pass even just
+        // above the global High threshold. Android may invoke LMK before pressure reaches High.
+        if (heavy_contribution) {
+            return XclipseTextureGcPressure::Critical;
+        }
+        return XclipseTextureGcPressure::None;
     case MemoryPressureClass::High:
         // High Android pressure plus heavy Eden ownership warrants the existing aggressive LRU
         // pass before the device reaches Critical pressure. This is particularly important on

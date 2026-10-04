@@ -134,10 +134,15 @@ TEST_CASE("Xclipse texture GC requires Eden memory contribution",
             XclipseTextureGcPressure::None);
 
     // The observed Xclipse failure mode: Eden itself occupies a large fraction of 8 GiB RAM
-    // while Android has only Elevated free-memory pressure.
+    // while Android has only Elevated free-memory pressure. The aggressive LRU pass is needed
+    // here because waiting for Android to report High pressure can be too late on this device.
     sample.process_rss_percent = 50;
     REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
-            XclipseTextureGcPressure::High);
+            XclipseTextureGcPressure::Critical);
+
+    sample.process_rss_percent = 20;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
+            XclipseTextureGcPressure::None);
 
     // Moderate Eden contribution under High pressure asks for the existing high-priority LRU.
     sample.process_rss_percent = 20;
