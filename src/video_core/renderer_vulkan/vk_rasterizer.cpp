@@ -999,15 +999,23 @@ void RasterizerVulkan::TickFrame() {
 
         const auto staging = staging_pool.Stats();
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE STAGING stream_bytes={} upload_bytes={} download_bytes={} "
-                 "device_local_bytes={} active_cached_bytes={} deferred_cached_bytes={} "
+                 "XCLIPSE STAGING stream_bytes={} stream_requests={} stream_request_bytes={} "
+                 "stream_size_bypasses={} stream_size_bypass_bytes={} "
+                 "stream_ring_conflicts={} stream_ring_conflict_bytes={} stream_ring_wraps={} "
+                 "upload_bytes={} "
+                 "download_bytes={} device_local_bytes={} active_cached_bytes={} "
+                 "deferred_cached_bytes={} "
                  "total_bytes={} peak_total_bytes={} cache_limit_bytes={} allocations={} reuses={} "
                  "releases={} released_bytes={} pressure_releases={} pressure_released_bytes={} "
                  "pressure_waits={} pressure_wait_reused_bytes={} cache_limit_hits={} "
                  "over_limit_allocations={} largest_upload_bucket={} largest_free_upload_bucket={} "
                  "largest_active_upload_bucket={}",
-                 staging.stream_bytes, staging.cached_upload_bytes,
-                 staging.cached_download_bytes, staging.cached_device_local_bytes,
+                 staging.stream_bytes, staging.stream_upload_requests,
+                 staging.stream_upload_request_bytes, staging.stream_size_bypasses,
+                 staging.stream_size_bypass_bytes, staging.stream_ring_conflicts,
+                 staging.stream_ring_conflict_bytes, staging.stream_ring_wraps,
+                 staging.cached_upload_bytes, staging.cached_download_bytes,
+                 staging.cached_device_local_bytes,
                  staging.active_cached_bytes, staging.deferred_cached_bytes,
                  staging.total_bytes, staging.peak_total_bytes, staging.cache_limit_bytes,
                  staging.allocations, staging.reuses, staging.releases, staging.released_bytes,

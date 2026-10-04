@@ -34,6 +34,13 @@ struct StagingBufferRef {
 
 struct StagingBufferPoolStats {
     u64 stream_bytes{};
+    u64 stream_upload_requests{};
+    u64 stream_upload_request_bytes{};
+    u64 stream_size_bypasses{};
+    u64 stream_size_bypass_bytes{};
+    u64 stream_ring_conflicts{};
+    u64 stream_ring_conflict_bytes{};
+    u64 stream_ring_wraps{};
     u64 cached_device_local_bytes{};
     u64 cached_upload_bytes{};
     u64 cached_download_bytes{};
@@ -127,6 +134,7 @@ private:
     using StagingBuffersCache = std::array<StagingBuffers, NUM_LEVELS>;
 
     StagingBufferRef GetStreamBuffer(size_t size);
+    void AccountStreamFallback(size_t size, bool ring_conflict) noexcept;
 
     bool AreRegionsActive(size_t region_begin, size_t region_end) const;
 
@@ -174,6 +182,14 @@ private:
     size_t current_delete_level = 0;
     u64 buffer_index = 0;
     u64 unique_ids{};
+
+    u64 stream_upload_request_count{};
+    u64 stream_upload_request_bytes{};
+    u64 stream_size_bypass_count{};
+    u64 stream_size_bypass_bytes{};
+    u64 stream_ring_conflict_count{};
+    u64 stream_ring_conflict_bytes{};
+    u64 stream_ring_wrap_count{};
 
     u64 cached_device_local_bytes{};
     u64 cached_upload_bytes{};

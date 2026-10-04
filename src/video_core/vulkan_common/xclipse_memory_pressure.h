@@ -70,6 +70,15 @@ enum class XclipseTextureGcPressure : u8 {
     }
 }
 
+// The persistent upload ring is allocated up front and is not part of the reclaimable cache.
+// When Xclipse memory-pressure handling is enabled, cap its baseline footprint while preserving
+// the normal size everywhere else. Requests that do not fit still use Eden's staging cache.
+[[nodiscard]] constexpr u64 XclipsePressureStreamBufferSize(u64 stream_size,
+                                                             bool enabled) noexcept {
+    constexpr u64 limit = 128ULL * 1024ULL * 1024ULL;
+    return enabled && stream_size > limit ? limit : stream_size;
+}
+
 [[nodiscard]] constexpr const char* MemoryPressureClassName(
     MemoryPressureClass pressure) noexcept {
     switch (pressure) {

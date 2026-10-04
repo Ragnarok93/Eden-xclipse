@@ -153,3 +153,15 @@ TEST_CASE("Xclipse staging containment escalates with Android pressure",
     REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Critical) ==
             96ULL * 1024ULL * 1024ULL);
 }
+
+TEST_CASE("Xclipse pressure bounds the persistent staging ring only when enabled",
+          "[video_core][xclipse]") {
+    constexpr u64 MiB = 1024ULL * 1024ULL;
+    constexpr u64 default_size = 256ULL * MiB;
+    constexpr u64 pressure_limit = 128ULL * MiB;
+
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(default_size, false) == default_size);
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(default_size, true) == pressure_limit);
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(pressure_limit, true) == pressure_limit);
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(64ULL * MiB, true) == 64ULL * MiB);
+}

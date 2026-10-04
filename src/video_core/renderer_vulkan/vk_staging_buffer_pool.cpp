@@ -15,6 +15,7 @@
 #include "common/bit_util.h"
 #include "common/common_types.h"
 #include "common/literals.h"
+#include "common/settings.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -40,8 +41,11 @@ constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 256_MiB;
 #endif
 
 size_t GetStreamBufferSize(const Device& device) {
+    const bool pressure_limited =
+        device.IsXclipse() && Settings::values.xclipse_memory_pressure_monitor.GetValue();
     if (!device.HasDebuggingToolAttached()) {
-        return MAX_STREAM_BUFFER_SIZE;
+        return static_cast<size_t>(
+            XclipsePressureStreamBufferSize(MAX_STREAM_BUFFER_SIZE, pressure_limited));
     }
 
     VkDeviceSize size{0};
@@ -61,7 +65,9 @@ size_t GetStreamBufferSize(const Device& device) {
     } else {
         size = MAX_STREAM_BUFFER_SIZE;
     }
-    return (std::min)(Common::AlignUp(size, MAX_ALIGNMENT), MAX_STREAM_BUFFER_SIZE);
+    const VkDeviceSize stream_size =
+        (std::min)(Common::AlignUp(size, MAX_ALIGNMENT), MAX_STREAM_BUFFER_SIZE);
+    return static_cast<size_t>(XclipsePressureStreamBufferSize(stream_size, pressure_limited));
 }
 } // Anonymous namespace
 
@@ -102,10 +108,30 @@ StagingBufferPool::StagingBufferPool(const Device& device_, MemoryAllocator& mem
 StagingBufferPool::~StagingBufferPool() = default;
 
 StagingBufferRef StagingBufferPool::Request(size_t size, MemoryUsage usage, bool deferred) {
-    if (!deferred && usage == MemoryUsage::Upload && size <= region_size) {
-        return GetStreamBuffer(size);
+    if (!deferred && usage == MemoryUsage::Upload) {
+        if (device.IsXclipse()) {
+            ++stream_upload_request_count;
+            stream_upload_request_bytes += size;
+        }
+        if (size <= region_size) {
+            return GetStreamBuffer(size);
+        }
+        AccountStreamFallback(size, false);
     }
     return GetStagingBuffer(size, usage, deferred);
+}
+
+void StagingBufferPool::AccountStreamFallback(size_t size, bool ring_conflict) noexcept {
+    if (!device.IsXclipse()) {
+        return;
+    }
+    if (ring_conflict) {
+        ++stream_ring_conflict_count;
+        stream_ring_conflict_bytes += size;
+    } else {
+        ++stream_size_bypass_count;
+        stream_size_bypass_bytes += size;
+    }
 }
 
 void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
@@ -148,6 +174,13 @@ void StagingBufferPool::TickFrame() {
 StagingBufferPoolStats StagingBufferPool::Stats() const {
     StagingBufferPoolStats stats{
         .stream_bytes = static_cast<u64>(stream_buffer_size),
+        .stream_upload_requests = stream_upload_request_count,
+        .stream_upload_request_bytes = stream_upload_request_bytes,
+        .stream_size_bypasses = stream_size_bypass_count,
+        .stream_size_bypass_bytes = stream_size_bypass_bytes,
+        .stream_ring_conflicts = stream_ring_conflict_count,
+        .stream_ring_conflict_bytes = stream_ring_conflict_bytes,
+        .stream_ring_wraps = stream_ring_wrap_count,
         .cached_device_local_bytes = cached_device_local_bytes,
         .cached_upload_bytes = cached_upload_bytes,
         .cached_download_bytes = cached_download_bytes,
@@ -207,6 +240,7 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
     if (AreRegionsActive(Region(free_iterator) + 1,
                          (std::min)(Region(iterator + size) + 1, NUM_SYNCS))) {
         // Avoid waiting for the previous usages to be free
+        AccountStreamFallback(size, true);
         return GetStagingBuffer(size, MemoryUsage::Upload);
     }
     const u64 current_tick = scheduler.CurrentTick();
@@ -216,6 +250,9 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
     free_iterator = (std::max)(free_iterator, iterator + size);
 
     if (iterator + size >= stream_buffer_size) {
+        if (device.IsXclipse()) {
+            ++stream_ring_wrap_count;
+        }
         std::fill(sync_ticks.begin() + Region(used_iterator), sync_ticks.begin() + NUM_SYNCS,
                   current_tick);
         used_iterator = 0;
@@ -224,6 +261,7 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
 
         if (AreRegionsActive(0, Region(size) + 1)) {
             // Avoid waiting for the previous usages to be free
+            AccountStreamFallback(size, true);
             return GetStagingBuffer(size, MemoryUsage::Upload);
         }
     }
