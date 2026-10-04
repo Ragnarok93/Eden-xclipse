@@ -99,6 +99,8 @@ struct XclipseMemoryPressureSample {
     std::optional<u32> memory_budget_used_percent;
     // Percent of system RAM reported as MemAvailable.
     std::optional<u32> ram_available_percent;
+    // Absolute MemAvailable from /proc/meminfo in KiB; diagnostic only.
+    std::optional<u64> ram_available_kib;
     // Current process RSS in MiB from /proc/self/status.
     std::optional<u32> process_rss_mib;
     // Process RSS as a percentage of total system RAM. This is used only to decide whether

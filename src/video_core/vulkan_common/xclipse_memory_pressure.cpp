@@ -127,17 +127,20 @@ void ReadSystemMemory(XclipseMemoryPressureSample& sample) {
     std::string unit;
     u64 total_kib{};
     u64 available_kib{};
+    bool has_available{};
     while (file >> key >> value >> unit) {
         if (key == "MemTotal:") {
             total_kib = value;
         } else if (key == "MemAvailable:") {
             available_kib = value;
+            has_available = true;
         }
-        if (total_kib != 0 && available_kib != 0) {
+        if (total_kib != 0 && has_available) {
             break;
         }
     }
-    if (total_kib != 0) {
+    if (total_kib != 0 && has_available) {
+        sample.ram_available_kib = available_kib;
         sample.ram_available_percent =
             static_cast<u32>(std::min<u64>(100, available_kib * 100 / total_kib));
     }

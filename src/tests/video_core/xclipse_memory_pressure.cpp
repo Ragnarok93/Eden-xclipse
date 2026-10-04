@@ -22,8 +22,10 @@ TEST_CASE("Xclipse pressure uses the strongest available signal", "[video_core][
             Vulkan::MemoryPressureClass::Critical);
 }
 
-TEST_CASE("Xclipse RSS remains diagnostic until calibrated", "[video_core][xclipse]") {
+TEST_CASE("Xclipse RSS and absolute MemAvailable remain diagnostic until calibrated",
+          "[video_core][xclipse]") {
     Vulkan::XclipseMemoryPressureSample sample{};
+    sample.ram_available_kib = 512ULL * 1024ULL;
     sample.process_rss_mib = 3500;
     REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
             Vulkan::MemoryPressureClass::Normal);
