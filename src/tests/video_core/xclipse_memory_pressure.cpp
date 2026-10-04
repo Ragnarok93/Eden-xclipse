@@ -22,7 +22,7 @@ TEST_CASE("Xclipse pressure uses the strongest available signal", "[video_core][
             Vulkan::MemoryPressureClass::Critical);
 }
 
-TEST_CASE("Xclipse RSS, MemAvailable and swap remain diagnostic until calibrated",
+TEST_CASE("Xclipse process RSS and swap do not create system pressure by themselves",
           "[video_core][xclipse]") {
     Vulkan::XclipseMemoryPressureSample sample{};
     sample.ram_available_kib = 512ULL * 1024ULL;
@@ -30,8 +30,22 @@ TEST_CASE("Xclipse RSS, MemAvailable and swap remain diagnostic until calibrated
     sample.swap_free_kib = 3ULL * 1024ULL * 1024ULL;
     sample.swap_used_kib = 5ULL * 1024ULL * 1024ULL;
     sample.process_rss_mib = 3500;
+    sample.process_rss_swap_percent = 70;
     REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
             Vulkan::MemoryPressureClass::Normal);
+}
+
+TEST_CASE("Xclipse process footprint includes private swap without exceeding system RAM",
+          "[video_core][xclipse]") {
+    constexpr u64 total_ram_kib = 8ULL * 1024ULL * 1024ULL;
+
+    REQUIRE(Vulkan::XclipseProcessRssSwapPercent(2ULL * 1024ULL * 1024ULL,
+                                                 1ULL * 1024ULL * 1024ULL,
+                                                 total_ram_kib) == 37);
+    REQUIRE(Vulkan::XclipseProcessRssSwapPercent(1ULL * 1024ULL * 1024ULL, std::nullopt,
+                                                 total_ram_kib) == 12);
+    REQUIRE(Vulkan::XclipseProcessRssSwapPercent(total_ram_kib, 1ULL, total_ram_kib) == 100);
+    REQUIRE_FALSE(Vulkan::XclipseProcessRssSwapPercent(1, 1, 0));
 }
 
 TEST_CASE("Xclipse swap usage requires consistent kernel counters",
@@ -130,10 +144,23 @@ TEST_CASE("Xclipse texture GC requires Eden memory contribution",
     REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
             XclipseTextureGcPressure::High);
 
-    // Critical system pressure only invokes aggressive GC when Eden's contribution is heavy.
+    // Heavy Eden usage under High pressure now permits the existing aggressive LRU pass before
+    // Android reaches its Critical MemAvailable band.
     sample.process_rss_percent = 35;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::Critical);
     REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
             XclipseTextureGcPressure::Critical);
+
+    // Process swap keeps ownership attributable even after the resident RSS has fallen.
+    sample.process_rss_percent = 5;
+    sample.process_rss_swap_percent = 35;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::Critical);
+
+    sample.process_rss_swap_percent = 20;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::High);
 
     sample.process_rss_percent = 5;
     sample.memory_budget_used_percent = 45;

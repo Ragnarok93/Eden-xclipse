@@ -95,8 +95,10 @@ enum class XclipseTextureGcPressure : u8 {
 }
 
 struct XclipseMemoryPressureSample {
-    // Percent of Eden's current Vulkan memory budget reported in use.
+    // Percent and absolute allocation values from the current Vulkan memory budget.
     std::optional<u32> memory_budget_used_percent;
+    std::optional<u64> memory_usage_bytes;
+    std::optional<u64> memory_budget_bytes;
     // Percent of system RAM reported as MemAvailable.
     std::optional<u32> ram_available_percent;
     // Absolute MemAvailable from /proc/meminfo in KiB; diagnostic only.
@@ -110,6 +112,12 @@ struct XclipseMemoryPressureSample {
     // Process RSS as a percentage of total system RAM. This is used only to decide whether
     // Eden is materially contributing to already-detected system pressure.
     std::optional<u32> process_rss_percent;
+    // Process-private swap and RSS+swap footprint from /proc/self/status. Swap remains
+    // diagnostic for system pressure classification, but keeps GC attribution from vanishing
+    // when Android pages Eden's resident memory out under pressure.
+    std::optional<u32> process_swap_mib;
+    std::optional<u32> process_rss_swap_mib;
+    std::optional<u32> process_rss_swap_percent;
     // Optional SGPU/GTT used percentage exposed by the kernel.
     std::optional<u32> gtt_used_percent;
     // Linux PSI memory avg10 values, when readable.
@@ -125,17 +133,35 @@ struct XclipseMemoryPressureSample {
     return *total_kib - *free_kib;
 }
 
+[[nodiscard]] constexpr std::optional<u32> XclipseProcessRssSwapPercent(
+    u64 resident_kib, std::optional<u64> swapped_kib, u64 total_ram_kib) noexcept {
+    if (total_ram_kib == 0) {
+        return std::nullopt;
+    }
+    if (resident_kib >= total_ram_kib) {
+        return 100;
+    }
+    const u64 swap_kib = swapped_kib.value_or(0);
+    const u64 remaining_kib = total_ram_kib - resident_kib;
+    if (swap_kib >= remaining_kib) {
+        return 100;
+    }
+    return static_cast<u32>((resident_kib + swap_kib) * 100 / total_ram_kib);
+}
+
 [[nodiscard]] inline XclipseTextureGcPressure TextureGcPressureFor(
     MemoryPressureClass pressure, const XclipseMemoryPressureSample& sample) noexcept {
     // Do not evict textures merely because the rest of Android is under pressure. Escalate
     // Eden's existing LRU only when Eden itself has a meaningful share of either system RAM
-    // or the Vulkan budget. These bands are intentionally conservative and independently
-    // observable in telemetry.
+    // or the Vulkan budget. Include Eden's private swapped pages so memory paging cannot make
+    // a heavy process look small just before Android's low-memory killer acts.
+    const u32 process_memory_percent = sample.process_rss_swap_percent.value_or(
+        sample.process_rss_percent.value_or(0));
     const bool meaningful_contribution =
-        (sample.process_rss_percent && *sample.process_rss_percent >= 15) ||
+        process_memory_percent >= 15 ||
         (sample.memory_budget_used_percent && *sample.memory_budget_used_percent >= 40);
     const bool heavy_contribution =
-        (sample.process_rss_percent && *sample.process_rss_percent >= 30) ||
+        process_memory_percent >= 30 ||
         (sample.memory_budget_used_percent && *sample.memory_budget_used_percent >= 60);
 
     switch (pressure) {
@@ -145,6 +171,12 @@ struct XclipseMemoryPressureSample {
         return heavy_contribution ? XclipseTextureGcPressure::High
                                   : XclipseTextureGcPressure::None;
     case MemoryPressureClass::High:
+        // High Android pressure plus heavy Eden ownership warrants the existing aggressive LRU
+        // pass before the device reaches Critical pressure. This is particularly important on
+        // shared-memory GPUs, where the LMK threshold can precede the Critical MemAvailable band.
+        if (heavy_contribution) {
+            return XclipseTextureGcPressure::Critical;
+        }
         return meaningful_contribution ? XclipseTextureGcPressure::High
                                        : XclipseTextureGcPressure::None;
     case MemoryPressureClass::Critical:

@@ -931,6 +931,14 @@ void RasterizerVulkan::TickFrame() {
         const s32 budget_pct = sample.memory_budget_used_percent
                                    ? static_cast<s32>(*sample.memory_budget_used_percent)
                                    : -1;
+        const s64 vulkan_usage_mib =
+            sample.memory_usage_bytes
+                ? static_cast<s64>(*sample.memory_usage_bytes / (1024ULL * 1024ULL))
+                : -1;
+        const s64 vulkan_budget_mib =
+            sample.memory_budget_bytes
+                ? static_cast<s64>(*sample.memory_budget_bytes / (1024ULL * 1024ULL))
+                : -1;
         const s32 ram_available_pct =
             sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
         const s64 ram_available_kib =
@@ -945,15 +953,27 @@ void RasterizerVulkan::TickFrame() {
             sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
         const s32 rss_pct =
             sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
+        const s32 process_swap_mib =
+            sample.process_swap_mib ? static_cast<s32>(*sample.process_swap_mib) : -1;
+        const s32 process_rss_swap_mib =
+            sample.process_rss_swap_mib ? static_cast<s32>(*sample.process_rss_swap_mib) : -1;
+        const s32 process_rss_swap_pct =
+            sample.process_rss_swap_percent
+                ? static_cast<s32>(*sample.process_rss_swap_percent)
+                : -1;
         const s32 gtt_pct =
             sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE MEMORY PRESSURE state={} budget_pct={} ram_available_pct={} ram_available_kib={} "
-                 "swap_total_kib={} swap_free_kib={} swap_used_kib={} "
-                 "rss_mib={} rss_pct={} gtt_pct={} psi_some={:.2f} psi_full={:.2f} trend={}",
+                 "XCLIPSE MEMORY PRESSURE state={} budget_pct={} vulkan_usage_mib={} "
+                 "vulkan_budget_mib={} ram_available_pct={} ram_available_kib={} "
+                 "swap_total_kib={} swap_free_kib={} swap_used_kib={} rss_mib={} rss_pct={} "
+                 "process_swap_mib={} "
+                 "process_rss_swap_mib={} process_rss_swap_pct={} gtt_pct={} "
+                 "psi_some={:.2f} psi_full={:.2f} trend={}",
                  MemoryPressureClassName(pressure_update.pressure), budget_pct,
-                 ram_available_pct, ram_available_kib, swap_total_kib, swap_free_kib,
-                 swap_used_kib, rss_mib, rss_pct, gtt_pct,
+                 vulkan_usage_mib, vulkan_budget_mib, ram_available_pct, ram_available_kib,
+                 swap_total_kib, swap_free_kib, swap_used_kib, rss_mib, rss_pct,
+                 process_swap_mib, process_rss_swap_mib, process_rss_swap_pct, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),
                  sample.psi_full_avg10.value_or(-1.0f),
                  pressure_update.psi_trending_up);
@@ -966,6 +986,14 @@ void RasterizerVulkan::TickFrame() {
         const s32 budget_pct = sample.memory_budget_used_percent
                                    ? static_cast<s32>(*sample.memory_budget_used_percent)
                                    : -1;
+        const s64 vulkan_usage_mib =
+            sample.memory_usage_bytes
+                ? static_cast<s64>(*sample.memory_usage_bytes / (1024ULL * 1024ULL))
+                : -1;
+        const s64 vulkan_budget_mib =
+            sample.memory_budget_bytes
+                ? static_cast<s64>(*sample.memory_budget_bytes / (1024ULL * 1024ULL))
+                : -1;
         const s32 ram_available_pct =
             sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
         const s64 ram_available_kib =
@@ -980,6 +1008,14 @@ void RasterizerVulkan::TickFrame() {
             sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
         const s32 rss_pct =
             sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
+        const s32 process_swap_mib =
+            sample.process_swap_mib ? static_cast<s32>(*sample.process_swap_mib) : -1;
+        const s32 process_rss_swap_mib =
+            sample.process_rss_swap_mib ? static_cast<s32>(*sample.process_rss_swap_mib) : -1;
+        const s32 process_rss_swap_pct =
+            sample.process_rss_swap_percent
+                ? static_cast<s32>(*sample.process_rss_swap_percent)
+                : -1;
         const s32 gtt_pct =
             sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
         LOG_INFO(Render_Vulkan,
@@ -991,9 +1027,12 @@ void RasterizerVulkan::TickFrame() {
                  "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
                  "depth_native_blits={} depth_shader_blits={} native_resolves={} "
                  "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
-                 "texture_gc_policy={} texture_gc_pulse={} budget_pct={} ram_available_pct={} "
-                 "ram_available_kib={} swap_total_kib={} swap_free_kib={} swap_used_kib={} "
-                 "rss_mib={} rss_pct={} gtt_pct={} psi_some={:.2f} psi_full={:.2f}",
+                 "texture_gc_policy={} texture_gc_pulse={} budget_pct={} vulkan_usage_mib={} "
+                 "vulkan_budget_mib={} ram_available_pct={} ram_available_kib={} "
+                 "swap_total_kib={} swap_free_kib={} swap_used_kib={} rss_mib={} rss_pct={} "
+                 "process_swap_mib={} "
+                 "process_rss_swap_mib={} process_rss_swap_pct={} gtt_pct={} "
+                 "psi_some={:.2f} psi_full={:.2f}",
                  snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
                  snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
                  snapshot.wait_descriptor_buffer, snapshot.wait_staging_pressure,
@@ -1012,8 +1051,9 @@ void RasterizerVulkan::TickFrame() {
                      ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure, sample))
                      : "off",
                  memory_monitor_enabled ? TextureGcPressureName(texture_gc_pulse) : "off",
-                 budget_pct, ram_available_pct, ram_available_kib, swap_total_kib,
-                 swap_free_kib, swap_used_kib, rss_mib, rss_pct, gtt_pct,
+                 budget_pct, vulkan_usage_mib, vulkan_budget_mib, ram_available_pct,
+                 ram_available_kib, swap_total_kib, swap_free_kib, swap_used_kib, rss_mib,
+                 rss_pct, process_swap_mib, process_rss_swap_mib, process_rss_swap_pct, gtt_pct,
                  sample.psi_some_avg10.value_or(-1.0f),
                  sample.psi_full_avg10.value_or(-1.0f));
 

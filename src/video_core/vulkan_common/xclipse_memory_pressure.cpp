@@ -161,15 +161,37 @@ void ReadSystemMemory(XclipseMemoryPressureSample& sample) {
     std::ifstream self_status("/proc/self/status");
     std::string status_line;
     unsigned long long rss_kib{};
+    unsigned long long process_swap_kib{};
+    bool has_rss{};
+    bool has_process_swap{};
     while (std::getline(self_status, status_line)) {
         if (std::sscanf(status_line.c_str(), "VmRSS: %llu kB", &rss_kib) == 1) {
-            sample.process_rss_mib = static_cast<u32>(rss_kib / 1024);
+            has_rss = true;
+        } else if (std::sscanf(status_line.c_str(), "VmSwap: %llu kB",
+                                &process_swap_kib) == 1) {
+            has_process_swap = true;
+        }
+        if (has_rss && has_process_swap) {
             break;
         }
     }
-    if (total_kib != 0 && rss_kib != 0) {
-        sample.process_rss_percent =
-            static_cast<u32>(std::min<u64>(100, rss_kib * 100 / total_kib));
+    if (has_process_swap) {
+        sample.process_swap_mib = static_cast<u32>(process_swap_kib / 1024);
+    }
+    if (has_rss) {
+        sample.process_rss_mib = static_cast<u32>(rss_kib / 1024);
+        sample.process_rss_swap_mib =
+            static_cast<u32>((rss_kib + process_swap_kib) / 1024);
+        if (total_kib != 0) {
+            sample.process_rss_percent =
+                static_cast<u32>(std::min<u64>(100, rss_kib * 100 / total_kib));
+            std::optional<u64> process_swap;
+            if (has_process_swap) {
+                process_swap = static_cast<u64>(process_swap_kib);
+            }
+            sample.process_rss_swap_percent =
+                XclipseProcessRssSwapPercent(rss_kib, process_swap, total_kib);
+        }
     }
 #endif
 }
@@ -304,6 +326,8 @@ XclipseMemoryPressureSample XclipseMemoryPressureController::ReadSample(const De
     if (device.CanReportMemoryUsage()) {
         const u64 budget = device.GetDeviceMemoryBudget();
         const u64 usage = device.GetDeviceMemoryUsage();
+        sample.memory_budget_bytes = budget;
+        sample.memory_usage_bytes = usage;
         if (budget != 0) {
             sample.memory_budget_used_percent =
                 static_cast<u32>(std::min<u64>(100, usage * 100 / budget));
