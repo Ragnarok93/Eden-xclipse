@@ -76,3 +76,12 @@ TEST_CASE("Xclipse fragment-output diagnostic categories have independent bounds
     REQUIRE(budget.TryConsume(XclipseFragmentOutputDiagnosticCategory::OutputWithoutAttachment));
 }
 
+
+TEST_CASE("Xclipse fragment-output diagnostics ignore pruned outputs",
+          "[video_core][xclipse]") {
+    using Vulkan::ShouldDiagnoseUnattachedFragmentOutput;
+
+    REQUIRE_FALSE(ShouldDiagnoseUnattachedFragmentOutput(false, false));
+    REQUIRE(ShouldDiagnoseUnattachedFragmentOutput(false, true));
+    REQUIRE_FALSE(ShouldDiagnoseUnattachedFragmentOutput(true, true));
+}

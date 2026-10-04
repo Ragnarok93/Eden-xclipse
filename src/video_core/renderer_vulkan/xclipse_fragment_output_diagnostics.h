@@ -32,6 +32,11 @@ enum class XclipseFragmentOutputDiagnosticCategory : u8 {
     return "invalid";
 }
 
+[[nodiscard]] constexpr bool ShouldDiagnoseUnattachedFragmentOutput(
+    bool attachment_enabled, bool declared_after_prune) noexcept {
+    return !attachment_enabled && declared_after_prune;
+}
+
 class XclipseFragmentOutputDiagnosticBudget {
 public:
     [[nodiscard]] bool TryConsume(XclipseFragmentOutputDiagnosticCategory category) noexcept {

@@ -335,7 +335,8 @@ void LogXclipseFragmentOutputDiagnostics(const GraphicsPipelineCacheKey& key,
         const bool candidate_declared = referenced || forced_declaration || dual_source;
         const bool declared_after_prune = ShouldDeclareFragmentColorOutput(
             shader_type, referenced, forced_declaration, dual_source);
-        const bool unattached_output = !attachment_enabled && candidate_declared;
+        const bool unattached_output = ShouldDiagnoseUnattachedFragmentOutput(
+            attachment_enabled, declared_after_prune);
         const bool numeric_class_mismatch =
             attachment_enabled && (shader_type != guest_type || shader_type != backing_type);
         if (!unattached_output && !numeric_class_mismatch) {
