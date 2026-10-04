@@ -171,8 +171,7 @@ struct XclipseMemoryPressureSample {
         if (heavy_contribution) {
             return XclipseTextureGcPressure::Critical;
         }
-        return meaningful_contribution ? XclipseTextureGcPressure::High
-                                       : XclipseTextureGcPressure::None;
+        return XclipseTextureGcPressure::None;
     case MemoryPressureClass::High:
         // High Android pressure plus heavy Eden ownership warrants the existing aggressive LRU
         // pass before the device reaches Critical pressure. This is particularly important on
