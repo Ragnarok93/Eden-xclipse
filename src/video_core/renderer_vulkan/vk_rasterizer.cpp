@@ -366,8 +366,8 @@ void RasterizerVulkan::DrawTexture() {
     query_cache.NotifySegment(true);
     query_cache.CounterEnable(VideoCommon::QueryType::ZPassPixelCount64, maxwell3d->regs.zpass_pixel_count_enable);
     const auto& draw_texture_state = maxwell3d->draw_manager.draw_texture_state;
-    const auto& sampler = texture_cache.GetSampler(draw_texture_state.src_sampler, false);
-    const auto& texture = texture_cache.GetImageView(draw_texture_state.src_texture);
+    auto& sampler = texture_cache.GetSampler(draw_texture_state.src_sampler, false);
+    auto& texture = texture_cache.GetImageView(draw_texture_state.src_texture);
     const auto* framebuffer = texture_cache.GetFramebuffer();
 
     const bool src_rescaling = texture_cache.IsRescaling() && texture.IsRescaled();
@@ -393,8 +393,11 @@ void RasterizerVulkan::DrawTexture() {
                                     .y = ScaleSrc(draw_texture_state.src_y1)}};
     Extent3D src_size = {static_cast<u32>(ScaleSrc(texture.size.width)),
                          static_cast<u32>(ScaleSrc(texture.size.height)), texture.size.depth};
+    // DrawTexture binds a raw image view, so adapt the sampler to that view's format first.
+    const VkSampler source_sampler =
+        sampler->HandleFor(texture, false, texture.RenderTarget());
     blit_image.BlitColor(framebuffer, texture.RenderTarget(), texture.ImageHandle(),
-                         sampler->Handle(), dst_region, src_region, src_size);
+                         source_sampler, dst_region, src_region, src_size);
 }
 
 void RasterizerVulkan::Clear(u32 layer_count) {
