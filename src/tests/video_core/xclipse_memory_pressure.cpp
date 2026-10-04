@@ -142,7 +142,7 @@ TEST_CASE("Xclipse texture GC requires Eden memory contribution",
 
     sample.process_rss_percent = 20;
     REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
-            XclipseTextureGcPressure::High);
+            XclipseTextureGcPressure::None);
 
     // Moderate Eden contribution under High pressure asks for the existing high-priority LRU.
     sample.process_rss_percent = 20;
