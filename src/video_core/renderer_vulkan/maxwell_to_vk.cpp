@@ -322,19 +322,16 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
             tuple.format = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
         }
         const bool gpu_decode_base_storage_candidate =
-            device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
-            !device.HasBrokenCompute() &&
+            device.UseXclipseBcnGpuDecode() && !device.HasBrokenCompute() &&
             (pixel_format == PixelFormat::BC4_UNORM || pixel_format == PixelFormat::BC4_SNORM ||
-             pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM ||
-             pixel_format == PixelFormat::BC6H_UFLOAT || pixel_format == PixelFormat::BC6H_SFLOAT ||
-             pixel_format == PixelFormat::BC7_UNORM);
+             pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM);
         if (gpu_decode_base_storage_candidate &&
             device.IsFormatSupported(tuple.format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
                                      FormatType::Optimal)) {
             tuple.usage |= usage_storage;
         }
-        // BC7_SRGB deliberately stays non-storage here. The image is sampled through its sRGB
-        // format, while the GPU decoder writes through a compatible UNORM storage view.
+        // BC6H/BC7 remain on Eden's CPU conversion path until their compute decoder is
+        // validated end-to-end on Xclipse. Do not mutate those images into storage resources.
     } else if (!device.IsOptimalEtc2Supported() && VideoCore::Surface::IsPixelFormatETC2(pixel_format)) {
         // Transcode on hardware that doesn't support ETC2 natively
         if (pixel_format == PixelFormat::EAC_R11_SNORM) {
@@ -370,7 +367,10 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         }
         break;
     }
-    return {device.GetSupportedFormat(tuple.format, usage, format_type), attachable, storage};
+    const VkFormat requested_format{tuple.format};
+    const VkFormat supported_format{device.GetSupportedFormat(tuple.format, usage, format_type)};
+    return {supported_format, attachable, storage, requested_format,
+            supported_format != requested_format};
 }
 
 VkShaderStageFlagBits ShaderStage(Shader::Stage stage) {

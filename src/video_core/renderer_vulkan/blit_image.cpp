@@ -39,6 +39,7 @@
 #include "video_core/host_shaders/vulkan_depthstencil_clear_frag_spv.h"
 #include "video_core/renderer_vulkan/blit_image.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/vk_blit_image_policy.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -662,7 +663,10 @@ void BlitImageHelper::BlitColor(const Framebuffer* dst_framebuffer, const ImageV
                                 const Region2D& dst_region, const Region2D& src_region,
                                 Tegra::Engines::Fermi2D::Filter filter,
                                 Tegra::Engines::Fermi2D::Operation operation) {
-    const bool is_linear = filter == Tegra::Engines::Fermi2D::Filter::Bilinear;
+    const bool wants_linear = filter == Tegra::Engines::Fermi2D::Filter::Bilinear &&
+                              !VideoCore::Surface::IsPixelFormatInteger(src_image_view.format);
+    const bool is_linear =
+        SelectBlitFilter(wants_linear, src_image_view.SupportsLinearFilter()) == VK_FILTER_LINEAR;
     const BlitImagePipelineKey key{
         .renderpass = dst_framebuffer->RenderPass(),
         .operation = operation,

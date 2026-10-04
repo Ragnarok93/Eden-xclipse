@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "bc_decoder.h"
+#include "video_core/vulkan_common/vulkan_device_profile.h"
 
 namespace {
 
@@ -104,4 +105,26 @@ TEST_CASE("Xclipse BC5 shader arithmetic matches Eden CPU decoder", "[video_core
             REQUIRE(MirrorBc5(block, is_signed) == cpu);
         }
     }
+}
+
+
+TEST_CASE("Xclipse RGTC GPU decode policy requires execution validation", "[video_core][bcn]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+
+    Vulkan::UpdateXclipseBcnDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bcn_gpu_decode);
+    const auto conservative_hash = Vulkan::ComputeVulkanPolicyHash(policy);
+
+    policy.xclipse.rgtc_gpu_decode_validated = true;
+    Vulkan::UpdateXclipseBcnDecodePolicy(policy, true);
+    REQUIRE(policy.use_xclipse_bcn_gpu_decode);
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != conservative_hash);
+
+    Vulkan::UpdateXclipseBcnDecodePolicy(policy, false);
+    REQUIRE_FALSE(policy.use_xclipse_bcn_gpu_decode);
+
+    policy.xclipse.detected = false;
+    Vulkan::UpdateXclipseBcnDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bcn_gpu_decode);
 }

@@ -1,0 +1,214 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
+
+TEST_CASE("Xclipse pressure uses the strongest available signal", "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureSample sample{};
+    sample.memory_budget_used_percent = 79;
+    sample.ram_available_percent = 50;
+    sample.process_rss_mib = 2300;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Elevated);
+
+    sample.gtt_used_percent = 82;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::High);
+
+    sample.psi_full_avg10 = 8.5f;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Critical);
+}
+
+TEST_CASE("Xclipse process RSS and swap do not create system pressure by themselves",
+          "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureSample sample{};
+    sample.ram_available_kib = 512ULL * 1024ULL;
+    sample.swap_total_kib = 8ULL * 1024ULL * 1024ULL;
+    sample.swap_free_kib = 3ULL * 1024ULL * 1024ULL;
+    sample.swap_used_kib = 5ULL * 1024ULL * 1024ULL;
+    sample.process_rss_mib = 3500;
+    sample.process_rss_swap_percent = 70;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Normal);
+}
+
+TEST_CASE("Xclipse process footprint includes private swap without exceeding system RAM",
+          "[video_core][xclipse]") {
+    constexpr u64 total_ram_kib = 8ULL * 1024ULL * 1024ULL;
+
+    REQUIRE(Vulkan::XclipseProcessRssSwapPercent(2ULL * 1024ULL * 1024ULL,
+                                                 1ULL * 1024ULL * 1024ULL,
+                                                 total_ram_kib) == 37);
+    REQUIRE(Vulkan::XclipseProcessRssSwapPercent(1ULL * 1024ULL * 1024ULL, std::nullopt,
+                                                 total_ram_kib) == 12);
+    REQUIRE(Vulkan::XclipseProcessRssSwapPercent(total_ram_kib, 1ULL, total_ram_kib) == 100);
+    REQUIRE_FALSE(Vulkan::XclipseProcessRssSwapPercent(1, 1, 0));
+}
+
+TEST_CASE("Xclipse swap usage requires consistent kernel counters",
+          "[video_core][xclipse]") {
+    using Vulkan::XclipseSwapUsedKiB;
+
+    REQUIRE(XclipseSwapUsedKiB(8192ULL, 3072ULL) == 5120ULL);
+    REQUIRE_FALSE(XclipseSwapUsedKiB(std::nullopt, 3072ULL));
+    REQUIRE_FALSE(XclipseSwapUsedKiB(8192ULL, std::nullopt));
+    REQUIRE_FALSE(XclipseSwapUsedKiB(8192ULL, 9000ULL));
+}
+
+TEST_CASE("Xclipse pressure promotes immediately and demotes slowly",
+          "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureController controller;
+
+    Vulkan::XclipseMemoryPressureSample critical{};
+    critical.memory_budget_used_percent = 96;
+    REQUIRE(controller.ApplySample(critical).pressure ==
+            Vulkan::MemoryPressureClass::Critical);
+
+    Vulkan::XclipseMemoryPressureSample normal{};
+    normal.memory_budget_used_percent = 30;
+    REQUIRE(controller.ApplySample(normal).pressure ==
+            Vulkan::MemoryPressureClass::Critical);
+    REQUIRE(controller.ApplySample(normal).pressure ==
+            Vulkan::MemoryPressureClass::Critical);
+    REQUIRE(controller.ApplySample(normal).pressure ==
+            Vulkan::MemoryPressureClass::High);
+
+    REQUIRE(controller.ApplySample(normal).pressure ==
+            Vulkan::MemoryPressureClass::High);
+    REQUIRE(controller.ApplySample(normal).pressure ==
+            Vulkan::MemoryPressureClass::High);
+    REQUIRE(controller.ApplySample(normal).pressure ==
+            Vulkan::MemoryPressureClass::Elevated);
+}
+
+TEST_CASE("Xclipse rising PSI trend preemptively raises one class",
+          "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureController controller;
+    Vulkan::XclipseMemoryPressureSample sample{};
+
+    sample.psi_some_avg10 = 0.20f;
+    REQUIRE(controller.ApplySample(sample).pressure == Vulkan::MemoryPressureClass::Normal);
+    sample.psi_some_avg10 = 0.40f;
+    REQUIRE(controller.ApplySample(sample).pressure == Vulkan::MemoryPressureClass::Normal);
+    sample.psi_some_avg10 = 0.80f;
+    const auto result = controller.ApplySample(sample);
+    REQUIRE(result.psi_trending_up);
+    REQUIRE(result.pressure == Vulkan::MemoryPressureClass::Elevated);
+}
+
+TEST_CASE("Xclipse isolated GTT pressure uses conservative bands", "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureSample sample{};
+    sample.gtt_used_percent = 59;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Normal);
+
+    sample.gtt_used_percent = 60;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Elevated);
+
+    sample.gtt_used_percent = 80;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::High);
+}
+
+TEST_CASE("Xclipse texture GC requires Eden memory contribution",
+          "[video_core][xclipse]") {
+    using Vulkan::MemoryPressureClass;
+    using Vulkan::XclipseMemoryPressureSample;
+    using Vulkan::XclipseTextureGcPressure;
+
+    XclipseMemoryPressureSample sample{};
+    sample.memory_budget_used_percent = 13;
+    sample.process_rss_percent = 5;
+
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Normal, sample) ==
+            XclipseTextureGcPressure::None);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
+            XclipseTextureGcPressure::None);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::None);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::None);
+
+    // The observed Xclipse failure mode: Eden itself occupies a large fraction of 8 GiB RAM
+    // while Android has only Elevated free-memory pressure. The aggressive LRU pass is needed
+    // here because waiting for Android to report High pressure can be too late on this device.
+    sample.process_rss_percent = 50;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
+            XclipseTextureGcPressure::Critical);
+
+    sample.process_rss_percent = 20;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Elevated, sample) ==
+            XclipseTextureGcPressure::None);
+
+    // Moderate Eden contribution under High pressure asks for the existing high-priority LRU.
+    sample.process_rss_percent = 20;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::High);
+
+    // Heavy Eden usage under High pressure now permits the existing aggressive LRU pass before
+    // Android reaches its Critical MemAvailable band.
+    sample.process_rss_percent = 35;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::Critical);
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::Critical);
+
+    // Process swap keeps ownership attributable even after the resident RSS has fallen.
+    sample.process_rss_percent = 5;
+    sample.process_rss_swap_percent = 35;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::Critical);
+
+    sample.process_rss_swap_percent = 20;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::High, sample) ==
+            XclipseTextureGcPressure::High);
+
+    sample.process_rss_percent = 5;
+    sample.memory_budget_used_percent = 45;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::High);
+
+    sample.memory_budget_used_percent = 65;
+    REQUIRE(Vulkan::TextureGcPressureFor(MemoryPressureClass::Critical, sample) ==
+            XclipseTextureGcPressure::Critical);
+}
+
+
+TEST_CASE("Xclipse staging containment escalates with Android pressure",
+          "[video_core][xclipse]") {
+    using Vulkan::MemoryPressureClass;
+
+    REQUIRE_FALSE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::Normal));
+    REQUIRE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::Elevated));
+    REQUIRE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::High));
+    REQUIRE(Vulkan::ShouldReclaimFreeStaging(MemoryPressureClass::Critical));
+
+    REQUIRE_FALSE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::Normal));
+    REQUIRE_FALSE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::Elevated));
+    REQUIRE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::High));
+    REQUIRE(Vulkan::ShouldPreferStagingWaitReuse(MemoryPressureClass::Critical));
+
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Normal) == 0);
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Elevated) ==
+            384ULL * 1024ULL * 1024ULL);
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::High) ==
+            192ULL * 1024ULL * 1024ULL);
+    REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Critical) ==
+            96ULL * 1024ULL * 1024ULL);
+}
+
+TEST_CASE("Xclipse pressure bounds the persistent staging ring only when enabled",
+          "[video_core][xclipse]") {
+    constexpr u64 MiB = 1024ULL * 1024ULL;
+    constexpr u64 default_size = 256ULL * MiB;
+    constexpr u64 pressure_limit = 128ULL * MiB;
+
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(default_size, false) == default_size);
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(default_size, true) == pressure_limit);
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(pressure_limit, true) == pressure_limit);
+    REQUIRE(Vulkan::XclipsePressureStreamBufferSize(64ULL * MiB, true) == 64ULL * MiB);
+}

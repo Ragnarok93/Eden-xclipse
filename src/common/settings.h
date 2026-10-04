@@ -712,10 +712,18 @@ struct Values {
                                              Category::RendererDebug};
     Setting<bool> xclipse_runtime_telemetry{linkage, true, "xclipse_runtime_telemetry",
                                             Category::RendererDebug};
+    Setting<bool> xclipse_memory_pressure_monitor{linkage, true,
+                                                  "xclipse_memory_pressure_monitor",
+                                                  Category::RendererDebug};
     Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
                                          Category::RendererDebug};
     Setting<bool> xclipse_pipeline_policy{linkage, true, "xclipse_pipeline_policy",
                                            Category::RendererDebug};
+    Setting<bool> xclipse_sync_policy{linkage, true, "xclipse_sync_policy",
+                                      Category::RendererDebug};
+    Setting<bool> xclipse_subgroup_size_control{linkage, true,
+                                                "xclipse_subgroup_size_control",
+                                                Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
                                            Category::RendererDebug};
     Setting<bool> enable_nsight_aftermath{linkage, false, "nsight_aftermath",

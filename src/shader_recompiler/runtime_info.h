@@ -25,6 +25,17 @@ enum class AttributeType : u8 {
     Disabled,
 };
 
+[[nodiscard]] constexpr bool ShouldDeclareFragmentColorOutput(
+    AttributeType output_type, bool stores_color, bool force_declaration,
+    bool dual_source) noexcept {
+    return output_type != AttributeType::Disabled &&
+           (stores_color || force_declaration || dual_source);
+}
+
+[[nodiscard]] constexpr bool ShouldEmitFragmentColorStore(AttributeType output_type) noexcept {
+    return output_type != AttributeType::Disabled;
+}
+
 enum class InputTopology {
     Points,
     Lines,

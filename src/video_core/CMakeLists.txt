@@ -197,6 +197,7 @@ add_library(video_core STATIC
     renderer_vulkan/vk_swapchain.h
     renderer_vulkan/vk_texture_cache.cpp
     renderer_vulkan/vk_texture_cache.h
+    renderer_vulkan/vk_image_copy_validation.h
     renderer_vulkan/vk_texture_cache_base.cpp
     renderer_vulkan/vk_turbo_mode.cpp
     renderer_vulkan/vk_turbo_mode.h
@@ -208,6 +209,8 @@ add_library(video_core STATIC
     vulkan_common/vulkan_device.h
     vulkan_common/vulkan_device_profile.cpp
     vulkan_common/vulkan_device_profile.h
+    vulkan_common/xclipse_memory_pressure.cpp
+    vulkan_common/xclipse_memory_pressure.h
     vulkan_common/xclipse_telemetry.cpp
     vulkan_common/xclipse_telemetry.h
     vulkan_common/vulkan_instance.cpp

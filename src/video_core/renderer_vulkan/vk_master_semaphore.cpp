@@ -76,14 +76,14 @@ void MasterSemaphore::Refresh() {
                                              std::memory_order_relaxed));
 }
 
-void MasterSemaphore::Wait(u64 tick) {
+void MasterSemaphore::Wait(u64 tick, XclipseWaitSource source) {
     if (!semaphore) {
         // Fast check: already reached the requested tick?
         if (gpu_tick.load(std::memory_order_acquire) >= tick) {
             return;
         }
 
-        device.GetXclipseTelemetry().RecordGpuWait(false);
+        device.GetXclipseTelemetry().RecordGpuWait(false, source);
         u64 last_tick = gpu_tick.load(std::memory_order_relaxed);
         while (gpu_tick.load(std::memory_order_acquire) < tick) {
             gpu_tick.wait(last_tick, std::memory_order_acquire);
@@ -105,7 +105,7 @@ void MasterSemaphore::Wait(u64 tick) {
     }
 
     // If none of the above is hit, fallback to a regular wait
-    device.GetXclipseTelemetry().RecordGpuWait(true);
+    device.GetXclipseTelemetry().RecordGpuWait(true, source);
     while (!semaphore.Wait(tick)) {
     }
 

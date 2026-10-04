@@ -49,13 +49,31 @@ void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2) noexcept {
     (sync2 ? sync2_submits : legacy_submits).fetch_add(1, std::memory_order_relaxed);
 }
 
-void XclipseTelemetry::RecordGpuWait(bool timeline) noexcept {
+void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) noexcept {
     if (!Enabled()) {
         return;
     }
     host_waits.fetch_add(1, std::memory_order_relaxed);
     if (timeline) {
         timeline_waits.fetch_add(1, std::memory_order_relaxed);
+    }
+    switch (source) {
+    case XclipseWaitSource::BufferCache:
+        wait_buffer_cache.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::Fence:
+        wait_fence.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::DescriptorBuffer:
+        wait_descriptor_buffer.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::StagingPressure:
+        wait_staging_pressure.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseWaitSource::Unknown:
+    default:
+        wait_unknown.fetch_add(1, std::memory_order_relaxed);
+        break;
     }
 }
 
@@ -71,9 +89,39 @@ void XclipseTelemetry::RecordAllCommandsBarrier() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordTransferConsumerBarrier() noexcept {
+    if (Enabled()) {
+        transfer_consumer_barriers.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordComputeConsumerBarrier() noexcept {
+    if (Enabled()) {
+        compute_consumer_barriers.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordFrame() noexcept {
+    if (Enabled()) {
+        frame_count.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordDescriptorSetAllocation(u64 sets) noexcept {
     if (Enabled()) {
         descriptor_set_allocations.fetch_add(sets, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorSetUpdate() noexcept {
+    if (Enabled()) {
+        descriptor_set_updates.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorPushUpdate() noexcept {
+    if (Enabled()) {
+        descriptor_push_updates.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -85,6 +133,16 @@ void XclipseTelemetry::RecordDescriptorBufferAllocation(u64 bytes) noexcept {
     descriptor_bytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
+void XclipseTelemetry::RecordDescriptorBufferUse(bool reused) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    descriptor_buffer_uses.fetch_add(1, std::memory_order_relaxed);
+    if (reused) {
+        descriptor_buffer_reuses.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     if (!Enabled()) {
         return;
@@ -92,6 +150,12 @@ void XclipseTelemetry::RecordDescriptorBufferWrap(bool stalled) noexcept {
     descriptor_buffer_wraps.fetch_add(1, std::memory_order_relaxed);
     if (stalled) {
         descriptor_stalls.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
+    if (Enabled()) {
+        descriptor_frame_wait_requests.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -107,6 +171,34 @@ void XclipseTelemetry::RecordBcnGpuDecodeFallback() noexcept {
     if (Enabled()) {
         bcn_gpu_decode_fallbacks.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+void XclipseTelemetry::RecordColorShaderBlit() noexcept {
+    if (Enabled()) {
+        color_shader_blits.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDepthStencilBlit(bool native) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (native ? depth_stencil_native_blits : depth_stencil_shader_blits)
+        .fetch_add(1, std::memory_order_relaxed);
+}
+
+void XclipseTelemetry::RecordNativeResolve() noexcept {
+    if (Enabled()) {
+        native_resolves.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordImageCopy(bool native) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (native ? native_image_copies : reinterpret_copies)
+        .fetch_add(1, std::memory_order_relaxed);
 }
 
 XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
@@ -132,19 +224,43 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .host_waits = host_waits.load(std::memory_order_relaxed),
         .timeline_waits = timeline_waits.load(std::memory_order_relaxed),
         .scheduler_finishes = scheduler_finishes.load(std::memory_order_relaxed),
+        .wait_unknown = wait_unknown.load(std::memory_order_relaxed),
+        .wait_buffer_cache = wait_buffer_cache.load(std::memory_order_relaxed),
+        .wait_fence = wait_fence.load(std::memory_order_relaxed),
+        .wait_descriptor_buffer = wait_descriptor_buffer.load(std::memory_order_relaxed),
+        .wait_staging_pressure = wait_staging_pressure.load(std::memory_order_relaxed),
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
+        .transfer_consumer_barriers =
+            transfer_consumer_barriers.load(std::memory_order_relaxed),
+        .compute_consumer_barriers =
+            compute_consumer_barriers.load(std::memory_order_relaxed),
+        .frame_count = frame_count.load(std::memory_order_relaxed),
         .descriptor_set_allocations =
             descriptor_set_allocations.load(std::memory_order_relaxed),
+        .descriptor_set_updates = descriptor_set_updates.load(std::memory_order_relaxed),
+        .descriptor_push_updates = descriptor_push_updates.load(std::memory_order_relaxed),
         .descriptor_buffer_allocations =
             descriptor_buffer_allocations.load(std::memory_order_relaxed),
+        .descriptor_buffer_uses = descriptor_buffer_uses.load(std::memory_order_relaxed),
+        .descriptor_buffer_reuses = descriptor_buffer_reuses.load(std::memory_order_relaxed),
         .descriptor_bytes = descriptor_bytes.load(std::memory_order_relaxed),
         .descriptor_buffer_wraps = descriptor_buffer_wraps.load(std::memory_order_relaxed),
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
+        .descriptor_frame_wait_requests =
+            descriptor_frame_wait_requests.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
         .bcn_gpu_decode_fallbacks =
             bcn_gpu_decode_fallbacks.load(std::memory_order_relaxed),
+        .color_shader_blits = color_shader_blits.load(std::memory_order_relaxed),
+        .depth_stencil_native_blits =
+            depth_stencil_native_blits.load(std::memory_order_relaxed),
+        .depth_stencil_shader_blits =
+            depth_stencil_shader_blits.load(std::memory_order_relaxed),
+        .native_resolves = native_resolves.load(std::memory_order_relaxed),
+        .native_image_copies = native_image_copies.load(std::memory_order_relaxed),
+        .reinterpret_copies = reinterpret_copies.load(std::memory_order_relaxed),
     };
 }
 

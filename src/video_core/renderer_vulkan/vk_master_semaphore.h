@@ -16,6 +16,7 @@
 #include "common/common_types.h"
 #include "common/polyfill_thread.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
+#include "video_core/vulkan_common/xclipse_telemetry.h"
 
 namespace Vulkan {
 
@@ -51,8 +52,9 @@ public:
     /// Refresh the known GPU tick
     void Refresh();
 
-    /// Waits for a tick to be hit on the GPU
-    void Wait(u64 tick);
+    /// Waits for a tick to be hit on the GPU.
+    /// The optional source is diagnostic-only and never changes synchronization behavior.
+    void Wait(u64 tick, XclipseWaitSource source = XclipseWaitSource::Unknown);
 
     /// Submits the device graphics queue, updating the tick as necessary
     VkResult SubmitQueue(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,

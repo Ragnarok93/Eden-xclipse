@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <span>
 
 #include "video_core/texture_cache/texture_cache_base.h"
@@ -15,6 +16,7 @@
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
+#include "video_core/renderer_vulkan/xclipse_image_diagnostics.h"
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -450,6 +452,10 @@ public:
         return supports_depth_comparison;
     }
 
+    [[nodiscard]] bool SupportsLinearFilter() const noexcept {
+        return supports_linear_filter;
+    }
+
     [[nodiscard]] bool RequiresBorderColorFormat() const noexcept {
         return requires_border_color_format;
     }
@@ -501,6 +507,7 @@ private:
     VkComponentMapping swizzle_mapping{};
 
     bool supports_depth_comparison = false;
+    bool supports_linear_filter = false;
     bool requires_border_color_format = false;
     bool supports_minmax_filter = false;
     bool has_identity_swizzle = true;
@@ -536,12 +543,14 @@ public:
         return *variants.front().sampler;
     }
 
-    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth);
+    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth,
+                                      VkImageView descriptor_view);
 
 private:
     struct VariantKey {
         bool reduce_anisotropy;
         bool force_nearest;
+        bool drop_depth_comparison;
         bool drop_reduction;
         bool drop_custom_border;
         bool srgb_border;
@@ -567,6 +576,7 @@ private:
 
     CustomBorderColorBudget custom_border_color_budget;
     std::vector<Variant> variants;
+    std::unique_ptr<XclipseImageDiagnosticBindingSet> depth_compare_diagnostic_bindings;
 
     const Device* device_ptr{nullptr};
     VkSamplerCreateInfo base_ci{};

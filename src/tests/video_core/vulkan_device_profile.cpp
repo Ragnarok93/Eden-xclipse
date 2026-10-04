@@ -63,4 +63,61 @@ TEST_CASE("VulkanDeviceProfile: policy hash includes driver and capability ident
     policy.xclipse.allowed_wave_mask = 0x1;
     policy.xclipse.preferred_compute_wave = 32;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+
+    policy.xclipse.wave32_validated = false;
+    policy.xclipse.allowed_wave_mask = 0;
+    policy.xclipse.preferred_compute_wave = 0;
+    policy.use_xclipse_sync_policy = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+
+    policy.use_xclipse_sync_policy = false;
+    policy.xclipse.wave32_validated = true;
+    policy.use_xclipse_subgroup_size_control = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != baseline);
+}
+
+TEST_CASE("VulkanDeviceProfile: Xclipse sync policy requires validated Sync2", "[video_core]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.capabilities.synchronization2 = Vulkan::CapabilityState::Advertised;
+
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, true);
+    REQUIRE_FALSE(policy.xclipse.synchronization2_validated);
+    REQUIRE_FALSE(policy.use_xclipse_sync_policy);
+
+    policy.capabilities.synchronization2 = Vulkan::CapabilityState::Validated;
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, true);
+    REQUIRE(policy.xclipse.synchronization2_validated);
+    REQUIRE(policy.use_xclipse_sync_policy);
+
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, false);
+    REQUIRE(policy.xclipse.synchronization2_validated);
+    REQUIRE_FALSE(policy.use_xclipse_sync_policy);
+
+    policy.xclipse.detected = false;
+    Vulkan::UpdateXclipseSynchronizationPolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_sync_policy);
+}
+
+TEST_CASE("VulkanDeviceProfile: Xclipse subgroup control requires exact wave32 validation",
+          "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.xclipse.wave64_validated = true;
+
+    Vulkan::UpdateXclipseSubgroupSizePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_subgroup_size_control);
+    REQUIRE_FALSE(Vulkan::IsXclipseSubgroupSizeValidated(policy, 32));
+    REQUIRE(Vulkan::IsXclipseSubgroupSizeValidated(policy, 64));
+
+    policy.xclipse.wave32_validated = true;
+    Vulkan::UpdateXclipseSubgroupSizePolicy(policy, true);
+    REQUIRE(policy.use_xclipse_subgroup_size_control);
+    REQUIRE(Vulkan::CanRequireXclipseSubgroupSize(policy, 32, true, 0x21U, 0x01U));
+    REQUIRE_FALSE(Vulkan::CanRequireXclipseSubgroupSize(policy, 32, false, 0x21U, 0x01U));
+    REQUIRE_FALSE(Vulkan::CanRequireXclipseSubgroupSize(policy, 32, true, 0x01U, 0x21U));
+
+    Vulkan::UpdateXclipseSubgroupSizePolicy(policy, false);
+    REQUIRE_FALSE(policy.use_xclipse_subgroup_size_control);
+    REQUIRE_FALSE(Vulkan::CanRequireXclipseSubgroupSize(policy, 32, true, 0x21U, 0x01U));
 }

@@ -1016,6 +1016,27 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_VALIDATION_PROBES,
+                    titleId = R.string.xclipse_validation_probes,
+                    descriptionId = R.string.xclipse_validation_probes_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY,
+                    titleId = R.string.xclipse_runtime_telemetry,
+                    descriptionId = R.string.xclipse_runtime_telemetry_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_MEMORY_PRESSURE_MONITOR,
+                    titleId = R.string.xclipse_memory_pressure_monitor,
+                    descriptionId = R.string.xclipse_memory_pressure_monitor_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_GPU_BCN_DECODE,
                     titleId = R.string.xclipse_gpu_bcn_decode,
                     descriptionId = R.string.xclipse_gpu_bcn_decode_description
@@ -1026,6 +1047,20 @@ abstract class SettingsItem(
                     BooleanSetting.XCLIPSE_PIPELINE_POLICY,
                     titleId = R.string.xclipse_pipeline_policy,
                     descriptionId = R.string.xclipse_pipeline_policy_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_SYNC_POLICY,
+                    titleId = R.string.xclipse_sync_policy,
+                    descriptionId = R.string.xclipse_sync_policy_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_SUBGROUP_SIZE_CONTROL,
+                    titleId = R.string.xclipse_subgroup_size_control,
+                    descriptionId = R.string.xclipse_subgroup_size_control_description
                 )
             )
             put(

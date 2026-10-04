@@ -27,6 +27,7 @@
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
+#include "video_core/vulkan_common/xclipse_memory_pressure.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 namespace Core {
@@ -209,6 +210,9 @@ private:
     GuestDescriptorQueue guest_descriptor_queue;
     ComputePassDescriptorQueue compute_pass_descriptor_queue;
     DescriptorBufferRing descriptor_buffer_ring;
+    // 1 Hz diagnostic sampler only; it does not alter cache or eviction policy.
+    // 1 Hz diagnostic sampler only; it does not alter cache or eviction policy.
+    XclipseMemoryPressureController xclipse_memory_pressure;
     BlitImageHelper blit_image;
     RenderPassCache render_pass_cache;
 
@@ -229,6 +233,7 @@ private:
     boost::container::static_vector<VkSampler, MAX_TEXTURES> sampler_handles;
 
     u32 draw_counter = 0;
+    u64 xclipse_runtime_frame_counter{};
 };
 
 } // namespace Vulkan
