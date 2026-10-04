@@ -27,6 +27,7 @@
 #include "video_core/engines/fermi_2d.h"
 #include "video_core/renderer_vulkan/blit_image.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/vk_blit_image_policy.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -901,19 +902,24 @@ void TryTransformSwizzleIfNeeded(PixelFormat format, std::array<SwizzleSource, 4
     return VK_FORMAT_R32_UINT;
 }
 
-void BlitScale(Scheduler& scheduler, VkImage src_image, VkImage dst_image, const ImageInfo& info,
-               VkImageAspectFlags aspect_mask, const Settings::ResolutionScalingInfo& resolution,
-               bool up_scaling = true) {
+void BlitScale(const Device& device, Scheduler& scheduler, VkImage src_image, VkImage dst_image,
+               const ImageInfo& info, VkImageAspectFlags aspect_mask,
+               const Settings::ResolutionScalingInfo& resolution, bool up_scaling = true) {
     const bool is_2d = info.type == ImageType::e2D;
     const auto resources = info.resources;
     const VkExtent2D extent{
         .width = info.size.width,
         .height = info.size.height,
     };
-    // Depth and integer formats must use NEAREST filter for blits.
+    // Depth and integer formats must use NEAREST. Vulkan also requires the source format to
+    // advertise linear-filter support before VK_FILTER_LINEAR can be used by a blit.
     const bool is_color{aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT};
-    const bool is_bilinear{is_color && !IsPixelFormatInteger(info.format)};
-    const VkFilter vk_filter = is_bilinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    const bool wants_linear{is_color && !IsPixelFormatInteger(info.format)};
+    const VkFormat vk_format =
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, info.format).format;
+    const bool supports_linear_filter = device.IsFormatSupported(
+        vk_format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT, FormatType::Optimal);
+    const VkFilter vk_filter = SelectBlitFilter(wants_linear, supports_linear_filter);
 
     scheduler.RequestOutsideRenderPassOperationContext();
     scheduler.Record([dst_image, src_image, extent, resources, aspect_mask, resolution, is_2d,
@@ -2715,7 +2721,8 @@ bool Image::ScaleUp(bool ignore) {
             return false;
         }
     } else {
-        BlitScale(*scheduler, *original_image, *scaled_image, info, aspect_mask, resolution);
+        BlitScale(runtime->device, *scheduler, *original_image, *scaled_image, info, aspect_mask,
+                  resolution);
     }
     return true;
 }
@@ -2744,7 +2751,8 @@ bool Image::ScaleDown(bool ignore) {
             return false;
         }
     } else {
-        BlitScale(*scheduler, *scaled_image, *original_image, info, aspect_mask, resolution, false);
+        BlitScale(runtime->device, *scheduler, *scaled_image, *original_image, info, aspect_mask,
+                  resolution, false);
     }
     return true;
 }
