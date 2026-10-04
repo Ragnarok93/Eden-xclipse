@@ -79,6 +79,15 @@ SPDX-License-Identifier: GPL-3.0-or-later
             android:label="@string/preferences_settings"/>
 
         <activity
+            android:name="org.yuzu.yuzu_emu.activities.PgoTrainingActivity"
+            android:process=":pgo"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.pgo"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
+            android:theme="@style/Theme.Yuzu.Main" />
+
+        <activity
             android:name="org.yuzu.yuzu_emu.activities.EmulationActivity"
             android:theme="@style/Theme.Yuzu.Main"
             android:launchMode="singleTop"

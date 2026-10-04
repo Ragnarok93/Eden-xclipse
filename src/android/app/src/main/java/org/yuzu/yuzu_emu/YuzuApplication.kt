@@ -145,8 +145,10 @@ class YuzuApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        installCrashLogger()
         application = this
+        // The PGO worker must not initialize emulation, rotate its log, or touch game data.
+        if (Application.getProcessName().endsWith(":pgo")) return
+        installCrashLogger()
         documentsTree = DocumentsTree()
         DirectoryInitialization.start()
 

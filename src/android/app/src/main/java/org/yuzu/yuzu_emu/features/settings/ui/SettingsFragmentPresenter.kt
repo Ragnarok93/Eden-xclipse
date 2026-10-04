@@ -1514,8 +1514,32 @@ class SettingsFragmentPresenter(
         }
     }
 
+    private fun nativePgoAvailable(): Boolean =
+        org.json.JSONObject(org.yuzu.yuzu_emu.utils.NativePgo.buildInfo()).optBoolean("instrumented")
+
+
     private fun addDebugSettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
+            if (nativePgoAvailable()) {
+                add(RunnableSetting(
+                    titleString = "Run automated PGO profiling",
+                    descriptionString = "Train native workloads without games, then export the profile. Stop emulation first.",
+                    isRunnable = !NativeLibrary.isRunning()
+                ) {
+                    activity?.let {
+                        it.startActivity(android.content.Intent(it, org.yuzu.yuzu_emu.activities.PgoTrainingActivity::class.java)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                })
+                add(RunnableSetting(
+                    titleString = "Export latest PGO results",
+                    descriptionString = "Includes retained results after a profiling timeout or crash.",
+                    isRunnable = !NativeLibrary.isRunning() &&
+                        org.yuzu.yuzu_emu.utils.PgoProfileExporter.hasResults(context)
+                ) {
+                    activity?.let { org.yuzu.yuzu_emu.utils.PgoProfileExporter.export(it) }
+                })
+            }
             add(HeaderSetting(R.string.gpu))
 
             add(IntSetting.RENDERER_BACKEND.key)

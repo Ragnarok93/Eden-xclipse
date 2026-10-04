@@ -704,6 +704,7 @@ if (MSVC AND CXX_CLANG)
 endif()
 
 add_subdirectory(src)
+include(AndroidPGO)
 
 if (ENABLE_DEBUG_TOOLS)
     add_subdirectory(tools/maxwell-disas)
