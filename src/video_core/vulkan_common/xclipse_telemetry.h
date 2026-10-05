@@ -68,6 +68,8 @@ struct XclipseTelemetrySnapshot {
     u64 native_resolves{};
     u64 native_image_copies{};
     u64 reinterpret_copies{};
+    u64 renderpass_undefined_initial_layouts{};
+    u64 renderpass_dontcare_stores{};
 };
 
 class XclipseTelemetry {
@@ -104,6 +106,7 @@ public:
     void RecordDepthStencilBlit(bool native) noexcept;
     void RecordNativeResolve() noexcept;
     void RecordImageCopy(bool native) noexcept;
+    void RecordRenderPassAttachment(bool undefined_initial_layout, bool dontcare_store) noexcept;
 
     [[nodiscard]] XclipseTelemetrySnapshot Snapshot() const noexcept;
 
@@ -160,6 +163,8 @@ private:
     std::atomic<u64> native_resolves{};
     std::atomic<u64> native_image_copies{};
     std::atomic<u64> reinterpret_copies{};
+    std::atomic<u64> renderpass_undefined_initial_layouts{};
+    std::atomic<u64> renderpass_dontcare_stores{};
 };
 
 } // namespace Vulkan
