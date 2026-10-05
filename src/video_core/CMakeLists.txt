@@ -212,7 +212,7 @@ add_library(video_core STATIC
     vulkan_common/xclipse_memory_pressure.cpp
     vulkan_common/xclipse_memory_pressure.h
     vulkan_common/xclipse_optimization_probes.cpp
-    # Xclipse execution probes remain isolated until their Vulkan wrapper path is validated.
+    vulkan_common/xclipse_depth_comparison_probes.cpp
     vulkan_common/xclipse_optimization_probes.h
     vulkan_common/xclipse_telemetry.cpp
     vulkan_common/xclipse_telemetry.h
