@@ -40,6 +40,12 @@ void XclipseTelemetry::RecordPipelinePolicyViolations(u64 count) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordDispatchDeferral() noexcept {
+    if (Enabled()) {
+        dispatch_deferrals.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2, bool has_upload) noexcept {
     if (!Enabled()) {
         return;
@@ -233,6 +239,7 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .queue_submits = queue_submits.load(std::memory_order_relaxed),
         .upload_submits = upload_submits.load(std::memory_order_relaxed),
         .non_upload_submits = non_upload_submits.load(std::memory_order_relaxed),
+        .dispatch_deferrals = dispatch_deferrals.load(std::memory_order_relaxed),
         .commands_submitted = commands_submitted.load(std::memory_order_relaxed),
         .sync2_submits = sync2_submits.load(std::memory_order_relaxed),
         .legacy_submits = legacy_submits.load(std::memory_order_relaxed),
