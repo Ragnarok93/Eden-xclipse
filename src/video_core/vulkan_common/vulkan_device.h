@@ -300,6 +300,12 @@ public:
         return device_policy.xclipse.detected && device_policy.use_xclipse_bptc_gpu_decode;
     }
 
+    bool UseXclipseDescriptorBuffer() const noexcept {
+        return device_policy.xclipse.detected &&
+               device_policy.xclipse.descriptor_buffer_validated &&
+               device_policy.xclipse.descriptor_buffer_image_validated;
+    }
+
     XclipseTelemetry& GetXclipseTelemetry() const noexcept {
         return xclipse_telemetry;
     }
@@ -1157,6 +1163,7 @@ private:
     /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
     void RunXclipseSubgroupValidationProbes();
     void RunXclipseDescriptorBufferValidationProbe();
+    void RunXclipseDescriptorBufferImageValidationProbe();
 
     /// Recomputes family-level BCn native readiness from exact per-format state.
     void UpdateXclipseBcnProfile();
