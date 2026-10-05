@@ -33,6 +33,7 @@
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/host_shaders/xclipse_bcn_sample_probe_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_probe_comp_spv.h"
+#include "video_core/host_shaders/xclipse_r32_sample_probe_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_ballot_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_shuffle_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_arithmetic_comp_spv.h"
@@ -1480,6 +1481,390 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan,
                     "XCLIPSE PROBE descriptor_buffer exception: {}", exception.what());
+    }
+}
+
+
+void Device::RunXclipseDescriptorBufferImageValidationProbe() {
+    auto& xclipse = device_policy.xclipse;
+    xclipse.descriptor_buffer_image_validated = false;
+
+    if (!xclipse.descriptor_buffer_validated ||
+        device_policy.capabilities.descriptor_buffer == CapabilityState::Unsupported ||
+        !extensions.buffer_device_address ||
+        !features.descriptor_buffer.descriptorBuffer) {
+        return;
+    }
+
+    const auto& dld = GetDispatchLoader();
+    const VkDevice raw_device = *logical;
+    const VkPhysicalDeviceMemoryProperties memory_properties =
+        physical.GetMemoryProperties().memoryProperties;
+    const auto find_host_memory = [&](u32 bits) -> std::optional<u32> {
+        constexpr VkMemoryPropertyFlags required =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            if ((bits & (1U << index)) == 0) {
+                continue;
+            }
+            if ((memory_properties.memoryTypes[index].propertyFlags & required) == required) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    };
+    const auto find_device_local_memory = [&](u32 bits) -> std::optional<u32> {
+        for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            if ((bits & (1U << index)) == 0) {
+                continue;
+            }
+            if ((memory_properties.memoryTypes[index].propertyFlags &
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    };
+
+    struct BufferResource {
+        const vk::DeviceDispatch& dld;
+        VkDevice device{};
+        VkBuffer buffer{};
+        VkDeviceMemory memory{};
+        void* mapped{};
+        ~BufferResource() {
+            if (mapped && memory) {
+                dld.vkUnmapMemory(device, memory);
+            }
+            if (buffer) {
+                dld.vkDestroyBuffer(device, buffer, nullptr);
+            }
+            if (memory) {
+                dld.vkFreeMemory(device, memory, nullptr);
+            }
+        }
+    };
+    struct ImageResource {
+        const vk::DeviceDispatch& dld;
+        VkDevice device{};
+        VkImage image{};
+        VkDeviceMemory memory{};
+        VkImageView view{};
+        ~ImageResource() {
+            if (view) {
+                dld.vkDestroyImageView(device, view, nullptr);
+            }
+            if (image) {
+                dld.vkDestroyImage(device, image, nullptr);
+            }
+            if (memory) {
+                dld.vkFreeMemory(device, memory, nullptr);
+            }
+        }
+    };
+
+    constexpr VkDeviceSize OutputBytes = 4;
+    constexpr VkDeviceSize DescriptorBytes = 4096;
+    constexpr float Expected = 0.75f;
+
+    const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage,
+                                 BufferResource& resource) -> bool {
+        const VkBufferCreateInfo ci{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        if (dld.vkCreateBuffer(raw_device, &ci, nullptr, &resource.buffer) != VK_SUCCESS) {
+            return false;
+        }
+        VkMemoryRequirements req{};
+        dld.vkGetBufferMemoryRequirements(raw_device, resource.buffer, &req);
+        const auto type = find_host_memory(req.memoryTypeBits);
+        if (!type) {
+            return false;
+        }
+        const VkMemoryAllocateFlagsInfo flags{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+            .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+        };
+        const VkMemoryAllocateInfo ai{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = &flags,
+            .allocationSize = req.size,
+            .memoryTypeIndex = *type,
+        };
+        if (dld.vkAllocateMemory(raw_device, &ai, nullptr, &resource.memory) != VK_SUCCESS ||
+            dld.vkBindBufferMemory(raw_device, resource.buffer, resource.memory, 0) != VK_SUCCESS ||
+            dld.vkMapMemory(raw_device, resource.memory, 0, size, 0, &resource.mapped) != VK_SUCCESS) {
+            return false;
+        }
+        return true;
+    };
+
+    try {
+        BufferResource source{dld, raw_device};
+        BufferResource output{dld, raw_device};
+        BufferResource descriptor{dld, raw_device};
+        if (!make_buffer(4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, source) ||
+            !make_buffer(OutputBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, output) ||
+            !make_buffer(DescriptorBytes, VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+                          descriptor)) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer_image skipped: host memory unavailable");
+            return;
+        }
+        *static_cast<u32*>(source.mapped) = std::bit_cast<u32>(Expected);
+        *static_cast<u32*>(output.mapped) = 0;
+
+        const VkImageCreateInfo image_ci{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .format = VK_FORMAT_R32_SFLOAT,
+            .extent = {1, 1, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        ImageResource image{dld, raw_device};
+        if (dld.vkCreateImage(raw_device, &image_ci, nullptr, &image.image) != VK_SUCCESS) {
+            return;
+        }
+        VkMemoryRequirements image_req{};
+        dld.vkGetImageMemoryRequirements(raw_device, image.image, &image_req);
+        const auto image_type = find_device_local_memory(image_req.memoryTypeBits);
+        if (!image_type) {
+            return;
+        }
+        const VkMemoryAllocateInfo image_ai{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = image_req.size,
+            .memoryTypeIndex = *image_type,
+        };
+        if (dld.vkAllocateMemory(raw_device, &image_ai, nullptr, &image.memory) != VK_SUCCESS ||
+            dld.vkBindImageMemory(raw_device, image.image, image.memory, 0) != VK_SUCCESS) {
+            return;
+        }
+        const VkImageViewCreateInfo view_ci{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = VK_FORMAT_R32_SFLOAT,
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .levelCount = 1,
+                .layerCount = 1,
+            },
+        };
+        if (dld.vkCreateImageView(raw_device, &view_ci, nullptr, &image.view) != VK_SUCCESS) {
+            return;
+        }
+
+        const VkSamplerCreateInfo sampler_ci{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_NEAREST,
+            .minFilter = VK_FILTER_NEAREST,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .maxLod = 0.0f,
+        };
+        const auto sampler = logical.CreateSampler(sampler_ci);
+
+        constexpr std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
+            {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+            {
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+        }};
+        const auto layout = logical.CreateDescriptorSetLayout({
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT,
+            .bindingCount = static_cast<u32>(bindings.size()),
+            .pBindings = bindings.data(),
+        });
+        const VkDescriptorSetLayout raw_layout = *layout;
+        const VkDeviceSize set_size = logical.GetDescriptorSetLayoutSizeEXT(raw_layout);
+        const VkDeviceSize image_offset =
+            logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 0);
+        const VkDeviceSize output_offset =
+            logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 1);
+        const auto& props = properties.descriptor_buffer;
+        if (set_size == 0 ||
+            image_offset + props.combinedImageSamplerDescriptorSize > DescriptorBytes ||
+            output_offset + props.storageBufferDescriptorSize > DescriptorBytes) {
+            return;
+        }
+
+        const VkDescriptorImageInfo image_info{
+            .sampler = *sampler,
+            .imageView = image.view,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        };
+        const VkDescriptorGetInfoEXT image_get{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .data{.pCombinedImageSampler = &image_info},
+        };
+        logical.GetDescriptorEXT(image_get, props.combinedImageSamplerDescriptorSize,
+                                 static_cast<u8*>(descriptor.mapped) + image_offset);
+
+        const VkDeviceAddress output_address = logical.GetBufferDeviceAddress(output.buffer);
+        const VkDeviceAddress descriptor_address =
+            logical.GetBufferDeviceAddress(descriptor.buffer);
+        if (output_address == 0 || descriptor_address == 0) {
+            return;
+        }
+        const VkDescriptorAddressInfoEXT output_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT,
+            .address = output_address,
+            .range = OutputBytes,
+        };
+        const VkDescriptorGetInfoEXT output_get{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .data{.pStorageBuffer = &output_info},
+        };
+        logical.GetDescriptorEXT(output_get, props.storageBufferDescriptorSize,
+                                 static_cast<u8*>(descriptor.mapped) + output_offset);
+
+        const auto pipeline_layout = logical.CreatePipelineLayout({
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &raw_layout,
+        });
+        const auto shader = logical.CreateShaderModule({
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = sizeof(XCLIPSE_R32_SAMPLE_PROBE_COMP_SPV),
+            .pCode = XCLIPSE_R32_SAMPLE_PROBE_COMP_SPV,
+        });
+        const auto pipeline = logical.CreateComputePipeline({
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                .module = *shader,
+                .pName = "main",
+            },
+            .layout = *pipeline_layout,
+        });
+        const auto command_pool = logical.CreateCommandPool({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+            .queueFamilyIndex = graphics_family,
+        });
+        auto command_buffers = command_pool.Allocate(1);
+        vk::CommandBuffer command_buffer{command_buffers[0], dld};
+        command_buffer.Begin({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        });
+
+        const VkImageSubresourceRange range{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1,
+            .layerCount = 1,
+        };
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                       VkImageMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                           .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .image = image.image,
+                                           .subresourceRange = range,
+                                       });
+        command_buffer.CopyBufferToImage(
+            source.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VkBufferImageCopy{
+                .imageSubresource = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .layerCount = 1,
+                },
+                .imageExtent = {1, 1, 1},
+            });
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       VkImageMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                           .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                           .image = image.image,
+                                           .subresourceRange = range,
+                                       });
+        command_buffer.FillBuffer(output.buffer, 0, OutputBytes, 0);
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       VkMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                           .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                                       });
+        const VkDescriptorBufferBindingInfoEXT descriptor_binding{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT,
+            .address = descriptor_address,
+            .usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+        };
+        command_buffer.BindDescriptorBuffersEXT(descriptor_binding);
+        const u32 buffer_index = 0;
+        const VkDeviceSize offset = 0;
+        command_buffer.SetDescriptorBufferOffsetsEXT(
+            VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0, buffer_index, offset);
+        command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
+        command_buffer.Dispatch(1, 1, 1);
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       VK_PIPELINE_STAGE_HOST_BIT, 0,
+                                       VkMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                           .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+                                       });
+        command_buffer.End();
+
+        const auto fence = logical.CreateFence({
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        });
+        const VkCommandBuffer raw_command = *command_buffer;
+        const VkSubmitInfo submit{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &raw_command,
+        };
+        const VkResult submit_result = graphics_queue.Submit(submit, *fence);
+        const VkResult wait_result =
+            submit_result == VK_SUCCESS ? fence.Wait(1'000'000'000ULL) : submit_result;
+        if (submit_result != VK_SUCCESS || wait_result != VK_SUCCESS) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer_image submit={} wait={}",
+                        submit_result, wait_result);
+            return;
+        }
+
+        const bool valid = std::bit_cast<float>(*static_cast<u32*>(output.mapped)) == Expected;
+        xclipse.descriptor_buffer_image_validated = valid;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE descriptor_buffer_image result={} image_descriptor_size={} "
+                 "storage_descriptor_size={} image_offset={} output_offset={}",
+                 valid ? "validated" : "failed",
+                 props.combinedImageSamplerDescriptorSize, props.storageBufferDescriptorSize,
+                 image_offset, output_offset);
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor_buffer_image exception: {}", exception.what());
     }
 }
 
