@@ -113,13 +113,14 @@ void MasterSemaphore::Wait(u64 tick, XclipseWaitSource source) {
 }
 
 VkResult MasterSemaphore::SubmitQueue(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,
-                                      VkSemaphore signal_semaphore, VkSemaphore wait_semaphore,
-                                      u64 host_tick) {
+                                      bool has_upload, VkSemaphore signal_semaphore,
+                                      VkSemaphore wait_semaphore, u64 host_tick) {
     if (semaphore) {
-        return SubmitQueueTimeline(cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore,
-                                   host_tick);
+        return SubmitQueueTimeline(cmdbuf, upload_cmdbuf, has_upload, signal_semaphore,
+                                   wait_semaphore, host_tick);
     } else {
-        return SubmitQueueFence(cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore, host_tick);
+        return SubmitQueueFence(cmdbuf, upload_cmdbuf, has_upload, signal_semaphore,
+                                wait_semaphore, host_tick);
     }
 }
 
@@ -127,13 +128,13 @@ static constexpr VkPipelineStageFlags wait_stage_mask = VK_PIPELINE_STAGE_VERTEX
                                                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
 VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
-                                              vk::CommandBuffer& upload_cmdbuf,
+                                              vk::CommandBuffer& upload_cmdbuf, bool has_upload,
                                               VkSemaphore signal_semaphore,
                                               VkSemaphore wait_semaphore, u64 host_tick) {
     const VkSemaphore timeline_semaphore = *semaphore;
 
     if (device.HasSynchronization2()) {
-        const std::array<VkCommandBufferSubmitInfo, 2> cmdbuffer_infos{{
+        std::array<VkCommandBufferSubmitInfo, 2> cmdbuffer_infos{{
             {
                 .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
                 .pNext = nullptr,
@@ -147,6 +148,7 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
                 .deviceMask = 0,
             },
         }};
+        const u32 command_buffer_count = has_upload ? 2U : 1U;
 
         std::array<VkSemaphoreSubmitInfo, 2> signal_infos{{
             {
@@ -188,7 +190,7 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
             .flags = 0,
             .waitSemaphoreInfoCount = num_wait_semaphores,
             .pWaitSemaphoreInfos = num_wait_semaphores ? &wait_info : nullptr,
-            .commandBufferInfoCount = static_cast<u32>(cmdbuffer_infos.size()),
+            .commandBufferInfoCount = command_buffer_count,
             .pCommandBufferInfos = cmdbuffer_infos.data(),
             .signalSemaphoreInfoCount = num_signal_semaphores,
             .pSignalSemaphoreInfos = signal_infos.data(),
@@ -201,6 +203,8 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
     const std::array signal_semaphores{timeline_semaphore, signal_semaphore};
 
     const std::array cmdbuffers{*upload_cmdbuf, *cmdbuf};
+    const u32 command_buffer_count = has_upload ? 2U : 1U;
+    const u32 command_buffer_count = has_upload ? 2U : 1U;
 
     const u32 num_wait_semaphores = wait_semaphore ? 1 : 0;
     // Pointers must be null when the count is zero (best-practices)
@@ -225,7 +229,7 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
         .waitSemaphoreCount = num_wait_semaphores,
         .pWaitSemaphores = p_wait_sems,
         .pWaitDstStageMask = p_wait_masks,
-        .commandBufferCount = static_cast<u32>(cmdbuffers.size()),
+        .commandBufferCount = command_buffer_count,
         .pCommandBuffers = cmdbuffers.data(),
         .signalSemaphoreCount = num_signal_semaphores,
         .pSignalSemaphores = p_signal_sems,
@@ -280,7 +284,7 @@ VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
             .flags = 0,
             .waitSemaphoreInfoCount = num_wait_semaphores,
             .pWaitSemaphoreInfos = num_wait_semaphores ? &wait_info : nullptr,
-            .commandBufferInfoCount = static_cast<u32>(cmdbuffer_infos.size()),
+            .commandBufferInfoCount = command_buffer_count,
             .pCommandBufferInfos = cmdbuffer_infos.data(),
             .signalSemaphoreInfoCount = num_signal_semaphores,
             .pSignalSemaphoreInfos = num_signal_semaphores ? &signal_info : nullptr,
@@ -315,7 +319,7 @@ VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
         .waitSemaphoreCount = num_wait_semaphores,
         .pWaitSemaphores = p_wait_sems,
         .pWaitDstStageMask = p_wait_masks,
-        .commandBufferCount = static_cast<u32>(cmdbuffers.size()),
+        .commandBufferCount = command_buffer_count,
         .pCommandBuffers = cmdbuffers.data(),
         .signalSemaphoreCount = num_signal_semaphores,
         .pSignalSemaphores = p_signal_sems,
