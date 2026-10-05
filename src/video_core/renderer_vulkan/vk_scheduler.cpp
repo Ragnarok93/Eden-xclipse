@@ -86,14 +86,27 @@ void Scheduler::WaitWorker() {
 }
 
 void Scheduler::DispatchWork() {
-    if (chunk && !chunk->Empty()) {
-        {
-            std::scoped_lock ql{queue_mutex};
-            work_queue.push(std::move(chunk));
-        }
-        event_cv.notify_all();
-        AcquireNewChunk();
+    if (!chunk || chunk->Empty()) {
+        return;
     }
+
+    // Xclipse has a high fixed queue-submit cost. Keep small non-submit chunks on the
+    // recording thread so adjacent work can coalesce into the same worker chunk.
+    // Explicit submissions and upload chunks always dispatch immediately.
+    constexpr u64 XclipseBatchCommandThreshold = 32;
+    if (device.IsXclipse() && Settings::values.xclipse_submission_batching.GetValue() &&
+        !chunk->HasSubmit() && !chunk->HasUpload() &&
+        chunk->CommandCount() < XclipseBatchCommandThreshold) {
+        device.GetXclipseTelemetry().RecordDispatchDeferral();
+        return;
+    }
+
+    {
+        std::scoped_lock ql{queue_mutex};
+        work_queue.push(std::move(chunk));
+    }
+    event_cv.notify_all();
+    AcquireNewChunk();
 }
 
 void Scheduler::BeginRenderPassImpl(const Framebuffer* framebuffer, VkRenderPass renderpass,
