@@ -65,32 +65,25 @@ uint extract_index(uvec2 block, uint texel) {
     return (block.y >> (bit_offset - 32u)) & 7u;
 }
 
-int decode_channel(uvec2 block, uint texel, bool is_signed) {
-    int endpoint0 = is_signed ? signed_byte(block.x) : int(block.x & 0xffu);
-    int endpoint1 =
+void build_palette(uvec2 block, bool is_signed, out int palette[8]) {
+    const int endpoint0 = is_signed ? signed_byte(block.x) : int(block.x & 0xffu);
+    const int endpoint1 =
         is_signed ? signed_byte(block.x >> 8u) : int((block.x >> 8u) & 0xffu);
 
-    uint index = extract_index(block, texel);
-    if (index == 0u) {
-        return endpoint0;
-    }
-    if (index == 1u) {
-        return endpoint1;
-    }
+    palette[0] = endpoint0;
+    palette[1] = endpoint1;
 
     if (endpoint0 > endpoint1) {
-        int i = int(index);
-        return ((8 - i) * endpoint0 + (i - 1) * endpoint1) / 7;
+        for (int i = 2; i < 8; ++i) {
+            palette[i] = ((8 - i) * endpoint0 + (i - 1) * endpoint1) / 7;
+        }
+    } else {
+        for (int i = 2; i < 6; ++i) {
+            palette[i] = ((6 - i) * endpoint0 + (i - 1) * endpoint1) / 5;
+        }
+        palette[6] = is_signed ? -128 : 0;
+        palette[7] = is_signed ? 127 : 255;
     }
-
-    if (index < 6u) {
-        int i = int(index);
-        return ((6 - i) * endpoint0 + (i - 1) * endpoint1) / 5;
-    }
-    if (index == 6u) {
-        return is_signed ? -128 : 0;
-    }
-    return is_signed ? 127 : 255;
 }
 
 float normalize_channel(int value, bool is_signed) {
@@ -137,6 +130,14 @@ void main() {
                             input_buffer.data[word_offset + 3u]);
     }
 
+    int red_palette[8];
+    build_palette(red_block, is_signed, red_palette);
+
+    int green_palette[8];
+    if (is_bc5) {
+        build_palette(green_block, is_signed, green_palette);
+    }
+
     for (uint texel = 0u; texel < 16u; ++texel) {
         const uint local_x = texel & 3u;
         const uint local_y = texel >> 2u;
@@ -146,8 +147,8 @@ void main() {
             continue;
         }
 
-        const int red = decode_channel(red_block, texel, is_signed);
-        const int green = is_bc5 ? decode_channel(green_block, texel, is_signed) : 0;
+        const int red = red_palette[extract_index(red_block, texel)];
+        const int green = is_bc5 ? green_palette[extract_index(green_block, texel)] : 0;
         const vec4 value = vec4(normalize_channel(red, is_signed),
                                 is_bc5 ? normalize_channel(green, is_signed) : 0.0,
                                 0.0, 1.0);
