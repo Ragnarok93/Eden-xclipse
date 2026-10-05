@@ -320,12 +320,16 @@ ComputePass::ComputePass(const Device& device_, Scheduler& scheduler, Descriptor
         .pCode = code.data(),
     });
     device.SaveShader(code);
+    const u32 selected_subgroup_size =
+        optional_subgroup_size.value_or(device.GetDevicePolicy().xclipse.preferred_compute_wave);
     const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
         .pNext = nullptr,
-        .requiredSubgroupSize = optional_subgroup_size ? *optional_subgroup_size : 32U,
+        .requiredSubgroupSize = selected_subgroup_size,
     };
-    bool use_setup_size = device.IsExtSubgroupSizeControlSupported() && optional_subgroup_size;
+    bool use_setup_size =
+        device.IsExtSubgroupSizeControlSupported() && selected_subgroup_size != 0 &&
+        IsXclipseSubgroupSizeValidated(device.GetDevicePolicy(), selected_subgroup_size);
     pipeline = device.GetLogical().CreateComputePipeline(VkComputePipelineCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
