@@ -314,6 +314,7 @@ struct Info {
     bool uses_atomic_image_u32{};
     bool uses_shadow_lod{};
     bool uses_rescaling_uniform{};
+    bool uses_xclipse_r32_dref_emulation{};
     bool uses_cbuf_indirect{};
     bool uses_render_area{};
 
