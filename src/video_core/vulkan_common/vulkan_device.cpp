@@ -2148,8 +2148,8 @@ void Device::LogDevicePolicy() const {
                                                       : "conservative-fallback"),
              device_policy.use_xclipse_bptc_gpu_decode
                  ? "validated-enabled"
-                 : (xclipse.bptc_gpu_decode_validated ? "validated-disabled"
-                                                     : "conservative-fallback"),
+                 : (xclipse.bptc_gpu_decode_capable ? "capable-disabled"
+                                                     : "unsupported"),
              device_policy.use_xclipse_subgroup_size_control ? "validated-enabled"
                                                               : "conservative-fallback",
              xclipse.wave32_probe_ns, xclipse.wave64_probe_ns);
