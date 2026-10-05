@@ -354,18 +354,35 @@ std::optional<StagingBufferRef> StagingBufferPool::TryWaitAndReuseBuffer(
         return std::nullopt;
     }
 
-    StagingBuffers& cache_level = GetCache(usage)[Common::Log2Ceil(size)];
-    auto& entries = cache_level.entries;
-    auto candidate = entries.end();
-    for (auto it = entries.begin(); it != entries.end(); ++it) {
-        if (it->deferred) {
-            continue;
+    const u32 requested_log2 = Common::Log2Ceil<u32>(u32(size));
+    StagingBuffer* candidate = nullptr;
+    StagingBuffers* candidate_cache = nullptr;
+    u32 candidate_log2 = 0;
+
+    // Do not restrict pressure reuse to the exact size bucket. A larger idle staging allocation
+    // is already committed memory and can satisfy a smaller request without another allocation.
+    // This is especially important on unified-memory Xclipse, where repeated power-of-two misses
+    // can otherwise grow the active working set faster than the pressure sampler can react.
+    auto& cache = GetCache(usage);
+    for (u32 log2 = requested_log2; log2 < NUM_LEVELS; ++log2) {
+        auto& entries = cache[log2].entries;
+        for (auto& entry : entries) {
+            if (entry.deferred) {
+                continue;
+            }
+            if (!candidate || entry.tick < candidate->tick ||
+                (entry.tick == candidate->tick && log2 < candidate_log2)) {
+                candidate = &entry;
+                candidate_cache = &cache[log2];
+                candidate_log2 = log2;
+            }
         }
-        if (candidate == entries.end() || it->tick < candidate->tick) {
-            candidate = it;
+        if (candidate && candidate_log2 == requested_log2) {
+            break;
         }
     }
-    if (candidate == entries.end()) {
+
+    if (!candidate || !candidate_cache) {
         return std::nullopt;
     }
 
