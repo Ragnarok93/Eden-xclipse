@@ -159,6 +159,11 @@ void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabl
         policy.xclipse.detected && setting_enabled && policy.xclipse.rgtc_gpu_decode_validated;
 }
 
+void UpdateXclipseBptcDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
+    policy.use_xclipse_bptc_gpu_decode =
+        policy.xclipse.detected && setting_enabled && policy.xclipse.bptc_gpu_decode_validated;
+}
+
 void UpdateXclipseSubgroupSizePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
     policy.use_xclipse_subgroup_size_control =
         policy.xclipse.detected && setting_enabled && policy.xclipse.wave32_validated;
@@ -247,8 +252,10 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
+    hash.AddIntegral(xclipse.bptc_gpu_decode_validated);
     hash.AddIntegral(policy.use_xclipse_sync_policy);
     hash.AddIntegral(policy.use_xclipse_bcn_gpu_decode);
+    hash.AddIntegral(policy.use_xclipse_bptc_gpu_decode);
     hash.AddIntegral(policy.use_xclipse_subgroup_size_control);
 
     return hash.Value();
