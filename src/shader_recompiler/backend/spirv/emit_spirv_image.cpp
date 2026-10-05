@@ -331,7 +331,7 @@ bool IsTextureMsaa(EmitContext& ctx, const IR::TextureInstInfo& info) {
     return ctx.textures.at(info.descriptor_index).is_multisample;
 }
 
-bool IsTextureInteger(EmitContext& ctx, const IR::TextureInstInfo& info) {
+bool IsTextureInteger(const EmitContext& ctx, const IR::TextureInstInfo& info) {
     if (info.type == TextureType::Buffer) {
         return false;
     }
