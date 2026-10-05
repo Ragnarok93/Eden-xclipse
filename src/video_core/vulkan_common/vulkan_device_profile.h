@@ -118,6 +118,7 @@ struct XclipseHardwareProfile {
     bool bc7_native{};
 
     bool descriptor_buffer_validated{};
+    bool descriptor_buffer_image_validated{};
     bool sparse_binding_validated{};
     bool synchronization2_validated{};
     bool rgtc_gpu_decode_validated{};
