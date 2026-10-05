@@ -594,6 +594,13 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    if (device_policy.xclipse.detected && !HasBrokenCompute()) {
+        device_policy.xclipse.bptc_gpu_decode_capable =
+            IsFormatSupported(VK_FORMAT_R16G16B16A16_SFLOAT,
+                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal) &&
+            IsFormatSupported(VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+    }
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
     UpdateXclipseBcnDecodePolicy(device_policy,
