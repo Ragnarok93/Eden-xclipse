@@ -54,6 +54,12 @@ public:
 
     void ClearBackingRegion(size_t physical_offset, size_t length, u32 fill_value);
 
+    /**
+     * Reclaims resident file-backed guest memory pages without changing their contents.
+     * Returns true when the platform accepted the reclaim request.
+     */
+    [[nodiscard]] bool TryReclaimBackingPages();
+
     [[nodiscard]] u8* BackingBasePointer() noexcept {
         return backing_base;
     }

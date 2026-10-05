@@ -929,6 +929,19 @@ void RasterizerVulkan::TickFrame() {
                      staging_after.largest_active_upload_bucket_bytes);
         }
     }
+    const bool severe_memory_pressure =
+        pressure_update.sampled &&
+        (pressure_update.pressure == MemoryPressureClass::High ||
+         pressure_update.pressure == MemoryPressureClass::Critical);
+    if (severe_memory_pressure &&
+        (pressure_update.changed ||
+         xclipse_runtime_frame_counter - xclipse_last_host_memory_reclaim_frame >= 300)) {
+        const bool reclaimed = gpu.TrimMemoryForPressure();
+        xclipse_last_host_memory_reclaim_frame = xclipse_runtime_frame_counter;
+        LOG_INFO(Render_Vulkan, "XCLIPSE HOST MEMORY RECLAIM pressure={} success={}",
+                 MemoryPressureClassName(pressure_update.pressure), reclaimed);
+    }
+
     if (pressure_update.sampled && pressure_update.changed) {
         const auto& sample = pressure_update.sample;
         const s32 budget_pct = sample.memory_budget_used_percent

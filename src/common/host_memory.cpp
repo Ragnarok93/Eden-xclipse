@@ -236,6 +236,10 @@ public:
         UNREACHABLE();
     }
 
+    bool TryReclaimBackingPages() {
+        return false;
+    }
+
     const size_t backing_size; ///< Size of the backing memory in bytes
     const size_t virtual_size; ///< Size of the virtual address placeholder in bytes
 
@@ -651,6 +655,26 @@ public:
         virtual_base = nullptr;
     }
 
+    bool TryReclaimBackingPages() {
+#if defined(__linux__) && defined(MADV_PAGEOUT)
+        if (fd >= 0 && backing_base != MAP_FAILED && backing_size != 0) {
+            if (madvise(backing_base, backing_size, MADV_PAGEOUT) == 0) {
+                return true;
+            }
+        }
+#endif
+#if defined(__linux__) && defined(MADV_DONTNEED)
+        if (fd >= 0 && backing_base != MAP_FAILED && backing_size != 0) {
+            if (madvise(backing_base, backing_size, MADV_DONTNEED) == 0) {
+                return true;
+            }
+            LOG_WARNING(HW_Memory,
+                        "Failed to reclaim file-backed guest memory: {}", strerror(errno));
+        }
+#endif
+        return false;
+    }
+
     const size_t backing_size; ///< Size of the backing memory in bytes
     const size_t virtual_size; ///< Size of the virtual address placeholder in bytes
 
@@ -792,6 +816,14 @@ void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission 
 
 void HostMemory::ClearBackingRegion(size_t physical_offset, size_t length, u32 fill_value) {
     std::memset(backing_base + physical_offset, fill_value, length);
+}
+
+bool HostMemory::TryReclaimBackingPages() {
+#if !(defined(__OPENORBIS__) || defined(__managarm__))
+    return impl && impl->TryReclaimBackingPages();
+#else
+    return false;
+#endif
 }
 
 void HostMemory::EnableDirectMappedAddress() {

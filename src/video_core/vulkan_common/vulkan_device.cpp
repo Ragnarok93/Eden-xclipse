@@ -2590,7 +2590,7 @@ void Device::LogDevicePolicy() const {
         budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
         const auto memory = physical.GetMemoryProperties(&budget);
         for (const size_t heap : valid_device_local_heap_memory) {
-            const auto& properties = memory.memoryHeaps[heap];
+            const auto& properties = memory.memoryProperties.memoryHeaps[heap];
             LOG_INFO(Render_Vulkan,
                      "XCLIPSE MEMORY HEAP index={} local={} size_mib={} budget_mib={} usage_mib={}",
                      heap,
