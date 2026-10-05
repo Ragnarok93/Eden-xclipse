@@ -2602,7 +2602,7 @@ void Device::LogDevicePolicy() const {
         LOG_INFO(Render_Vulkan,
                  "XCLIPSE MEMORY ACCOUNTING device_access_mib={} device_local_budget_mib={} "
                  "device_local_usage_mib={}",
-                 device_access_memory,
+                 device_access_memory / (1024ULL * 1024ULL),
                  GetDeviceMemoryBudget() / (1024ULL * 1024ULL),
                  GetDeviceMemoryUsage() / (1024ULL * 1024ULL));
     }
