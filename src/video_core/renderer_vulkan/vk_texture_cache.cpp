@@ -224,8 +224,8 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
 }
 
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
-    if (!device.UseXclipseBcnGpuDecode() || device.HasBrokenCompute() ||
-        !IsPixelFormatBCn(info.format) || MaxwellToVK::IsBcnNative(device, info.format)) {
+    if (device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
+        MaxwellToVK::IsBcnNative(device, info.format)) {
         return false;
     }
 
@@ -234,7 +234,7 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
     case PixelFormat::BC4_SNORM:
     case PixelFormat::BC5_UNORM:
     case PixelFormat::BC5_SNORM:
-        break;
+        return device.UseXclipseBcnGpuDecode();
     case PixelFormat::BC6H_UFLOAT:
     case PixelFormat::BC6H_SFLOAT:
     case PixelFormat::BC7_UNORM:
