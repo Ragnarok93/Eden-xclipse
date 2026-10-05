@@ -162,8 +162,6 @@ public:
             !props.combinedImageSamplerDescriptorSingleArray) {
             return false;
         }
-        // Descriptor-buffer capability validation currently covers a storage-buffer descriptor,
-        // but not the image/sampler combinations used by guest graphics pipelines. Keep the
         if (device->IsXclipse() && !device->UseXclipseDescriptorBuffer()) {
             return false;
         }
