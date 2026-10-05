@@ -421,6 +421,48 @@ Id ImageGatherSubpixelOffset(EmitContext& ctx, const IR::TextureInstInfo& info, 
     }
 }
 
+Id LoadDrefCompareOp(EmitContext& ctx) {
+    const Id pointer_type{ctx.TypePointer(spv::StorageClass::PushConstant, ctx.U32[1])};
+    const Id pointer{ctx.OpAccessChain(pointer_type, ctx.rescaling_push_constants,
+                                       ctx.Const(ctx.rescaling_dref_compare_member_index))};
+    return ctx.OpLoad(ctx.U32[1], pointer);
+}
+
+Id EmitDrefCompare(EmitContext& ctx, Id sampled, Id dref) {
+    const Id compare_op{LoadDrefCompareOp(ctx)};
+    const Id never{ctx.false_value};
+    const Id always{ctx.true_value};
+    const Id less{ctx.OpFOrdLessThan(ctx.U1, dref, sampled)};
+    const Id equal{ctx.OpFOrdEqual(ctx.U1, dref, sampled)};
+    const Id less_equal{ctx.OpFOrdLessThanEqual(ctx.U1, dref, sampled)};
+    const Id greater{ctx.OpFOrdGreaterThan(ctx.U1, dref, sampled)};
+    const Id not_equal{ctx.OpFOrdNotEqual(ctx.U1, dref, sampled)};
+    const Id greater_equal{ctx.OpFOrdGreaterThanEqual(ctx.U1, dref, sampled)};
+
+    Id result{never};
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(7u)), always, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(6u)), greater_equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(5u)), not_equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(4u)), greater, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(3u)), less_equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(2u)), equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(1u)), less, result);
+    return ctx.OpSelect(ctx.F32[1], result, ctx.Const(1.0f), ctx.Const(0.0f));
+}
+
+Id EmitDrefCompareVector(EmitContext& ctx, Id sampled, Id dref) {
+    const Id result0{EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 0u), dref)};
+    const Id result1{EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 1u), dref)};
+    const Id result2{EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 2u), dref)};
+    const Id result3{EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 3u), dref)};
+    return ctx.OpCompositeConstruct(ctx.F32[4], result0, result1, result2, result3);
+}
+
+bool ShouldEmulateR32Dref(const EmitContext& ctx, const IR::TextureInstInfo& info) {
+    return ctx.runtime_info.xclipse_r32_dref_emulation &&
+           ctx.profile.unified_descriptor_binding && info.is_depth == 0;
+}
+
 void AddOffsetToCoordinates(EmitContext& ctx, const IR::TextureInstInfo& info, Id& coords,
                             Id offset) {
     if (!Sirit::ValidId(offset)) {
@@ -601,6 +643,13 @@ Id EmitImageSampleExplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Value&
 Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Value& index,
                                   Id coords, Id dref, Id bias_lc, const IR::Value& offset) {
     const auto info{inst->Flags<IR::TextureInstInfo>()};
+    if (ShouldEmulateR32Dref(ctx, info)) {
+        const ImageOperands operands(ctx, info.has_bias != 0, false, info.has_lod_clamp != 0,
+                                     bias_lc, offset);
+        const Id sampled{ctx.OpImageSampleImplicitLod(
+            ctx.F32[1], Texture(ctx, info, index), coords, operands.MaskOptional(), operands.Span())};
+        return EmitDrefCompare(ctx, sampled, dref);
+    }
     if (ctx.stage == Stage::Fragment) {
         const ImageOperands operands(ctx, info.has_bias != 0, false, info.has_lod_clamp != 0,
                                      bias_lc, offset);
@@ -622,6 +671,12 @@ Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Va
 Id EmitImageSampleDrefExplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Value& index,
                                   Id coords, Id dref, Id lod, const IR::Value& offset) {
     const auto info{inst->Flags<IR::TextureInstInfo>()};
+    if (ShouldEmulateR32Dref(ctx, info)) {
+        const ImageOperands operands(ctx, false, true, false, lod, offset);
+        const Id sampled{ctx.OpImageSampleExplicitLod(
+            ctx.F32[1], Texture(ctx, info, index), coords, operands.Mask(), operands.Span())};
+        return EmitDrefCompare(ctx, sampled, dref);
+    }
     const ImageOperands operands(ctx, false, true, false, lod, offset);
     return Emit(&EmitContext::OpImageSparseSampleDrefExplicitLod,
                 &EmitContext::OpImageSampleDrefExplicitLod, ctx, inst, ctx.F32[1],
@@ -647,6 +702,13 @@ Id EmitImageGather(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id 
 Id EmitImageGatherDref(EmitContext& ctx, IR::Inst* inst, const IR::Value& index, Id coords,
                        const IR::Value& offset, const IR::Value& offset2, Id dref) {
     const auto info{inst->Flags<IR::TextureInstInfo>()};
+    if (ShouldEmulateR32Dref(ctx, info)) {
+        const ImageOperands operands(ctx, offset, offset2);
+        const Id sampled{ctx.OpImageGather(ctx.F32[4], Texture(ctx, info, index), coords,
+                                           ctx.Const(info.gather_component), operands.MaskOptional(),
+                                           operands.Span())};
+        return EmitDrefCompareVector(ctx, sampled, dref);
+    }
     const bool is_integer{IsTextureInteger(ctx, info)};
     const Id result_type{is_integer ? ctx.U32[4] : ctx.F32[4]};
     const ImageOperands operands(ctx, offset, offset2);
