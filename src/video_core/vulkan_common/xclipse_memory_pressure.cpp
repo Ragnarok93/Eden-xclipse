@@ -35,13 +35,13 @@ MemoryPressureClass BudgetPressure(u32 used_percent) noexcept {
 }
 
 MemoryPressureClass RamPressure(u32 available_percent) noexcept {
-    if (available_percent <= 5) {
+    if (available_percent <= 8) {
         return MemoryPressureClass::Critical;
     }
-    if (available_percent <= 10) {
+    if (available_percent <= 12) {
         return MemoryPressureClass::High;
     }
-    if (available_percent <= 18) {
+    if (available_percent <= 20) {
         return MemoryPressureClass::Elevated;
     }
     return MemoryPressureClass::Normal;
@@ -365,7 +365,7 @@ XclipseMemoryPressureSnapshot XclipseMemoryPressureController::Tick(
 
     const auto now = std::chrono::steady_clock::now();
     if (last_poll.time_since_epoch().count() != 0 &&
-        now - last_poll < std::chrono::seconds(1)) {
+        now - last_poll < std::chrono::milliseconds(500)) {
         last_snapshot.sampled = false;
         last_snapshot.changed = false;
         return last_snapshot;
