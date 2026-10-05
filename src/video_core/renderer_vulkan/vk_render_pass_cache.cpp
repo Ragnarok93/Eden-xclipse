@@ -63,9 +63,7 @@ using VideoCore::Surface::SurfaceType;
                 .stencilStoreOp = has_stencil ? store_op : VK_ATTACHMENT_STORE_OP_DONT_CARE,
                 // CLEAR/DONT_CARE do not require preserving the previous contents. Let the
                 // implementation use an undefined initial layout to avoid an unnecessary load.
-                .initialLayout = device.IsXclipse() && load_op != VK_ATTACHMENT_LOAD_OP_LOAD
-                                     ? VK_IMAGE_LAYOUT_UNDEFINED
-                                     : VK_IMAGE_LAYOUT_GENERAL,
+                .initialLayout = VK_IMAGE_LAYOUT_GENERAL,
                 .finalLayout = VK_IMAGE_LAYOUT_GENERAL,
             };
         }
