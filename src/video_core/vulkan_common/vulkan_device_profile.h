@@ -140,7 +140,6 @@ struct XclipseOptimizationProbeResults {
     CapabilityState r32_compare_dref{CapabilityState::Unsupported};
     CapabilityState d32_compare_dref{CapabilityState::Unsupported};
     CapabilityState mutable_r32_d32_view{CapabilityState::Unsupported};
-    CapabilityState r32_to_d32_copy{CapabilityState::Unsupported};
 
     std::uint32_t queue_family_count{};
     std::uint32_t graphics_queue_count{};
