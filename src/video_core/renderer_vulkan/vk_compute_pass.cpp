@@ -731,7 +731,7 @@ void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
     ASSERT(decoder_format.has_value());
 
     device.GetXclipseTelemetry().RecordBptcGpuDecode(
-        kind == Kind::BC7, image.guest_size_bytes);
+        kind == BPTCDecoderPass::Kind::BC7, image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
     const VkPipeline vk_pipeline = *pipeline;
     const VkImageAspectFlags aspect_mask = image.AspectMask();
