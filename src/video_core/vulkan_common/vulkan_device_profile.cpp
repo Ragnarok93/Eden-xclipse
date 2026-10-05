@@ -165,8 +165,11 @@ void UpdateXclipseBptcDecodePolicy(VulkanDevicePolicy& policy, bool setting_enab
 }
 
 void UpdateXclipseSubgroupSizePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
+    const u32 preferred = policy.xclipse.preferred_compute_wave;
     policy.use_xclipse_subgroup_size_control =
-        policy.xclipse.detected && setting_enabled && policy.xclipse.wave32_validated;
+        policy.xclipse.detected && setting_enabled &&
+        (preferred == 32U || preferred == 64U) &&
+        IsXclipseSubgroupSizeValidated(policy, preferred);
 }
 
 bool IsXclipseSubgroupSizeValidated(const VulkanDevicePolicy& policy,
