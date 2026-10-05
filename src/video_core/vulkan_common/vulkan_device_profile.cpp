@@ -200,7 +200,7 @@ bool CanRequireXclipseSubgroupSize(const VulkanDevicePolicy& policy,
 
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
-    hash.Add("eden-xclipse-policy-v4");
+    hash.Add("eden-xclipse-policy-v5");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
@@ -257,6 +257,34 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.descriptor_buffer_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
     hash.AddIntegral(xclipse.bptc_gpu_decode_capable);
+
+    const& probes = policy.optimization_probes;
+    hash.AddIntegral(probes.timestamp_queries);
+    hash.AddIntegral(probes.empty_queue_submit);
+    hash.AddIntegral(probes.buffer_transfer);
+    hash.AddIntegral(probes.image_transfer);
+    hash.AddIntegral(probes.storage_image_create);
+    hash.AddIntegral(probes.queue_family_count);
+    hash.AddIntegral(probes.graphics_queue_count);
+    hash.AddIntegral(probes.dedicated_compute_queue_count);
+    hash.AddIntegral(probes.dedicated_transfer_queue_count);
+    hash.AddIntegral(probes.timestamp_valid_bits);
+    hash.AddIntegral(probes.timestamp_period_ps);
+    hash.AddIntegral(probes.memory_type_count);
+    hash.AddIntegral(probes.device_local_memory_type_count);
+    hash.AddIntegral(probes.host_visible_coherent_memory_type_count);
+    hash.AddIntegral(probes.host_visible_cached_memory_type_count);
+    hash.AddIntegral(probes.device_local_heap_bytes);
+    hash.AddIntegral(probes.host_visible_heap_bytes);
+    hash.AddIntegral(probes.max_memory_allocation_count);
+    hash.AddIntegral(probes.max_compute_workgroup_invocations);
+    hash.AddIntegral(probes.max_image_dimension_2d);
+    hash.AddIntegral(probes.non_coherent_atom_size);
+    hash.AddIntegral(probes.buffer_image_granularity);
+    hash.AddIntegral(probes.optimal_buffer_copy_offset_alignment);
+    hash.AddIntegral(probes.optimal_buffer_copy_row_pitch_alignment);
+    // Timing results are diagnostic only and intentionally excluded from the policy identity.
+
     hash.AddIntegral(policy.use_xclipse_sync_policy);
     hash.AddIntegral(policy.use_xclipse_bcn_gpu_decode);
     hash.AddIntegral(policy.use_xclipse_bptc_gpu_decode);
