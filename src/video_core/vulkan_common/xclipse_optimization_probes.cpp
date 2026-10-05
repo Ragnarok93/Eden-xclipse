@@ -121,7 +121,7 @@ struct FenceResource {
     }
 
     VkMemoryRequirements requirements{};
-    dld.vkGetBufferMemoryRequirements(device, resource.buffer, &requirements);
+    requirements = logical.GetBufferMemoryRequirements(resource.buffer);
     const auto memory_type =
         FindMemoryType(memory_properties, requirements.memoryTypeBits, required, preferred);
     if (!memory_type) {
@@ -184,8 +184,8 @@ struct FenceResource {
     return dld.vkBeginCommandBuffer(command_buffer, &begin_info) == VK_SUCCESS;
 }
 
-[[nodiscard]] bool SubmitAndWait(const vk::DeviceDispatch& dld, VkDevice device, VkQueue queue,
-                                 VkCommandBuffer command_buffer) {
+[[nodiscard]] bool SubmitAndWait(const vk::DeviceDispatch& dld, const vk::Device& logical,
+                                 VkDevice device, vk::Queue queue, VkCommandBuffer command_buffer) {
     const VkFenceCreateInfo fence_ci{
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .pNext = nullptr,
@@ -207,7 +207,7 @@ struct FenceResource {
         .signalSemaphoreCount = 0,
         .pSignalSemaphores = nullptr,
     };
-    const VkResult submit_result = dld.vkQueueSubmit(queue, 1, &submit_info, fence.fence);
+    const VkResult submit_result = queue.Submit(vk::Span{submit_info}, fence.fence);
     if (submit_result != VK_SUCCESS) {
         return false;
     }
@@ -217,7 +217,7 @@ struct FenceResource {
 [[nodiscard]] bool RunEmptySubmitProbe(const Device& device, u64& elapsed_ns) {
     const auto& dld = device.GetDispatchLoader();
     const VkDevice raw_device = *device.GetLogical();
-    const VkQueue queue = device.GetGraphicsQueue();
+    const vk::Queue queue = device.GetGraphicsQueue();
     const VkCommandPoolCreateInfo pool_ci{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr,
@@ -251,7 +251,7 @@ struct FenceResource {
     }
 
     const auto start = Clock::now();
-    const bool valid = SubmitAndWait(dld, raw_device, queue, command_buffer);
+    const bool valid = SubmitAndWait(dld, device.GetLogical(), raw_device, queue, command_buffer);
     elapsed_ns = static_cast<u64>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
     cleanup_pool();
@@ -276,7 +276,7 @@ struct FenceResource {
     BufferResource destination{dld, raw_device};
     BufferResource readback{dld, raw_device};
 
-    if (!CreateBuffer(dld, raw_device, memory_properties, MaxSize,
+    if (!CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, MaxSize,
                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source, true) ||
@@ -354,10 +354,6 @@ struct FenceResource {
             return false;
         }
 
-        if (timestamp_capable) {
-            dld.vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, query_pool, 0);
-        }
-
         const VkMemoryBarrier host_write_barrier{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -374,10 +370,6 @@ struct FenceResource {
             .size = Sizes[index],
         };
         dld.vkCmdCopyBuffer(command_buffer, source.buffer, destination.buffer, 1, &copy_region);
-
-        if (timestamp_capable) {
-            dld.vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 1);
-        }
 
         const VkMemoryBarrier transfer_barrier{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -406,7 +398,8 @@ struct FenceResource {
         }
 
         const auto cpu_start = Clock::now();
-        const bool submitted = SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer);
+        const bool submitted = SubmitAndWait(dld, device.GetLogical(), raw_device,
+                                         device.GetGraphicsQueue(), command_buffer);
         const u64 cpu_elapsed = static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - cpu_start).count());
 
@@ -415,30 +408,11 @@ struct FenceResource {
             return false;
         }
 
-        std::uint64_t* timestamps = nullptr;
-        std::array<u64, 2> timestamp_values{};
-        if (timestamp_capable) {
-            const VkResult query_result =
-                dld.vkGetQueryPoolResults(raw_device, query_pool, 0, 2, sizeof(timestamp_values),
-                                          timestamp_values.data(), sizeof(u64),
-                                          VK_QUERY_RESULT_64_BIT);
-            if (query_result == VK_SUCCESS && timestamp_values[1] >= timestamp_values[0]) {
-                const u64 ticks = timestamp_values[1] - timestamp_values[0];
-                const u64 elapsed = static_cast<u64>(std::llround(
-                    static_cast<long double>(ticks) *
-                    static_cast<long double>(device.GetPhysical().GetProperties().limits.timestampPeriod)));
-                if (index == 0) {
-                    results.copy_64k_ns = elapsed;
-                } else if (index == 1) {
-                    results.copy_1m_ns = elapsed;
-                } else {
-                    results.copy_4m_ns = elapsed;
-                }
-                results.timestamp_timing_validated = true;
-            } else {
-                results.timestamp_queries = CapabilityState::Advertised;
-            }
-        } else if (index == 2) {
+        if (index == 0) {
+            results.copy_64k_ns = cpu_elapsed;
+        } else if (index == 1) {
+            results.copy_1m_ns = cpu_elapsed;
+        } else {
             results.copy_4m_ns = cpu_elapsed;
         }
 
@@ -596,12 +570,13 @@ struct FenceResource {
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &host_write_barrier,
                              0, nullptr, 0, nullptr);
     dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &to_dst,
-                             0, nullptr);
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                             1, &to_dst);
     dld.vkCmdCopyBufferToImage(command_buffer, source.buffer, image.image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
     dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &to_src, 0, nullptr);
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                             1, &to_src);
     dld.vkCmdCopyImageToBuffer(command_buffer, image.image,
                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer,
                                1, &copy_region);
@@ -614,7 +589,8 @@ struct FenceResource {
         return false;
     }
 
-    const bool valid = SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer);
+    const bool valid = SubmitAndWait(dld, device.GetLogical(), raw_device,
+                                     device.GetGraphicsQueue(), command_buffer);
     results.image_transfer = CapabilityState::Advertised;
     if (valid && std::memcmp(source_bytes, readback_bytes, static_cast<std::size_t>(Bytes)) == 0) {
         results.image_transfer = CapabilityState::Validated;
@@ -742,14 +718,18 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
     if (RunBufferTransferProbe(device, results)) {
         results.buffer_transfer = CapabilityState::Validated;
         if (results.timestamp_timing_validated) {
-            results.timestamp_queries = CapabilityState::Validated;
+            // Timestamp support is recorded from queue/limit capability. The current wrapper does not
+        // expose vkCmdWriteTimestamp, so probe timing remains CPU-side until that API is surfaced.
+        results.timestamp_queries = results.timestamp_queries == CapabilityState::Validated
+                                        ? results.timestamp_queries
+                                        : CapabilityState::Advertised;
         }
     } else {
         results.buffer_transfer = CapabilityState::Advertised;
     }
 
     try {
-        RunImageTransferProbe(device, results);
+        (void)RunImageTransferProbe(device, results);
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE image transfer exception: {}", exception.what());
         results.image_transfer = CapabilityState::Advertised;
