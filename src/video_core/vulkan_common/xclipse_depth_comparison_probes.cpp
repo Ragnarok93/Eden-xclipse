@@ -189,10 +189,12 @@ bool ExecuteR32ToD32Copy(const Device& d, CapabilityState& state) {
     x.vkCmdPipelineBarrier(o.command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                            &src_to_transfer);
+    const VkBufferImageCopy buffer_to_image{
+        .imageSubresource = {color_aspect, 0, 0, 1},
+        .imageExtent = {1, 1, 1},
+    };
     x.vkCmdCopyBufferToImage(o.command, src_buffer.buffer, src.image,
-                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                             &(VkBufferImageCopy{.imageSubresource = {color_aspect, 0, 0, 1},
-                                                 .imageExtent = {1, 1, 1}}));
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffer_to_image);
     VkImageMemoryBarrier src_ready = src_to_transfer;
     src_ready.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     src_ready.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
