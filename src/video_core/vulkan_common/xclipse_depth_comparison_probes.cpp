@@ -69,7 +69,14 @@ bool MakeBuffer(const Device& device, VkDeviceSize size, VkBufferUsageFlags usag
     const VkBufferCreateInfo ci{.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=size,.usage=usage,
                                 .sharingMode=VK_SHARING_MODE_EXCLUSIVE};
     if(dld.vkCreateBuffer(dev,&ci,nullptr,&out.handle)!=VK_SUCCESS) return false;
-    VkMemoryRequirements req{}; dld.vkGetBufferMemoryRequirements(dev,out.handle,&req);
+    VkMemoryRequirements req{};
+    const VkBufferMemoryRequirementsInfo2 req_info{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
+        .buffer = out.handle,
+    };
+    VkMemoryRequirements2 req2{.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
+    dld.vkGetBufferMemoryRequirements2(dev, &req_info, &req2);
+    req = req2.memoryRequirements;
     const auto type=FindMemoryType(mem,req.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
