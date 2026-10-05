@@ -73,7 +73,7 @@ void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore)
 }
 
 void Scheduler::WaitWorker() {
-    DispatchWork();
+    DispatchWork(true);
 
     // Ensure the queue is drained.
     {
@@ -85,7 +85,7 @@ void Scheduler::WaitWorker() {
     std::scoped_lock el{execution_mutex};
 }
 
-void Scheduler::DispatchWork() {
+void Scheduler::DispatchWork(bool force) {
     if (!chunk || chunk->Empty()) {
         return;
     }
@@ -94,9 +94,9 @@ void Scheduler::DispatchWork() {
     // recording thread so adjacent work can coalesce into the same worker chunk.
     // Explicit submissions and upload chunks always dispatch immediately.
     constexpr u64 XclipseBatchCommandThreshold = 32;
-    if (device.IsXclipse() && Settings::values.xclipse_submission_batching.GetValue() &&
-        !chunk->HasSubmit() && !chunk->HasUpload() &&
-        chunk->CommandCount() < XclipseBatchCommandThreshold) {
+    if (!force && device.IsXclipse() &&
+        Settings::values.xclipse_submission_batching.GetValue() && !chunk->HasSubmit() &&
+        !chunk->HasUpload() && chunk->CommandCount() < XclipseBatchCommandThreshold) {
         device.GetXclipseTelemetry().RecordDispatchDeferral();
         return;
     }
