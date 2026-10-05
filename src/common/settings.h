@@ -726,7 +726,9 @@ struct Values {
     // Keep experimental queue coalescing opt-in until device-side frame pacing is validated.
     Setting<bool> xclipse_submission_batching{linkage, false, "xclipse_submission_batching",
                                               Category::RendererDebug};
-    Setting<bool> xclipse_subgroup_size_control{linkage, true,
+    // Keep required subgroup-size forcing opt-in; validation of a tiny probe is not enough to
+    // establish correctness for all guest compute shaders.
+    Setting<bool> xclipse_subgroup_size_control{linkage, false,
                                                 "xclipse_subgroup_size_control",
                                                 Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
