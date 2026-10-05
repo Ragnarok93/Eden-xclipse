@@ -21,6 +21,7 @@
 
 #include <fmt/format.h>
 
+#include "common/alignment.h"
 #include "common/assert.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
@@ -1190,19 +1191,22 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
 
     const VkPhysicalDeviceDescriptorBufferPropertiesEXT& props = properties.descriptor_buffer;
     const VkDeviceSize descriptor_size = props.storageBufferDescriptorSize;
-    const VkDeviceSize alignment = std::max<VkDeviceSize>(props.descriptorBufferOffsetAlignment, 1);
-    if (descriptor_size == 0 || alignment == 0) {
-        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE descriptor_buffer failed: invalid descriptor limits");
+    const VkDeviceSize alignment =
+        std::max<VkDeviceSize>(props.descriptorBufferOffsetAlignment, 1);
+    if (descriptor_size == 0) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor_buffer failed: invalid descriptor limits");
         return;
     }
 
     constexpr u32 ProbeInvocations = 64;
     constexpr VkDeviceSize OutputBytes = sizeof(u32) * ProbeInvocations * 2;
-    // Keep the probe buffer comfortably above implementation-specific layout padding.
-    const VkDeviceSize descriptor_capacity = Common::AlignUp(4096, alignment);
+    const VkDeviceSize descriptor_capacity = Common::AlignUp(4096ULL, alignment);
+    const VkDevice raw_device = *logical;
 
     const VkPhysicalDeviceMemoryProperties memory_properties =
         physical.GetMemoryProperties().memoryProperties;
+
     const auto find_host_memory = [&](u32 bits) -> std::optional<u32> {
         for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
             if ((bits & (1U << index)) == 0) {
@@ -1218,51 +1222,77 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         return std::nullopt;
     };
 
+    struct BufferResource {
+        const vk::DeviceDispatch& dld;
+        VkDevice device{};
+        VkBuffer buffer{};
+        VkDeviceMemory memory{};
+        void* mapped{};
+
+        ~BufferResource() {
+            if (mapped && memory) {
+                dld.vkUnmapMemory(device, memory);
+            }
+            if (buffer) {
+                dld.vkDestroyBuffer(device, buffer, nullptr);
+            }
+            if (memory) {
+                dld.vkFreeMemory(device, memory, nullptr);
+            }
+        }
+    };
+
     const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage,
-                                 vk::Buffer& buffer, vk::DeviceMemory& memory,
-                                 void*& mapped) -> bool {
-        buffer = logical.CreateBuffer({
+                                 BufferResource& resource) -> bool {
+        const VkBufferCreateInfo buffer_ci{
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .size = size,
-            .usage = usage,
+            .usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = nullptr,
-        });
-        const auto requirements = logical.GetBufferMemoryRequirements(*buffer);
+        };
+        vk::Check(
+            dld.vkCreateBuffer(raw_device, &buffer_ci, nullptr, &resource.buffer));
+
+        const VkMemoryRequirements requirements =
+            logical.GetBufferMemoryRequirements(resource.buffer);
         const auto memory_type = find_host_memory(requirements.memoryTypeBits);
         if (!memory_type) {
             return false;
         }
-        memory = logical.AllocateMemory({
-            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+
+        const VkMemoryAllocateFlagsInfo allocate_flags{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
             .pNext = nullptr,
+            .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+        };
+        const VkMemoryAllocateInfo allocate_info{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = &allocate_flags,
             .allocationSize = requirements.size,
             .memoryTypeIndex = *memory_type,
-        });
-        logical.BindBufferMemory(*buffer, *memory, 0);
-        mapped = memory.Map(0, size);
-        return mapped != nullptr;
+        };
+        vk::Check(dld.vkAllocateMemory(raw_device, &allocate_info, nullptr, &resource.memory));
+        vk::Check(dld.vkBindBufferMemory(raw_device, resource.buffer, resource.memory, 0));
+        vk::Check(dld.vkMapMemory(raw_device, resource.memory, 0, size, 0, &resource.mapped));
+        return true;
     };
 
     try {
-        vk::Buffer output_buffer;
-        vk::DeviceMemory output_memory;
-        void* output_mapped = nullptr;
-        vk::Buffer descriptor_buffer;
-        vk::DeviceMemory descriptor_memory;
-        void* descriptor_mapped = nullptr;
+        BufferResource output_buffer{dld, raw_device};
+        BufferResource descriptor_buffer{dld, raw_device};
 
-        if (!make_buffer(OutputBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                         output_buffer, output_memory, output_mapped) ||
+        if (!make_buffer(OutputBytes,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         output_buffer) ||
             !make_buffer(descriptor_capacity,
-                         VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT |
-                             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                         descriptor_buffer, descriptor_memory, descriptor_mapped)) {
+                         VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+                         descriptor_buffer)) {
             LOG_WARNING(Render_Vulkan,
                         "XCLIPSE PROBE descriptor_buffer skipped: no usable host-visible memory");
             return;
@@ -1284,8 +1314,8 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         });
         const VkDescriptorSetLayout raw_layout = *descriptor_layout;
         const VkDeviceSize set_size = logical.GetDescriptorSetLayoutSizeEXT(raw_layout);
-        VkDeviceSize binding_offset = 0;
-        logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 0, &binding_offset);
+        const VkDeviceSize binding_offset =
+            logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 0);
         if (set_size == 0 || binding_offset + descriptor_size > descriptor_capacity) {
             LOG_WARNING(Render_Vulkan,
                         "XCLIPSE PROBE descriptor_buffer failed: invalid layout size={} offset={} capacity={}",
@@ -1293,9 +1323,16 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
             return;
         }
 
-        const VkDeviceAddress output_address = logical.GetBufferDeviceAddress(*output_buffer);
+        const VkDeviceAddress output_address =
+            logical.GetBufferDeviceAddress(output_buffer.buffer);
         const VkDeviceAddress descriptor_address =
-            logical.GetBufferDeviceAddress(*descriptor_buffer);
+            logical.GetBufferDeviceAddress(descriptor_buffer.buffer);
+        if (output_address == 0 || descriptor_address == 0) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer failed: zero device address");
+            return;
+        }
+
         const VkDescriptorAddressInfoEXT address_info{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT,
             .pNext = nullptr,
@@ -1310,7 +1347,7 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
             .data{.pStorageBuffer = &address_info},
         };
         logical.GetDescriptorEXT(get_info, descriptor_size,
-                                 static_cast<u8*>(descriptor_mapped) + binding_offset);
+                                 static_cast<u8*>(descriptor_buffer.mapped) + binding_offset);
 
         const auto pipeline_layout = logical.CreatePipelineLayout({
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -1360,7 +1397,7 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
             .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
             .pInheritanceInfo = nullptr,
         });
-        command_buffer.FillBuffer(*output_buffer, 0, OutputBytes, 0);
+        command_buffer.FillBuffer(output_buffer.buffer, 0, OutputBytes, 0);
         const VkMemoryBarrier clear_barrier{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -1370,6 +1407,7 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
                                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
                                        clear_barrier);
+
         const VkDescriptorBufferBindingInfoEXT binding_info{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT,
             .pNext = nullptr,
@@ -1377,13 +1415,14 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
             .usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
         };
         command_buffer.BindDescriptorBuffersEXT(binding_info);
+
         const u32 buffer_index = 0;
-        // The descriptor is written at binding_offset within set 0; the bound set offset is zero.
         const VkDeviceSize set_offset = 0;
         command_buffer.SetDescriptorBufferOffsetsEXT(
             VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0, buffer_index, set_offset);
         command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
         command_buffer.Dispatch(1, 1, 1);
+
         const VkMemoryBarrier host_barrier{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -1403,6 +1442,7 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         const VkSubmitInfo submit_info{
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pNext = nullptr,
+            .flags = 0,
             .waitSemaphoreCount = 0,
             .pWaitSemaphores = nullptr,
             .pWaitDstStageMask = nullptr,
@@ -1422,7 +1462,7 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
             return;
         }
 
-        const auto* output = static_cast<const u32*>(output_mapped);
+        const auto* output = static_cast<const u32*>(output_buffer.mapped);
         bool valid = false;
         for (u32 invocation = 0; invocation < ProbeInvocations; ++invocation) {
             const u32 subgroup_size = output[invocation * 2];
@@ -1434,10 +1474,12 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         }
         xclipse.descriptor_buffer_validated = valid;
         caps.descriptor_buffer = valid ? CapabilityState::Validated : CapabilityState::Advertised;
-        LOG_INFO(Render_Vulkan, "XCLIPSE PROBE descriptor_buffer result={} descriptor_size={} set_size={} binding_offset={}",
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE descriptor_buffer result={} descriptor_size={} set_size={} binding_offset={}",
                  valid ? "validated" : "failed", descriptor_size, set_size, binding_offset);
     } catch (const vk::Exception& exception) {
-        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE descriptor_buffer exception: {}", exception.what());
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor_buffer exception: {}", exception.what());
     }
 }
 
