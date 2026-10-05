@@ -382,8 +382,8 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
         switch (const VkResult result = master_semaphore->SubmitQueue(
                     cmdbuf, upload_cmdbuf, has_upload, signal_semaphore, wait_semaphore, signal_value)) {
         case VK_SUCCESS:
-            device.GetXclipseTelemetry().RecordQueueSubmit(recorded_commands,
-                                                           device.HasSynchronization2());
+            device.GetXclipseTelemetry().RecordQueueSubmit(
+                recorded_commands, device.HasSynchronization2(), has_upload);
             // Log successful queue submission
             if (GPU::Logging::IsActive() &&
                 Settings::values.gpu_log_vulkan_calls.GetValue()) {
