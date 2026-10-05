@@ -717,6 +717,8 @@ struct Values {
                                                   Category::RendererDebug};
     Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
                                          Category::RendererDebug};
+    Setting<bool> xclipse_gpu_bptc_decode{linkage, false, "xclipse_gpu_bptc_decode",
+                                          Category::RendererDebug};
     Setting<bool> xclipse_pipeline_policy{linkage, true, "xclipse_pipeline_policy",
                                            Category::RendererDebug};
     Setting<bool> xclipse_sync_policy{linkage, true, "xclipse_sync_policy",
