@@ -115,6 +115,8 @@ struct RuntimeInfo {
     bool y_negate{};
     /// Use storage buffers instead of global pointers on GLASM
     bool glasm_use_storage_buffers{};
+    /// Emulate R32_FLOAT Dref operations on Xclipse when validated execution probes require it.
+    bool xclipse_r32_dref_emulation{};
 
     /// Transform feedback state for each varying
     std::array<TransformFeedbackVarying, 256> xfb_varyings{};
