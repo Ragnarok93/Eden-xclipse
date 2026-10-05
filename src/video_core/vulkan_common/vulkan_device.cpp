@@ -2495,6 +2495,14 @@ void Device::RunXclipseValidationProbes() {
     }
 
     try {
+        RunXclipseDescriptorBufferImageValidationProbe();
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor buffer image validation exception: {}",
+                    exception.what());
+    }
+
+    try {
         RunXclipseSubgroupValidationProbes();
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE subgroup validation exception: {}",
