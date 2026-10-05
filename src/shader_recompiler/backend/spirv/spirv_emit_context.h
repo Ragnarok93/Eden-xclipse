@@ -302,6 +302,7 @@ public:
     Id rescaling_images_type{};
     u32 rescaling_textures_member_index{};
     u32 rescaling_images_member_index{};
+    u32 rescaling_dref_compare_member_index{};
     u32 rescaling_downfactor_member_index{};
     u32 texture_rescaling_index{};
     u32 image_rescaling_index{};
