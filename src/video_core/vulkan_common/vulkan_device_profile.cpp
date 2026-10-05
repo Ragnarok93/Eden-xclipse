@@ -200,7 +200,7 @@ bool CanRequireXclipseSubgroupSize(const VulkanDevicePolicy& policy,
 
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
-    hash.Add("eden-xclipse-policy-v3");
+    hash.Add("eden-xclipse-policy-v4");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
