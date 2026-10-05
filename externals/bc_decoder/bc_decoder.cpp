@@ -133,7 +133,52 @@ namespace {
 
             for (size_t j = 0; j < BlockHeight && (y + j) < dstH; j++) {
                 for (size_t i = 0; i < BlockWidth && (x + i) < dstW; i++) {
-                    dst[channel + (i * dstBpp) + (j * dstPitch)] = static_cast<uint8_t>(c[getIdx((j * BlockHeight) + i)]);
+                    dst[channel + (i * dstBpp) + (j * dstPitch)] =
+                        static_cast<uint8_t>(c[getIdx((j * BlockHeight) + i)]);
+                }
+            }
+        }
+
+        void decode_pair(uint8_t *dst, size_t x, size_t y, size_t dstW, size_t dstH,
+                         size_t dstPitch, bool isSigned, const BC_channel &green) const {
+            int red_palette[8] = {0};
+            int green_palette[8] = {0};
+
+            if (isSigned) {
+                red_palette[0] = static_cast<signed char>(data & 0xFF);
+                red_palette[1] = static_cast<signed char>((data & 0xFF00) >> 8);
+                green_palette[0] = static_cast<signed char>(green.data & 0xFF);
+                green_palette[1] = static_cast<signed char>((green.data & 0xFF00) >> 8);
+            } else {
+                red_palette[0] = static_cast<uint8_t>(data & 0xFF);
+                red_palette[1] = static_cast<uint8_t>((data & 0xFF00) >> 8);
+                green_palette[0] = static_cast<uint8_t>(green.data & 0xFF);
+                green_palette[1] = static_cast<uint8_t>((green.data & 0xFF00) >> 8);
+            }
+
+            const auto build_palette = [isSigned](int palette[8]) {
+                if (palette[0] > palette[1]) {
+                    for (int i = 2; i < 8; ++i) {
+                        palette[i] = ((8 - i) * palette[0] + (i - 1) * palette[1]) / 7;
+                    }
+                } else {
+                    for (int i = 2; i < 6; ++i) {
+                        palette[i] = ((6 - i) * palette[0] + (i - 1) * palette[1]) / 5;
+                    }
+                    palette[6] = isSigned ? -128 : 0;
+                    palette[7] = isSigned ? 127 : 255;
+                }
+            };
+
+            build_palette(red_palette);
+            build_palette(green_palette);
+
+            for (size_t j = 0; j < BlockHeight && (y + j) < dstH; ++j) {
+                for (size_t i = 0; i < BlockWidth && (x + i) < dstW; ++i) {
+                    const size_t index = (j * BlockHeight) + i;
+                    const size_t offset = (i * 2) + (j * dstPitch);
+                    dst[offset] = static_cast<uint8_t>(red_palette[getIdx(index)]);
+                    dst[offset + 1] = static_cast<uint8_t>(green_palette[green.getIdx(index)]);
                 }
             }
         }
@@ -1503,9 +1548,8 @@ namespace bcn {
     void DecodeBc5(const uint8_t *src, uint8_t *dst, size_t x, size_t y, size_t width, size_t height, bool isSigned) {
         const auto *red{reinterpret_cast<const BC_channel *>(src)};
         const auto *green{reinterpret_cast<const BC_channel *>(src + 8)};
-        size_t pitch{R8g8Bpp * width};
-        red->decode(dst, x, y, width, height, pitch, R8g8Bpp, 0, isSigned);
-        green->decode(dst, x, y, width, height, pitch, R8g8Bpp, 1, isSigned);
+        const size_t pitch{R8g8Bpp * width};
+        red->decode_pair(dst, x, y, width, height, pitch, isSigned, *green);
     }
 
     void DecodeBc6(const uint8_t *src, uint8_t *dst, size_t x, size_t y, size_t width, size_t height, bool isSigned) {
