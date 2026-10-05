@@ -2209,10 +2209,12 @@ void Device::LogXclipseTelemetry() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE RENDER color_shader_blits={} depth_native_blits={} "
              "depth_shader_blits={} native_resolves={} native_image_copies={} "
-             "reinterpret_copies={}",
+             "reinterpret_copies={} renderpass_undefined_initial_layouts={} "
+             "renderpass_dontcare_stores={}",
              t.color_shader_blits, t.depth_stencil_native_blits,
              t.depth_stencil_shader_blits, t.native_resolves, t.native_image_copies,
-             t.reinterpret_copies);
+             t.reinterpret_copies, t.renderpass_undefined_initial_layouts,
+             t.renderpass_dontcare_stores);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
