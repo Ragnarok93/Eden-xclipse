@@ -3376,11 +3376,7 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
 // Some extensions are mandatory. Check those.
 #define CHECK_EXTENSION(extension_name)                                                            \
-    if (!loaded_extensions.contains(extension_name)) {                                             \
-            LOG_ERROR(Render_Vulkan, "Missing required extension {}", extension_name);                 \
-            suitable = false;                                                                          \
-    }
-
+    if (!loaded_extensions.contains(extension_name) &&\n        !(instance_version >= VK_API_VERSION_1_2 &&\n          (std::strcmp(extension_name, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) == 0 ||\n           std::strcmp(extension_name, VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) == 0 ||\n           std::strcmp(extension_name, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME) == 0))) {\n            LOG_ERROR(Render_Vulkan, "Missing required extension {}", extension_name);\n            suitable = false;\n    }
 #define LOG_EXTENSION(extension_name)                                                              \
     if (!loaded_extensions.contains(extension_name)) {                                             \
             LOG_INFO(Render_Vulkan, "Device doesn't support extension {}", extension_name);            \
@@ -3450,7 +3446,7 @@ bool Device::GetSuitability(bool requires_swapchain) {
     physical.GetFeatures2(features2);
 
     // Base Vulkan 1.0 features are always valid regardless of instance version.
-    features.features = features2.features;
+    // Vulkan 1.2 core can replace several extension names in device enumeration.\n    if (instance_version >= VK_API_VERSION_1_2) {\n        extensions.driver_properties = true;\n        extensions.shader_float_controls = true;\n        extensions.sampler_mirror_clamp_to_edge = features_1_2.samplerMirrorClampToEdge;\n        extensions.sampler_filter_minmax = features_1_2.samplerFilterMinmax;\n        extensions.shader_viewport_index_layer =\n            features_1_2.shaderOutputViewportIndex && features_1_2.shaderOutputLayer;\n    }\n\n    features.features = features2.features;
 
 // Some features are mandatory. Check those.
 #define CHECK_FEATURE(feature, name)                                                               \
