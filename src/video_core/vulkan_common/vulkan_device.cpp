@@ -1321,7 +1321,8 @@ void Device::RunXclipseSubgroupValidationProbes() {
 
     const auto run_probe =
         [&](const u32* code, std::size_t code_size, u32 wave_size,
-            auto&& validate_output) -> bool {
+            auto&& validate_output, u64* elapsed_ns = nullptr) -> bool {
+        const auto probe_start = std::chrono::steady_clock::now();
         const auto shader = logical.CreateShaderModule({
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .pNext = nullptr,
@@ -1421,6 +1422,12 @@ void Device::RunXclipseSubgroupValidationProbes() {
                         submit_result, wait_result);
             return false;
         }
+        if (elapsed_ns != nullptr) {
+            *elapsed_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - probe_start)
+                    .count());
+        }
         return validate_output(output);
     };
 
@@ -1444,29 +1451,40 @@ void Device::RunXclipseSubgroupValidationProbes() {
         return valid;
     };
 
-    const auto run_wave = [&](u32 wave_size) {
+    const auto run_wave = [&](u32 wave_size, u64& elapsed_ns) {
+        elapsed_ns = 0;
         if (wave_size < caps.min_subgroup_size || wave_size > caps.max_subgroup_size ||
             (ProbeInvocations % wave_size) != 0) {
             return false;
         }
         const bool valid = run_probe(XCLIPSE_SUBGROUP_PROBE_COMP_SPV,
                                      sizeof(XCLIPSE_SUBGROUP_PROBE_COMP_SPV), wave_size,
-                                     [&](const u32*) { return validate_wave(wave_size); });
-        LOG_INFO(Render_Vulkan, "XCLIPSE PROBE Wave{} result={}", wave_size,
-                 valid ? "validated" : "failed");
+                                     [&](const u32*) { return validate_wave(wave_size); },
+                                     &elapsed_ns);
+        LOG_INFO(Render_Vulkan, "XCLIPSE PROBE Wave{} result={} elapsed_ns={}", wave_size,
+                 valid ? "validated" : "failed", elapsed_ns);
         return valid;
     };
 
-    xclipse.wave32_validated = run_wave(32);
-    xclipse.wave64_validated = run_wave(64);
+    xclipse.wave32_validated = run_wave(32, xclipse.wave32_probe_ns);
+    xclipse.wave64_validated = run_wave(64, xclipse.wave64_probe_ns);
     xclipse.allowed_wave_mask = (xclipse.wave32_validated ? 0x1U : 0U) |
                                 (xclipse.wave64_validated ? 0x2U : 0U);
 
-    if (xclipse.wave32_validated != xclipse.wave64_validated) {
-        xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
+    if (xclipse.wave32_validated && xclipse.wave64_validated) {
+        // The probe is intentionally small, so use a conservative 5% winner threshold.
+        // A near-tie leaves the driver's advertised subgroup size as the neutral choice.
+        const u64 wave32 = xclipse.wave32_probe_ns;
+        const u64 wave64 = xclipse.wave64_probe_ns;
+        if (wave32 * 100ULL < wave64 * 95ULL) {
+            xclipse.preferred_compute_wave = 32U;
+        } else if (wave64 * 100ULL < wave32 * 95ULL) {
+            xclipse.preferred_compute_wave = 64U;
+        } else {
+            xclipse.preferred_compute_wave = 0;
+        }
     } else {
-        // Both valid still requires benchmark evidence before preferring one.
-        xclipse.preferred_compute_wave = 0;
+        xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
     }
     if (xclipse.allowed_wave_mask != 0) {
         caps.required_subgroup_size = CapabilityState::Validated;
