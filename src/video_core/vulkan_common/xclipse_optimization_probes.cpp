@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "video_core/vulkan_common/xclipse_optimization_probes.h"
+#include "video_core/vulkan_common/xclipse_depth_comparison_probes.h"
 
 #include <algorithm>
 #include <array>
@@ -727,6 +728,8 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
         results.buffer_transfer = CapabilityState::Advertised;
     }
 
+    RunXclipseDepthComparisonProbes(device, results);
+
     try {
         (void)RunImageTransferProbe(device, results);
     } catch (const vk::Exception& exception) {
@@ -739,7 +742,7 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
              "memory_types={} device_local_types={} host_coherent_types={} host_cached_types={} "
              "device_local_heap={} host_visible_heap={} timestamps={} valid_bits={} period_ps={} "
              "empty_submit_ns={} copy64k_ns={} copy1m_ns={} copy4m_ns={} image_transfer={} "
-             "storage_image_create={}",
+             "storage_image_create={} r32_sample={} r32_compare={} r32_dref={} d32_dref={} mutable_r32_d32={}",
              results.queue_family_count, results.graphics_queue_count,
              results.dedicated_compute_queue_count, results.dedicated_transfer_queue_count,
              results.memory_type_count, results.device_local_memory_type_count,
@@ -749,7 +752,12 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
              results.timestamp_valid_bits, results.timestamp_period_ps, results.empty_submit_ns,
              results.copy_64k_ns, results.copy_1m_ns, results.copy_4m_ns,
              CapabilityStateName(results.image_transfer),
-             CapabilityStateName(results.storage_image_create));
+             CapabilityStateName(results.storage_image_create),
+             CapabilityStateName(results.r32_sampled_image),
+             CapabilityStateName(results.r32_compare_non_dref),
+             CapabilityStateName(results.r32_dref_sample),
+             CapabilityStateName(results.d32_compare_dref),
+             CapabilityStateName(results.mutable_r32_d32_view));
 }
 
 } // namespace Vulkan
