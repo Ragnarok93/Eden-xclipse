@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstddef>
 #include <algorithm>
 #include <chrono>
 #include <vector>
@@ -309,7 +310,7 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     const bool is_rescaling = !info.texture_descriptors.empty() || !info.image_descriptors.empty();
     scheduler.Record([this, descriptor_data, is_rescaling, descriptor_buffer_offset,
                       descriptor_buffer_chunk, bind_descriptor_buffer,
-                      rescaling_data = rescaling.Data()](vk::CommandBuffer cmdbuf) {
+                      rescaling_data = rescaling.Data(), dref_compare_op = rescaling.DrefCompareOp()](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
                 descriptor_buffer_ring.BindingInfo(descriptor_buffer_chunk)};
@@ -327,6 +328,9 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                  RESCALING_LAYOUT_WORDS_OFFSET, sizeof(rescaling_data),
                                  rescaling_data.data());
         }
+        cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                             offsetof(Shader::Backend::SPIRV::RescalingLayout, dref_compare_op),
+                             sizeof(dref_compare_op), &dref_compare_op);
         if (uses_descriptor_buffer) {
             const u32 buffer_index{};
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,
