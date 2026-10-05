@@ -284,7 +284,7 @@ struct FenceResource {
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                       destination, false) ||
-        !CreateBuffer(dld, raw_device, memory_properties, MaxSize,
+        !CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, MaxSize,
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback, true)) {
@@ -442,11 +442,11 @@ struct FenceResource {
 
     BufferResource source{dld, raw_device};
     BufferResource readback{dld, raw_device};
-    if (!CreateBuffer(dld, raw_device, memory_properties, Bytes,
+    if (!CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, Bytes,
                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source, true) ||
-        !CreateBuffer(dld, raw_device, memory_properties, Bytes,
+        !CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, Bytes,
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback, true)) {
