@@ -64,6 +64,9 @@ struct XclipseTelemetrySnapshot {
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
     u64 bcn_gpu_decode_fallbacks{};
+    u64 bptc_bc6_dispatches{};
+    u64 bptc_bc7_dispatches{};
+    u64 bptc_gpu_decode_bytes{};
 
     u64 color_shader_blits{};
     u64 depth_stencil_native_blits{};
@@ -105,6 +108,7 @@ public:
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordDescriptorFrameWaitRequest() noexcept;
     void RecordBcnGpuDecode(u64 bytes) noexcept;
+    void RecordBptcGpuDecode(bool bc7, u64 bytes) noexcept;
     void RecordBcnGpuDecodeFallback() noexcept;
     void RecordColorShaderBlit() noexcept;
     void RecordDepthStencilBlit(bool native) noexcept;
