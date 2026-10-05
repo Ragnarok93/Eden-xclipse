@@ -1152,6 +1152,7 @@ private:
 
     /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
     void RunXclipseSubgroupValidationProbes();
+    void RunXclipseDescriptorBufferValidationProbe();
 
     /// Recomputes family-level BCn native readiness from exact per-format state.
     void UpdateXclipseBcnProfile();
