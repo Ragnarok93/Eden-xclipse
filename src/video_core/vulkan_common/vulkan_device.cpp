@@ -3376,7 +3376,14 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
 // Some extensions are mandatory. Check those.
 #define CHECK_EXTENSION(extension_name)                                                            \
-    if (!loaded_extensions.contains(extension_name) &&\n        !(instance_version >= VK_API_VERSION_1_2 &&\n          (std::strcmp(extension_name, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) == 0 ||\n           std::strcmp(extension_name, VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) == 0 ||\n           std::strcmp(extension_name, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME) == 0))) {\n            LOG_ERROR(Render_Vulkan, "Missing required extension {}", extension_name);\n            suitable = false;\n    }
+    if (!loaded_extensions.contains(extension_name) &&                                               \
+        !(instance_version >= VK_API_VERSION_1_2 &&                                                  \
+          (std::strcmp(extension_name, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) == 0 ||              \
+           std::strcmp(extension_name, VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) == 0 || \
+           std::strcmp(extension_name, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME) == 0))) {       \
+        LOG_ERROR(Render_Vulkan, "Missing required extension {}", extension_name);                  \
+        suitable = false;                                                                           \
+    }
 #define LOG_EXTENSION(extension_name)                                                              \
     if (!loaded_extensions.contains(extension_name)) {                                             \
             LOG_INFO(Render_Vulkan, "Device doesn't support extension {}", extension_name);            \
