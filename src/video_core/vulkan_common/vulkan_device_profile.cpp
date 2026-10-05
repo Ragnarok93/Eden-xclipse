@@ -258,7 +258,7 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
     hash.AddIntegral(xclipse.bptc_gpu_decode_capable);
 
-    const& probes = policy.optimization_probes;
+    const auto& probes = policy.optimization_probes;
     hash.AddIntegral(probes.timestamp_queries);
     hash.AddIntegral(probes.empty_queue_submit);
     hash.AddIntegral(probes.buffer_transfer);
