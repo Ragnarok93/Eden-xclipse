@@ -1974,6 +1974,13 @@ void Device::RunXclipseValidationProbes() {
                     exception.what());
     }
 
+    try {
+        RunXclipseDepthComparisonProbes(*this, device_policy.optimization_probes);
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE depth comparison exception: {}",
+                    exception.what());
+    }
+
     // Exercise a real queue submission before pipeline caches are loaded. This validates the
     // selected synchronization API without using queue-idle or persistent resources.
     const bool probe_sync2 = caps.synchronization2 == CapabilityState::Advertised;
