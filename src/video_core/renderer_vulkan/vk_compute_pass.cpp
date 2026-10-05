@@ -730,8 +730,6 @@ void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
     const auto decoder_format = BcnDecoderFormat(format);
     ASSERT(decoder_format.has_value());
 
-    device.GetXclipseTelemetry().RecordBptcGpuDecode(
-        kind == BPTCDecoderPass::Kind::BC7, image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
     const VkPipeline vk_pipeline = *pipeline;
     const VkImageAspectFlags aspect_mask = image.AspectMask();
@@ -857,7 +855,8 @@ void BPTCDecoderPass::Assemble(
     using namespace VideoCommon::Accelerated;
     ASSERT(Supports(image.info.format));
 
-    device.GetXclipseTelemetry().RecordBcnGpuDecode(image.guest_size_bytes);
+    device.GetXclipseTelemetry().RecordBptcGpuDecode(
+        kind == BPTCDecoderPass::Kind::BC7, image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
 
     const VkPipeline vk_pipeline = *pipeline;
