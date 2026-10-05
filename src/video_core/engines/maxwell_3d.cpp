@@ -299,9 +299,16 @@ void Maxwell3D::ConsumeSinkImpl(Core::System& system) {
 }
 
 void Maxwell3D::ProcessDirtyRegisters(u32 method, u32 argument) {
+    // Ordinary state-register writes that do not change the value cannot invalidate any host
+    // state. Keep executable methods on the old path because repeated writes to those methods
+    // can carry an intentional side effect (draws, barriers, semaphore operations, etc.).
+    if (!IsMethodExecutable(method) && regs.reg_array[method] == argument) {
+        return;
+    }
     regs.reg_array[method] = argument;
-    for (auto const& table : dirty.tables)
+    for (auto const& table : dirty.tables) {
         dirty.flags[table[method]] = true;
+    }
 }
 
 void Maxwell3D::ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argument, bool is_last_call) {
