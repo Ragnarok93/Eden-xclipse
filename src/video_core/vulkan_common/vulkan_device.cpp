@@ -3916,7 +3916,10 @@ u64 Device::GetDeviceMemoryUsage() const {
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
     physical.GetMemoryProperties(&budget);
     u64 result{};
-    for (const size_t heap : valid_heap_memory) {
+    const auto& heaps = device_policy.xclipse.detected && !valid_device_local_heap_memory.empty()
+                            ? valid_device_local_heap_memory
+                            : valid_heap_memory;
+    for (const size_t heap : heaps) {
         result += budget.heapUsage[heap];
     }
     return result;
@@ -3930,7 +3933,10 @@ u64 Device::GetDeviceMemoryBudget() const {
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
     physical.GetMemoryProperties(&budget);
     u64 result{};
-    for (const size_t heap : valid_heap_memory) {
+    const auto& heaps = device_policy.xclipse.detected && !valid_device_local_heap_memory.empty()
+                            ? valid_device_local_heap_memory
+                            : valid_heap_memory;
+    for (const size_t heap : heaps) {
         result += budget.heapBudget[heap];
     }
     return result;
@@ -3955,6 +3961,7 @@ void Device::CollectPhysicalMemoryInfo() {
         }
         valid_heap_memory.push_back(element);
         if (is_heap_local) {
+            valid_device_local_heap_memory.push_back(element);
             local_memory += mem_properties.memoryHeaps[element].size;
         }
         if (extensions.memory_budget) {
@@ -3965,9 +3972,35 @@ void Device::CollectPhysicalMemoryInfo() {
         device_access_memory += mem_properties.memoryHeaps[element].size;
     }
     if (is_integrated) {
-        const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
-        const u64 memory_size = Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive ? 6_GiB : 4_GiB;
-        device_access_memory = static_cast<u64>(std::max<s64>(std::min<s64>(available_memory - 8_GiB, memory_size), std::min<s64>(local_memory, memory_size)));
+        const u64 memory_size =
+            Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive
+                ? 6_GiB
+                : 4_GiB;
+        if (device_policy.xclipse.detected && extensions.memory_budget &&
+            !valid_device_local_heap_memory.empty()) {
+            // Samsung's Xclipse Android driver exposes a much smaller Vulkan device-local
+            // budget than the physical unified-memory heap. Never replace that advertised
+            // budget with the physical heap size; the former is the actual GPU allocation
+            // ceiling VMA can safely enforce.
+            u64 xclipse_budget = 0;
+            for (const size_t heap : valid_device_local_heap_memory) {
+                xclipse_budget += budget.heapBudget[heap];
+            }
+            device_access_memory = (std::min)(xclipse_budget, memory_size);
+        } else {
+            const s64 available_memory =
+                static_cast<s64>(device_access_memory - device_initial_usage);
+            device_access_memory = static_cast<u64>(
+                (std::max)(static_cast<s64>(0),
+                           (std::min)(available_memory - static_cast<s64>(8_GiB),
+                                      static_cast<s64>(memory_size))));
+            if (device_access_memory == 0) {
+                // Preserve a useful local-memory fallback for drivers without a meaningful
+                // integrated memory budget.
+                device_access_memory =
+                    (std::min)(local_memory, memory_size);
+            }
+        }
     } else {
         const u64 reserve_memory = std::min<u64>(device_access_memory / 8, 1_GiB);
         device_access_memory -= reserve_memory;
