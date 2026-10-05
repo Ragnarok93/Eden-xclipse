@@ -167,6 +167,9 @@ private:
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
     std::atomic<u64> bcn_gpu_decode_fallbacks{};
+    std::atomic<u64> bptc_bc6_dispatches{};
+    std::atomic<u64> bptc_bc7_dispatches{};
+    std::atomic<u64> bptc_gpu_decode_bytes{};
 
     std::atomic<u64> color_shader_blits{};
     std::atomic<u64> depth_stencil_native_blits{};
