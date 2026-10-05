@@ -2109,12 +2109,7 @@ void Device::RunXclipseValidationProbes() {
                     exception.what());
     }
 
-    // Xclipse execution probes are diagnostic-only and must never run as part of
-    // normal device initialization. Some Android/Xclipse drivers are unstable when presented
-    // with synthetic transfer/queue workloads before the guest renderer is initialized.
-    // Keep the probe suite available for an explicit diagnostic invocation instead of making
-    // startup correctness depend on it.
-    if (false && Settings::values.xclipse_validation_probes.GetValue()) {
+    if (Settings::values.xclipse_validation_probes.GetValue()) {
         try {
             RunXclipseOptimizationProbeSuite(*this, device_policy.optimization_probes);
         } catch (const vk::Exception& exception) {
