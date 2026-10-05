@@ -164,8 +164,6 @@ public:
         }
         // Descriptor-buffer capability validation currently covers a storage-buffer descriptor,
         // but not the image/sampler combinations used by guest graphics pipelines. Keep the
-        // Xclipse production path on the known descriptor-set implementation until those
-        // descriptor classes receive independent execution probes.
         if (device->IsXclipse() && !device->UseXclipseDescriptorBuffer()) {
             return false;
         }
