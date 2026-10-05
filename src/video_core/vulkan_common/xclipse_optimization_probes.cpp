@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "video_core/vulkan_common/xclipse_optimization_probes.h"
-#include "video_core/vulkan_common/xclipse_depth_comparison_probes.h"
 
 #include <algorithm>
 #include <array>
@@ -727,8 +726,6 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
     } else {
         results.buffer_transfer = CapabilityState::Advertised;
     }
-
-    RunXclipseDepthComparisonProbes(device, results);
 
     try {
         (void)RunImageTransferProbe(device, results);
