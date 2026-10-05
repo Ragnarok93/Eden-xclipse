@@ -193,7 +193,7 @@ private:
     public:
         virtual ~Command() = default;
 
-        virtual void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) const = 0;
+        virtual void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) = 0;
 
         Command* GetNext() const {
             return next;
@@ -216,8 +216,7 @@ private:
         TypedCommand(TypedCommand&&) = delete;
         TypedCommand& operator=(TypedCommand&&) = delete;
 
-        void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) const override {
-
+        void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) override {
             command(cmdbuf, upload_cmdbuf);
         }
 
