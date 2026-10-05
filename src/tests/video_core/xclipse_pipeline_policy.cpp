@@ -179,4 +179,8 @@ TEST_CASE("Xclipse policy hash is stable across diagnostic timing changes", "[vi
     auto policy_changed = baseline;
     policy_changed.use_xclipse_sync_policy = true;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy_changed) != baseline_hash);
+
+    auto descriptor_image_changed = baseline;
+    descriptor_image_changed.xclipse.descriptor_buffer_image_validated = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(descriptor_image_changed) != baseline_hash);
 }
