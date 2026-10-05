@@ -40,6 +40,7 @@
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_quad_comp_spv.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/xclipse_optimization_probes.h"
+#include "video_core/vulkan_common/xclipse_depth_comparison_probes.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
@@ -1578,8 +1579,18 @@ void Device::RunXclipseDescriptorBufferImageValidationProbe() {
         if (dld.vkCreateBuffer(raw_device, &ci, nullptr, &resource.buffer) != VK_SUCCESS) {
             return false;
         }
-        VkMemoryRequirements req{};
-        dld.vkGetBufferMemoryRequirements(raw_device, resource.buffer, &req);
+        const VkBufferMemoryRequirementsInfo2 req_info{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
+            .pNext = nullptr,
+            .buffer = resource.buffer,
+        };
+        VkMemoryRequirements2 req2{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+            .pNext = nullptr,
+            .memoryRequirements = {},
+        };
+        dld.vkGetBufferMemoryRequirements2(raw_device, &req_info, &req2);
+        const VkMemoryRequirements req = req2.memoryRequirements;
         const auto type = find_host_memory(req.memoryTypeBits);
         if (!type) {
             return false;
