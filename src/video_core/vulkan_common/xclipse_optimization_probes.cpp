@@ -358,6 +358,16 @@ struct FenceResource {
             dld.vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, query_pool, 0);
         }
 
+        const VkMemoryBarrier host_write_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        };
+        dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_HOST_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &host_write_barrier,
+                                 0, nullptr, 0, nullptr);
+
         const VkBufferCopy copy_region{
             .srcOffset = 0,
             .dstOffset = 0,
@@ -531,6 +541,12 @@ struct FenceResource {
         .image = image.image,
         .subresourceRange = range,
     };
+    const VkMemoryBarrier host_write_barrier{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+    };
     const VkMemoryBarrier host_barrier{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,
@@ -576,6 +592,9 @@ struct FenceResource {
         return false;
     }
 
+    dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_HOST_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &host_write_barrier,
+                             0, nullptr, 0, nullptr);
     dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &to_dst,
                              0, nullptr);
