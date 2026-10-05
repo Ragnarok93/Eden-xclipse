@@ -54,7 +54,7 @@ public:
     void WaitWorker();
 
     /// Sends currently recorded work to the worker thread.
-    void DispatchWork(bool force = false);
+    void DispatchWork();
 
     /// Requests to begin a renderpass.
     void RequestRenderpass(const Framebuffer* framebuffer);
@@ -108,21 +108,6 @@ public:
         }
         DispatchWork();
         (void)chunk->Record(command);
-    }
-
-    template <typename T>
-        requires std::is_invocable_v<T, vk::CommandBuffer>
-    void RecordUpload(T&& c) {
-        auto upload_command = [command = std::move(c)](vk::CommandBuffer, vk::CommandBuffer upload_cmdbuf) mutable {
-            command(upload_cmdbuf);
-        };
-        if (chunk->Record(upload_command)) {
-            chunk->MarkUpload();
-            return;
-        }
-        DispatchWork();
-        (void)chunk->Record(upload_command);
-        chunk->MarkUpload();
     }
 
     template <typename T>
@@ -193,7 +178,7 @@ private:
     public:
         virtual ~Command() = default;
 
-        virtual void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) = 0;
+        virtual void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) const = 0;
 
         Command* GetNext() const {
             return next;
@@ -216,7 +201,8 @@ private:
         TypedCommand(TypedCommand&&) = delete;
         TypedCommand& operator=(TypedCommand&&) = delete;
 
-        void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) override {
+        void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) const override {
+
             command(cmdbuf, upload_cmdbuf);
         }
 
@@ -254,14 +240,6 @@ private:
             submit = true;
         }
 
-        void MarkUpload() {
-            has_upload = true;
-        }
-
-        bool HasUpload() const {
-            return has_upload;
-        }
-
         bool Empty() const {
             return command_offset == 0;
         }
@@ -281,7 +259,6 @@ private:
         size_t command_offset = 0;
         u64 command_count = 0;
         bool submit = false;
-        bool has_upload = false;
         alignas(std::max_align_t) std::array<u8, 0x8000> data{};
     };
 
