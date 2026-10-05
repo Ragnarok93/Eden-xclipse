@@ -180,3 +180,16 @@ TEST_CASE("Xclipse policy hash is stable across diagnostic timing changes", "[vi
     policy_changed.use_xclipse_sync_policy = true;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy_changed) != baseline_hash);
 }
+
+TEST_CASE("Xclipse policy hash changes for validated depth shadow copy capability", "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy baseline{};
+    baseline.identity.device_name = "Xclipse 940";
+    baseline.identity.driver_name = "Samsung";
+    baseline.identity.soc_model = "Exynos 2400";
+    baseline.xclipse.detected = true;
+    const auto baseline_hash = Vulkan::ComputeVulkanPolicyHash(baseline);
+
+    auto changed = baseline;
+    changed.optimization_probes.r32_to_d32_copy = Vulkan::CapabilityState::Validated;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(changed) != baseline_hash);
+}
