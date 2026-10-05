@@ -38,6 +38,7 @@
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_arithmetic_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_quad_comp_spv.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/xclipse_optimization_probes.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
@@ -2108,6 +2109,15 @@ void Device::RunXclipseValidationProbes() {
                     exception.what());
     }
 
+    if (Settings::values.xclipse_validation_probes.GetValue()) {
+        try {
+            RunXclipseOptimizationProbeSuite(*this, device_policy.optimization_probes);
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE optimization probe suite exception: {}",
+                        exception.what());
+        }
+    }
+
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
     UpdateXclipseBcnDecodePolicy(device_policy,
@@ -2133,6 +2143,7 @@ void Device::LogDevicePolicy() const {
     const auto& identity = device_policy.identity;
     const auto& caps = device_policy.capabilities;
     const auto& xclipse = device_policy.xclipse;
+    const auto& probes = device_policy.optimization_probes;
     const auto bcn_state = [&caps](std::initializer_list<BcnFormat> formats) -> std::string_view {
         const bool runtime_native =
             std::ranges::all_of(formats, [&caps](BcnFormat format) {
@@ -2203,6 +2214,25 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(caps.subgroup_shuffle),
              CapabilityStateName(caps.subgroup_arithmetic),
              CapabilityStateName(caps.subgroup_quad));
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE OPT queues={} gfx_queues={} dedicated_compute={} dedicated_transfer={} "
+             "memory_types={} device_local_types={} host_coherent_types={} host_cached_types={} "
+             "device_local_heap={} host_visible_heap={} timestamp={} valid_bits={} period_ps={} "
+             "empty_submit_ns={} copy64k_ns={} copy1m_ns={} copy4m_ns={} image_transfer={} "
+             "storage_image_create={} noncoherent_atom={} buffer_image_granularity={} "
+             "copy_offset_alignment={} copy_row_alignment={}",
+             probes.queue_family_count, probes.graphics_queue_count,
+             probes.dedicated_compute_queue_count, probes.dedicated_transfer_queue_count,
+             probes.memory_type_count, probes.device_local_memory_type_count,
+             probes.host_visible_coherent_memory_type_count,
+             probes.host_visible_cached_memory_type_count, probes.device_local_heap_bytes,
+             probes.host_visible_heap_bytes, CapabilityStateName(probes.timestamp_queries),
+             probes.timestamp_valid_bits, probes.timestamp_period_ps, probes.empty_submit_ns,
+             probes.copy_64k_ns, probes.copy_1m_ns, probes.copy_4m_ns,
+             CapabilityStateName(probes.image_transfer),
+             CapabilityStateName(probes.storage_image_create), probes.non_coherent_atom_size,
+             probes.buffer_image_granularity, probes.optimal_buffer_copy_offset_alignment,
+             probes.optimal_buffer_copy_row_pitch_alignment);
 }
 
 void Device::LogXclipseTelemetry() const {
