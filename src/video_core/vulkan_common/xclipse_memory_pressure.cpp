@@ -235,8 +235,19 @@ MemoryPressureClass XclipseMemoryPressureController::Classify(
     if (sample.gtt_used_percent) {
         pressure = MaxPressure(pressure, GttPressure(*sample.gtt_used_percent));
     }
-    // RSS is intentionally diagnostic-only until on-device data establishes a safe, device-class
-    // threshold. Android LMK policy is system-pressure dependent, not a fixed per-process number.
+
+    // On shared-memory Android devices, Eden's resident+swapped footprint competes directly with
+    // the rest of the system. When the system is already under pressure, a large Eden footprint
+    // must advance the pressure class instead of remaining diagnostic-only.
+    if (sample.process_rss_swap_percent && sample.ram_available_percent) {
+        const u32 process_percent = *sample.process_rss_swap_percent;
+        const u32 available_percent = *sample.ram_available_percent;
+        if (process_percent >= 35 && available_percent <= 20) {
+            pressure = MaxPressure(pressure, MemoryPressureClass::High);
+        } else if (process_percent >= 25 && available_percent <= 20) {
+            pressure = MaxPressure(pressure, MemoryPressureClass::Elevated);
+        }
+    }
     return MaxPressure(pressure, PsiPressure(sample));
 }
 
