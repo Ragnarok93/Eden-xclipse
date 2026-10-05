@@ -24,6 +24,7 @@ constexpr u32 NUM_TEXTURE_AND_IMAGE_SCALING_WORDS =
 struct RescalingLayout {
     alignas(16) std::array<u32, NUM_TEXTURE_SCALING_WORDS> rescaling_textures;
     alignas(16) std::array<u32, NUM_IMAGE_SCALING_WORDS> rescaling_images;
+    u32 dref_compare_op;
     u32 down_factor;
 };
 struct RenderAreaLayout {
