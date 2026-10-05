@@ -106,6 +106,8 @@ struct XclipseHardwareProfile {
     bool wave64_validated{};
     std::uint32_t allowed_wave_mask{};
     std::uint32_t preferred_compute_wave{};
+    std::uint64_t wave32_probe_ns{};
+    std::uint64_t wave64_probe_ns{};
 
     bool bc1_native{};
     bool bc2_native{};
