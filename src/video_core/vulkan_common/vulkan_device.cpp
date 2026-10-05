@@ -2213,8 +2213,10 @@ void Device::LogXclipseTelemetry() const {
              t.descriptor_bytes, t.descriptor_buffer_wraps, t.descriptor_frame_wait_requests,
              t.descriptor_stalls);
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
-             t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
+             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={} "
+             "bptc_bc6_dispatches={} bptc_bc7_dispatches={} bptc_compressed_bytes={}",
+             t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks,
+             t.bptc_bc6_dispatches, t.bptc_bc7_dispatches, t.bptc_gpu_decode_bytes);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE RENDER color_shader_blits={} depth_native_blits={} "
              "depth_shader_blits={} native_resolves={} native_image_copies={} "
