@@ -723,7 +723,8 @@ struct Values {
                                            Category::RendererDebug};
     Setting<bool> xclipse_sync_policy{linkage, true, "xclipse_sync_policy",
                                       Category::RendererDebug};
-    Setting<bool> xclipse_submission_batching{linkage, true, "xclipse_submission_batching",
+    // Keep experimental queue coalescing opt-in until device-side frame pacing is validated.
+    Setting<bool> xclipse_submission_batching{linkage, false, "xclipse_submission_batching",
                                               Category::RendererDebug};
     Setting<bool> xclipse_subgroup_size_control{linkage, true,
                                                 "xclipse_subgroup_size_control",
