@@ -1325,7 +1325,8 @@ private:
     // Telemetry parameters
     std::set<std::string, std::less<>> supported_extensions; ///< Reported Vulkan extensions.
     std::set<std::string, std::less<>> loaded_extensions;    ///< Loaded Vulkan extensions.
-    std::vector<size_t> valid_heap_memory;                   ///< Heaps used.
+    std::vector<size_t> valid_heap_memory;                   ///< Heaps used for shared/device memory telemetry.
+    std::vector<size_t> valid_device_local_heap_memory;     ///< Device-local heaps used for GPU budget accounting.
 
     /// Format properties dictionary.
     ::Common::unordered_map<VkFormat, VkFormatProperties> format_properties;
