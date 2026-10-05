@@ -54,7 +54,7 @@ public:
     void WaitWorker();
 
     /// Sends currently recorded work to the worker thread.
-    void DispatchWork();
+    void DispatchWork(bool force = false);
 
     /// Requests to begin a renderpass.
     void RequestRenderpass(const Framebuffer* framebuffer);
