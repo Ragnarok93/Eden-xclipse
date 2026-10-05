@@ -387,6 +387,9 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
                 if (null_image_view != VK_NULL_HANDLE) vk_image_view = null_image_view;
             }
             Sampler& sampler{texture_cache.GetSampler(sampler_id)};
+            if (sampler.CompareEnabled()) {
+                rescaling.SetDrefCompareOp(static_cast<u32>(sampler.CompareOp()));
+            }
             const VkSampler vk_sampler =
                 sampler.HandleFor(image_view, desc.is_depth, vk_image_view);
             guest_descriptor_queue.AddSampledImage(vk_image_view, vk_sampler);
