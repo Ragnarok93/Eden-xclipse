@@ -2592,7 +2592,9 @@ void Device::LogDevicePolicy() const {
              xclipse.wave64_validated ? "validated" : "unvalidated",
              xclipse.allowed_wave_mask, xclipse.preferred_compute_wave,
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
-             CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding),
+             CapabilityStateName(caps.descriptor_buffer),
+             xclipse.descriptor_buffer_image_validated ? "validated" : "unvalidated",
+             CapabilityStateName(caps.sparse_binding),
              device_policy.use_xclipse_sync_policy ? "validated-enabled" : "conservative-fallback",
              device_policy.use_xclipse_bcn_gpu_decode
                  ? "validated-enabled"
