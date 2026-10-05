@@ -133,6 +133,14 @@ struct XclipseOptimizationProbeResults {
     CapabilityState image_transfer{CapabilityState::Unsupported};
     CapabilityState storage_image_create{CapabilityState::Unsupported};
 
+    // Depth/Dref execution probes are deliberately independent of advertised format features.
+    CapabilityState r32_sampled_image{CapabilityState::Unsupported};
+    CapabilityState r32_dref_sample{CapabilityState::Unsupported};
+    CapabilityState r32_compare_non_dref{CapabilityState::Unsupported};
+    CapabilityState r32_compare_dref{CapabilityState::Unsupported};
+    CapabilityState d32_compare_dref{CapabilityState::Unsupported};
+    CapabilityState mutable_r32_d32_view{CapabilityState::Unsupported};
+
     std::uint32_t queue_family_count{};
     std::uint32_t graphics_queue_count{};
     std::uint32_t dedicated_compute_queue_count{};
@@ -164,6 +172,10 @@ struct XclipseOptimizationProbeResults {
     std::uint64_t copy_4m_ns{};
 
     bool timestamp_timing_validated{};
+
+    // Diagnostics only: actual execution result and output validation for depth comparison.
+    std::uint32_t depth_compare_probe_cases{};
+    std::uint32_t depth_compare_probe_failures{};
 };
 
 struct VulkanDevicePolicy {
