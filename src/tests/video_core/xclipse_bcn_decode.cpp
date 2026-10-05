@@ -134,7 +134,7 @@ TEST_CASE("BC5 fused CPU decode preserves narrow edge rows", "[video_core][bcn]"
                 reference[dst + 1] = green[src];
             }
         }
-        for (std::size_t i = 0; i < decoded.size(); ++i) {
+        for (unsigned i = 0; i < decoded.size(); ++i) {
             REQUIRE(decoded[i] == reference[i]);
         }
     }
