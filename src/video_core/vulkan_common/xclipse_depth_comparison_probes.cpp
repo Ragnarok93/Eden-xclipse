@@ -299,7 +299,8 @@ void RunXclipseDepthComparisonProbes(const Device& d,XclipseOptimizationProbeRes
     Execute(d,VK_FORMAT_R32_SFLOAT,false,true,false,.75f,r.r32_compare_non_dref);
     Execute(d,VK_FORMAT_R32_SFLOAT,true,true,false,1.f,r.r32_dref_sample);
     Execute(d,VK_FORMAT_D32_SFLOAT,true,true,false,1.f,r.d32_compare_dref);
-    Execute(d,VK_FORMAT_R32_SFLOAT,true,true,true,1.f,r.mutable_r32_d32_view);\n    ExecuteR32ToD32Copy(d, r.r32_to_d32_copy);
+    Execute(d,VK_FORMAT_R32_SFLOAT,true,true,true,1.f,r.mutable_r32_d32_view);
+    ExecuteR32ToD32Copy(d, r.r32_to_d32_copy);
     r.depth_compare_probe_cases=6;
     r.depth_compare_probe_failures=(r.r32_sampled_image!=CapabilityState::Validated)+(r.r32_compare_non_dref!=CapabilityState::Validated)+(r.r32_dref_sample!=CapabilityState::Validated)+(r.d32_compare_dref!=CapabilityState::Validated)+(r.mutable_r32_d32_view!=CapabilityState::Validated)+(r.r32_to_d32_copy==CapabilityState::Advertised);
     LOG_INFO(Render_Vulkan,"XCLIPSE DEPTH PROBES cases={} failures={} r32_sample={} r32_compare={} r32_dref={} d32_dref={} mutable_r32_d32={} r32_to_d32_copy={}",r.depth_compare_probe_cases,r.depth_compare_probe_failures,CapabilityStateName(r.r32_sampled_image),CapabilityStateName(r.r32_compare_non_dref),CapabilityStateName(r.r32_dref_sample),CapabilityStateName(r.d32_compare_dref),CapabilityStateName(r.mutable_r32_d32_view),CapabilityStateName(r.r32_to_d32_copy));
