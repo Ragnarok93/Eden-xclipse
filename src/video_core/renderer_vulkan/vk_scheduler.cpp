@@ -380,7 +380,7 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
 
         std::scoped_lock lock{submit_mutex};
         switch (const VkResult result = master_semaphore->SubmitQueue(
-                    cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore, signal_value)) {
+                    cmdbuf, upload_cmdbuf, has_upload, signal_semaphore, wait_semaphore, signal_value)) {
         case VK_SUCCESS:
             device.GetXclipseTelemetry().RecordQueueSubmit(recorded_commands,
                                                            device.HasSynchronization2());
