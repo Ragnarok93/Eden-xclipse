@@ -162,6 +162,9 @@ public:
             !props.combinedImageSamplerDescriptorSingleArray) {
             return false;
         }
+        if (device->IsXclipse() && !device->GetDevicePolicy().xclipse.descriptor_buffer_validated) {
+            return false;
+        }
         return !props.bufferlessPushDescriptors || !CanUsePushDescriptor();
     }
 
