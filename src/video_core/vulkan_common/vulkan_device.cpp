@@ -2585,6 +2585,28 @@ void Device::LogDevicePolicy() const {
              xclipse.model, identity.soc_model.empty() ? "unknown" : identity.soc_model,
              identity.driver_name, identity.driver_id, identity.device_id, identity.driver_version,
              pipeline_uuid, device_policy.policy_hash);
+    if (extensions.memory_budget) {
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+        budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+        const auto memory = physical.GetMemoryProperties(&budget);
+        for (const size_t heap : valid_device_local_heap_memory) {
+            const auto& properties = memory.memoryHeaps[heap];
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE MEMORY HEAP index={} local={} size_mib={} budget_mib={} usage_mib={}",
+                     heap,
+                     (properties.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 ? 1 : 0,
+                     properties.size / (1024ULL * 1024ULL),
+                     budget.heapBudget[heap] / (1024ULL * 1024ULL),
+                     budget.heapUsage[heap] / (1024ULL * 1024ULL));
+        }
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE MEMORY ACCOUNTING device_access_mib={} device_local_budget_mib={} "
+                 "device_local_usage_mib={}",
+                 device_access_memory,
+                 GetDeviceMemoryBudget() / (1024ULL * 1024ULL),
+                 GetDeviceMemoryUsage() / (1024ULL * 1024ULL));
+    }
+
     LOG_INFO(Render_Vulkan,
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
@@ -3988,18 +4010,10 @@ void Device::CollectPhysicalMemoryInfo() {
             }
             device_access_memory = (std::min)(xclipse_budget, memory_size);
         } else {
-            const s64 available_memory =
-                static_cast<s64>(device_access_memory - device_initial_usage);
-            device_access_memory = static_cast<u64>(
-                (std::max)(static_cast<s64>(0),
-                           (std::min)(available_memory - static_cast<s64>(8_GiB),
-                                      static_cast<s64>(memory_size))));
-            if (device_access_memory == 0) {
-                // Preserve a useful local-memory fallback for drivers without a meaningful
-                // integrated memory budget.
-                device_access_memory =
-                    (std::min)(local_memory, memory_size);
-            }
+            const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
+            device_access_memory = static_cast<u64>((std::max<s64>(
+                std::min<s64>(available_memory - 8_GiB, memory_size),
+                std::min<s64>(local_memory, memory_size))));
         }
     } else {
         const u64 reserve_memory = std::min<u64>(device_access_memory / 8, 1_GiB);
