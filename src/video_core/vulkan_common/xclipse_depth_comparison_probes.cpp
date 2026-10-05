@@ -56,7 +56,11 @@ struct Objects {
 };
 bool Buffer(const Device& d,VkDeviceSize n,VkBufferUsageFlags usage,Resource& r){
     const VkBufferCreateInfo ci{.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=n,.usage=usage,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};
-    VmaAllocationCreateInfo ai{.flags=VMA_ALLOCATION_CREATE_MAPPED_BIT,.usage=VMA_MEMORY_USAGE_AUTO_PREFER_HOST,.preferredFlags=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT};
+    VmaAllocationCreateInfo ai{.flags=VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                                .usage=VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                .requiredFlags=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                .preferredFlags=VK_MEMORY_PROPERTY_HOST_CACHED_BIT};
     VmaAllocationInfo info{};
     if(vmaCreateBuffer(d.GetAllocator(),&ci,&ai,&r.buffer,&r.allocation,&info)!=VK_SUCCESS)return false;
     r.dld=&d.GetDispatchLoader();r.device=*d.GetLogical();r.allocator=d.GetAllocator();r.mapped=info.pMappedData;return r.mapped;
