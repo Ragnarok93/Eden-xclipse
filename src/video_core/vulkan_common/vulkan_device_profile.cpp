@@ -267,7 +267,6 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(probes.r32_compare_dref);
     hash.AddIntegral(probes.d32_compare_dref);
     hash.AddIntegral(probes.mutable_r32_d32_view);
-    hash.AddIntegral(probes.r32_to_d32_copy);
     hash.AddIntegral(probes.queue_family_count);
     hash.AddIntegral(probes.graphics_queue_count);
     hash.AddIntegral(probes.dedicated_compute_queue_count);
