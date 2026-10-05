@@ -91,7 +91,7 @@ public:
     void RecordPipelineCacheLookup(bool hit) noexcept;
     void RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept;
     void RecordPipelinePolicyViolations(u64 count) noexcept;
-    void RecordQueueSubmit(u64 commands, bool sync2, bool has_upload) noexcept;
+    void RecordQueueSubmit(u64 commands, bool sync2, bool has_upload = false) noexcept;
     void RecordDispatchDeferral() noexcept;
     void RecordGpuWait(bool timeline,
                        XclipseWaitSource source = XclipseWaitSource::Unknown) noexcept;
