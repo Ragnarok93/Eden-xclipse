@@ -335,6 +335,17 @@ public:
         }
     }
 
+    void SetDrefCompareOp(u32 compare_op) noexcept {
+        if (!dref_compare_op_set) {
+            dref_compare_op = compare_op;
+            dref_compare_op_set = true;
+        }
+    }
+
+    u32 DrefCompareOp() const noexcept {
+        return dref_compare_op;
+    }
+
     const std::array<u32, NUM_TEXTURE_AND_IMAGE_SCALING_WORDS>& Data() const noexcept {
         return words;
     }
@@ -345,6 +356,8 @@ private:
     u32* image_ptr{words.data() + Shader::Backend::SPIRV::NUM_TEXTURE_SCALING_WORDS};
     u32 texture_bit{1u};
     u32 image_bit{1u};
+    u32 dref_compare_op{VK_COMPARE_OP_ALWAYS};
+    bool dref_compare_op_set{};
 };
 
 class RenderAreaPushConstant {
