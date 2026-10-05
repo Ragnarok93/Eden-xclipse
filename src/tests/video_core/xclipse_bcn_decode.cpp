@@ -116,7 +116,6 @@ TEST_CASE("BC5 fused CPU decode preserves narrow edge rows", "[video_core][bcn]"
         std::uint8_t{0x92}, std::uint8_t{0x24}, std::uint8_t{0x49}, std::uint8_t{0x92},
     };
 
-    const auto expected = MirrorBc5(block, false);
     for (const bool is_signed : {false, true}) {
         std::array<std::uint8_t, 3 * 2 * 2> decoded{};
         std::array<std::uint8_t, 32> reference{};
@@ -135,7 +134,9 @@ TEST_CASE("BC5 fused CPU decode preserves narrow edge rows", "[video_core][bcn]"
                 reference[dst + 1] = green[src];
             }
         }
-        REQUIRE(std::equal(decoded.begin(), decoded.end(), reference.begin()));
+        for (std::size_t i = 0; i < decoded.size(); ++i) {
+            REQUIRE(decoded[i] == reference[i]);
+        }
     }
 }
 
