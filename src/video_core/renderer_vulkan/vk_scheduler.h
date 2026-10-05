@@ -113,7 +113,7 @@ public:
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer>
     void RecordUpload(T&& c) {
-        auto upload_command = [command = std::move(c)](vk::CommandBuffer, vk::CommandBuffer upload_cmdbuf) mutable {
+        auto upload_command = [command = std::move(c)](vk::CommandBuffer, vk::CommandBuffer upload_cmdbuf) {
             command(upload_cmdbuf);
         };
         if (chunk->Record(upload_command)) {
@@ -193,7 +193,7 @@ private:
     public:
         virtual ~Command() = default;
 
-        virtual void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) = 0;
+        virtual void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) const = 0;
 
         Command* GetNext() const {
             return next;
@@ -216,7 +216,7 @@ private:
         TypedCommand(TypedCommand&&) = delete;
         TypedCommand& operator=(TypedCommand&&) = delete;
 
-        void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) override {
+        void Execute(vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) const override {
             command(cmdbuf, upload_cmdbuf);
         }
 
