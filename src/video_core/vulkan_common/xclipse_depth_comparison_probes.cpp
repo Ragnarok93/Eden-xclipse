@@ -2,8 +2,8 @@
 #include <array>
 #include <bit>
 #include <cmath>
-#include "video_core/host_shaders/xclipse_r32_dref_probe_spv.h"
-#include "video_core/host_shaders/xclipse_r32_sample_probe_spv.h"
+#include "video_core/host_shaders/xclipse_r32_dref_probe_comp_spv.h"
+#include "video_core/host_shaders/xclipse_r32_sample_probe_comp_spv.h"
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -81,8 +81,8 @@ bool Execute(const Device& d,VkFormat f,bool dref,bool compare,bool mut,float ex
     Resource src{},out{};if(!Buffer(d,4,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,src)||!Buffer(d,4,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,out))return false;
     *static_cast<uint32_t*>(src.mapped)=std::bit_cast<uint32_t>(.75f);*static_cast<uint32_t*>(out.mapped)=0;
     Image im{};if(!ImageCreate(d,f,mut,im))return false;
-    const uint32_t* code=dref?XCLIPSE_R32_DREF_PROBE_SPV:XCLIPSE_R32_SAMPLE_PROBE_SPV;
-    const size_t size=dref?sizeof(XCLIPSE_R32_DREF_PROBE_SPV):sizeof(XCLIPSE_R32_SAMPLE_PROBE_SPV);
+    const uint32_t* code=dref?XCLIPSE_R32_DREF_PROBE_COMP_SPV:XCLIPSE_R32_SAMPLE_PROBE_COMP_SPV;
+    const size_t size=dref?sizeof(XCLIPSE_R32_DREF_PROBE_COMP_SPV):sizeof(XCLIPSE_R32_SAMPLE_PROBE_COMP_SPV);
     Objects o{.dld=&x,.device=dev};VkShaderModuleCreateInfo sm{.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,.codeSize=size,.pCode=code};if(x.vkCreateShaderModule(dev,&sm,nullptr,&o.shader)!=VK_SUCCESS)return false;
     std::array<VkDescriptorSetLayoutBinding,2>b{{{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr},{1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}}};
     VkDescriptorSetLayoutCreateInfo dl{.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=2,.pBindings=b.data()};if(x.vkCreateDescriptorSetLayout(dev,&dl,nullptr,&o.layout)!=VK_SUCCESS)return false;
