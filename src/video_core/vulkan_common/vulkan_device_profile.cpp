@@ -250,6 +250,7 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.bc6_native);
     hash.AddIntegral(xclipse.bc7_native);
     hash.AddIntegral(xclipse.descriptor_buffer_validated);
+    hash.AddIntegral(xclipse.descriptor_buffer_image_validated);
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
