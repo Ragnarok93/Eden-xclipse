@@ -543,6 +543,14 @@ public:
         return *variants.front().sampler;
     }
 
+    [[nodiscard]] bool CompareEnabled() const noexcept {
+        return base_ci.compareEnable != VK_FALSE;
+    }
+
+    [[nodiscard]] VkCompareOp CompareOp() const noexcept {
+        return base_ci.compareOp;
+    }
+
     [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth,
                                       VkImageView descriptor_view);
 
