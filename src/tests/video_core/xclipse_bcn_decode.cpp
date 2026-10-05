@@ -108,6 +108,37 @@ TEST_CASE("Xclipse BC5 shader arithmetic matches Eden CPU decoder", "[video_core
 }
 
 
+TEST_CASE("BC5 fused CPU decode preserves narrow edge rows", "[video_core][bcn]") {
+    constexpr std::array block{
+        std::uint8_t{255}, std::uint8_t{0}, std::uint8_t{0x88}, std::uint8_t{0xC6},
+        std::uint8_t{0xFA}, std::uint8_t{0x88}, std::uint8_t{0xC6}, std::uint8_t{0xFA},
+        std::uint8_t{0}, std::uint8_t{255}, std::uint8_t{0x24}, std::uint8_t{0x49},
+        std::uint8_t{0x92}, std::uint8_t{0x24}, std::uint8_t{0x49}, std::uint8_t{0x92},
+    };
+
+    const auto expected = MirrorBc5(block, false);
+    for (const bool is_signed : {false, true}) {
+        std::array<std::uint8_t, 3 * 2 * 2> decoded{};
+        std::array<std::uint8_t, 32> reference{};
+        std::array<std::uint8_t, 16> red{};
+        std::array<std::uint8_t, 16> green{};
+
+        bcn::DecodeBc5(block.data(), decoded.data(), 0, 0, 3, 2, is_signed);
+        bcn::DecodeBc4(block.data(), red.data(), 0, 0, 4, 4, is_signed);
+        bcn::DecodeBc4(block.data() + 8, green.data(), 0, 0, 4, 4, is_signed);
+
+        for (unsigned y = 0; y < 2; ++y) {
+            for (unsigned x = 0; x < 3; ++x) {
+                const unsigned dst = (y * 3 + x) * 2;
+                const unsigned src = (y * 4 + x);
+                reference[dst] = red[src];
+                reference[dst + 1] = green[src];
+            }
+        }
+        REQUIRE(std::equal(decoded.begin(), decoded.end(), reference.begin()));
+    }
+}
+
 TEST_CASE("Xclipse RGTC GPU decode policy requires execution validation", "[video_core][bcn]") {
     Vulkan::VulkanDevicePolicy policy{};
     policy.xclipse.detected = true;
