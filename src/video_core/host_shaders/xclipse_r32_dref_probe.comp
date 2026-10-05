@@ -2,12 +2,17 @@
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding = 0) uniform sampler2DShadow probe_texture;
+layout(binding = 0) uniform sampler2D probe_texture;
 layout(binding = 1, std430) buffer ProbeOutput {
     uint data[];
 } output_buffer;
 
 void main() {
-    const float value = textureLod(probe_texture, vec3(0.5, 0.5, 0.5), 0.0);
-    output_buffer.data[0] = floatBitsToUint(value);
+    // R32_FLOAT is a color format, so native OpImageSampleDref is not a legal Vulkan
+    // operation. This probe validates the shader-side replacement: raw R32 sampling
+    // followed by the guest's default LESS comparison.
+    const float sampled = textureLod(probe_texture, vec2(0.5, 0.5), 0.0);
+    const float dref = 0.5;
+    const float result = sampled > dref ? 1.0 : 0.0;
+    output_buffer.data[0] = floatBitsToUint(result);
 }
