@@ -205,7 +205,7 @@ class XclipseMemoryPressureController {
 public:
     XclipseMemoryPressureController() = default;
 
-    /// Samples Xclipse pressure at most once per second. Consumers may use the sampled state only
+    /// Samples Xclipse pressure at most twice per second. Consumers may use the sampled state only
     /// through conservative, independently disableable policy such as TextureGcPressureFor().
     [[nodiscard]] XclipseMemoryPressureSnapshot Tick(const Device& device, bool enabled);
 
