@@ -2615,6 +2615,15 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(caps.subgroup_arithmetic),
              CapabilityStateName(caps.subgroup_quad));
     LOG_INFO(Render_Vulkan,
+             "XCLIPSE DREF r32_sample={} r32_dref={} r32_compare={} d32_dref={} mutable_r32_d32={} "
+             "cases={} failures={}",
+             CapabilityStateName(probes.r32_sampled_image),
+             CapabilityStateName(probes.r32_dref_sample),
+             CapabilityStateName(probes.r32_compare_non_dref),
+             CapabilityStateName(probes.d32_compare_dref),
+             CapabilityStateName(probes.mutable_r32_d32_view), probes.depth_compare_probe_cases,
+             probes.depth_compare_probe_failures);
+    LOG_INFO(Render_Vulkan,
              "XCLIPSE OPT queues={} gfx_queues={} dedicated_compute={} dedicated_transfer={} "
              "memory_types={} device_local_types={} host_coherent_types={} host_cached_types={} "
              "device_local_heap={} host_visible_heap={} timestamp={} valid_bits={} period_ps={} "
