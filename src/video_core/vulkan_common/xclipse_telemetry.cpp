@@ -40,13 +40,14 @@ void XclipseTelemetry::RecordPipelinePolicyViolations(u64 count) noexcept {
     }
 }
 
-void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2) noexcept {
+void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2, bool has_upload) noexcept {
     if (!Enabled()) {
         return;
     }
     queue_submits.fetch_add(1, std::memory_order_relaxed);
     commands_submitted.fetch_add(commands, std::memory_order_relaxed);
     (sync2 ? sync2_submits : legacy_submits).fetch_add(1, std::memory_order_relaxed);
+    (has_upload ? upload_submits : non_upload_submits).fetch_add(1, std::memory_order_relaxed);
 }
 
 void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) noexcept {
@@ -230,6 +231,8 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
             pipeline_compile_ns_total.load(std::memory_order_relaxed),
         .pipeline_compile_ns_max = pipeline_compile_ns_max.load(std::memory_order_relaxed),
         .queue_submits = queue_submits.load(std::memory_order_relaxed),
+        .upload_submits = upload_submits.load(std::memory_order_relaxed),
+        .non_upload_submits = non_upload_submits.load(std::memory_order_relaxed),
         .commands_submitted = commands_submitted.load(std::memory_order_relaxed),
         .sync2_submits = sync2_submits.load(std::memory_order_relaxed),
         .legacy_submits = legacy_submits.load(std::memory_order_relaxed),
