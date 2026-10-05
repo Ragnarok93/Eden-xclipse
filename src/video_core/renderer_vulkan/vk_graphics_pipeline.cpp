@@ -646,8 +646,8 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     }
     scheduler.Record([this, descriptor_data, bind_pipeline, update_descriptors,
                       descriptor_buffer_offset, descriptor_buffer_chunk, bind_descriptor_buffer,
-                      rescaling_data = rescaling.Data(), is_rescaling, update_rescaling,
-                      uses_render_area = render_area.uses_render_area,
+                      rescaling_data = rescaling.Data(), dref_compare_op = rescaling.DrefCompareOp(),
+                      is_rescaling, update_rescaling, uses_render_area = render_area.uses_render_area,
                       render_area_data = render_area.words](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
@@ -663,6 +663,9 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_ALL_GRAPHICS,
                              RESCALING_LAYOUT_WORDS_OFFSET, sizeof(rescaling_data),
                              rescaling_data.data());
+        cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_ALL_GRAPHICS,
+                             offsetof(Shader::Backend::SPIRV::RescalingLayout, dref_compare_op),
+                             sizeof(dref_compare_op), &dref_compare_op);
         if (update_rescaling) {
             const f32 config_down_factor{Settings::values.resolution_info.down_factor};
             const f32 scale_down_factor{is_rescaling ? config_down_factor : 1.0f};
