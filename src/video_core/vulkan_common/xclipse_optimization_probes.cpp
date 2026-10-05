@@ -101,7 +101,8 @@ struct FenceResource {
     return find(required);
 }
 
-[[nodiscard]] bool CreateBuffer(const vk::DeviceDispatch& dld, VkDevice device,
+[[nodiscard]] bool CreateBuffer(const vk::DeviceDispatch& dld, const vk::Device& logical,
+                                VkDevice device,
                                 VkPhysicalDeviceMemoryProperties memory_properties,
                                 VkDeviceSize size, VkBufferUsageFlags usage,
                                 VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred,
