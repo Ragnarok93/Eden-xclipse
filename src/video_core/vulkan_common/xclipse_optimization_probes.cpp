@@ -184,8 +184,8 @@ struct FenceResource {
     return dld.vkBeginCommandBuffer(command_buffer, &begin_info) == VK_SUCCESS;
 }
 
-[[nodiscard]] bool SubmitAndWait(const vk::DeviceDispatch& dld, const vk::Device& logical,
-                                 VkDevice device, vk::Queue queue, VkCommandBuffer command_buffer) {
+[[nodiscard]] bool SubmitAndWait(const vk::DeviceDispatch& dld, VkDevice device,
+                                 vk::Queue queue, VkCommandBuffer command_buffer) {
     const VkFenceCreateInfo fence_ci{
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .pNext = nullptr,
@@ -207,7 +207,7 @@ struct FenceResource {
         .signalSemaphoreCount = 0,
         .pSignalSemaphores = nullptr,
     };
-    const VkResult submit_result = queue.Submit(vk::Span{submit_info}, fence.fence);
+    const VkResult submit_result = queue.Submit(vk::Span<VkSubmitInfo>{submit_info}, fence.fence);
     if (submit_result != VK_SUCCESS) {
         return false;
     }
@@ -251,7 +251,7 @@ struct FenceResource {
     }
 
     const auto start = Clock::now();
-    const bool valid = SubmitAndWait(dld, device.GetLogical(), raw_device, queue, command_buffer);
+    const bool valid = SubmitAndWait(dld, raw_device, queue, command_buffer);
     elapsed_ns = static_cast<u64>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
     cleanup_pool();
@@ -280,7 +280,7 @@ struct FenceResource {
                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source, true) ||
-        !CreateBuffer(dld, raw_device, memory_properties, MaxSize,
+        !CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, MaxSize,
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                       destination, false) ||
@@ -398,8 +398,7 @@ struct FenceResource {
         }
 
         const auto cpu_start = Clock::now();
-        const bool submitted = SubmitAndWait(dld, device.GetLogical(), raw_device,
-                                         device.GetGraphicsQueue(), command_buffer);
+        const bool submitted = SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer);
         const u64 cpu_elapsed = static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - cpu_start).count());
 
@@ -589,8 +588,7 @@ struct FenceResource {
         return false;
     }
 
-    const bool valid = SubmitAndWait(dld, device.GetLogical(), raw_device,
-                                     device.GetGraphicsQueue(), command_buffer);
+    const bool valid = SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer);
     results.image_transfer = CapabilityState::Advertised;
     if (valid && std::memcmp(source_bytes, readback_bytes, static_cast<std::size_t>(Bytes)) == 0) {
         results.image_transfer = CapabilityState::Validated;
