@@ -112,6 +112,21 @@ public:
 
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer>
+    void RecordUpload(T&& c) {
+        auto upload_command = [command = std::move(c)](vk::CommandBuffer, vk::CommandBuffer upload_cmdbuf) mutable {
+            command(upload_cmdbuf);
+        };
+        if (chunk->Record(upload_command)) {
+            chunk->MarkUpload();
+            return;
+        }
+        DispatchWork();
+        (void)chunk->Record(upload_command);
+        chunk->MarkUpload();
+    }
+
+    template <typename T>
+        requires std::is_invocable_v<T, vk::CommandBuffer>
     void Record(T&& c) {
         this->RecordWithUploadBuffer(
             [command = std::move(c)](vk::CommandBuffer cmdbuf, vk::CommandBuffer) {
