@@ -124,10 +124,53 @@ struct XclipseHardwareProfile {
     bool bptc_gpu_decode_capable{};
 };
 
+struct XclipseOptimizationProbeResults {
+    // Capability probes are fail-closed: Advertised means Vulkan reports support, Validated means
+    // the exact operation completed successfully on this device/driver.
+    CapabilityState timestamp_queries{CapabilityState::Unsupported};
+    CapabilityState empty_queue_submit{CapabilityState::Unsupported};
+    CapabilityState buffer_transfer{CapabilityState::Unsupported};
+    CapabilityState image_transfer{CapabilityState::Unsupported};
+    CapabilityState storage_image_create{CapabilityState::Unsupported};
+
+    std::uint32_t queue_family_count{};
+    std::uint32_t graphics_queue_count{};
+    std::uint32_t dedicated_compute_queue_count{};
+    std::uint32_t dedicated_transfer_queue_count{};
+
+    std::uint32_t timestamp_valid_bits{};
+    std::uint64_t timestamp_period_ps{};
+
+    std::uint32_t memory_type_count{};
+    std::uint32_t device_local_memory_type_count{};
+    std::uint32_t host_visible_coherent_memory_type_count{};
+    std::uint32_t host_visible_cached_memory_type_count{};
+    std::uint64_t device_local_heap_bytes{};
+    std::uint64_t host_visible_heap_bytes{};
+
+    std::uint32_t max_memory_allocation_count{};
+    std::uint32_t max_compute_workgroup_invocations{};
+    std::uint32_t max_image_dimension_2d{};
+    std::uint64_t non_coherent_atom_size{};
+    std::uint64_t buffer_image_granularity{};
+    std::uint64_t optimal_buffer_copy_offset_alignment{};
+    std::uint64_t optimal_buffer_copy_row_pitch_alignment{};
+
+    // Startup microbenchmark values are diagnostics only. They are intentionally excluded from
+    // the pipeline policy hash because device load can move these measurements between runs.
+    std::uint64_t empty_submit_ns{};
+    std::uint64_t copy_64k_ns{};
+    std::uint64_t copy_1m_ns{};
+    std::uint64_t copy_4m_ns{};
+
+    bool timestamp_timing_validated{};
+};
+
 struct VulkanDevicePolicy {
     VulkanDeviceIdentity identity;
     VulkanCapabilitySnapshot capabilities;
     XclipseHardwareProfile xclipse;
+    XclipseOptimizationProbeResults optimization_probes;
     bool use_xclipse_sync_policy{};
     bool use_xclipse_bcn_gpu_decode{};
     bool use_xclipse_bptc_gpu_decode{};
