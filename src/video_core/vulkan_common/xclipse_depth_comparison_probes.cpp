@@ -106,7 +106,9 @@ void RunXclipseDepthComparisonProbes(const Device& d,XclipseOptimizationProbeRes
     r.mutable_r32_d32_view=CapabilityState::Advertised;
     Execute(d,VK_FORMAT_R32_SFLOAT,false,false,false,.75f,r.r32_sampled_image);
     Execute(d,VK_FORMAT_R32_SFLOAT,false,true,false,.75f,r.r32_compare_non_dref);
-    Execute(d,VK_FORMAT_R32_SFLOAT,true,true,false,1.f,r.r32_dref_sample);
+    // Native R32 Dref is intentionally not executed: R32_FLOAT is a color format.
+    // The probe shader validates the legal raw-sample + guest-compare fallback instead.
+    Execute(d,VK_FORMAT_R32_SFLOAT,false,false,false,1.f,r.r32_dref_sample);
     Execute(d,VK_FORMAT_D32_SFLOAT,true,true,false,1.f,r.d32_compare_dref);
     r.mutable_r32_d32_view = [&] {
         Image image{};
