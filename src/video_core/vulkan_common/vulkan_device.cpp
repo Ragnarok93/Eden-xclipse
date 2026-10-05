@@ -1369,7 +1369,8 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
         };
         command_buffer.BindDescriptorBuffersEXT(binding_info);
         const u32 buffer_index = 0;
-        const VkDeviceSize set_offset = Common::AlignUp(binding_offset, alignment);
+        // The descriptor is written at binding_offset within set 0; the bound set offset is zero.
+        const VkDeviceSize set_offset = 0;
         command_buffer.SetDescriptorBufferOffsetsEXT(
             VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0, buffer_index, set_offset);
         command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
