@@ -193,6 +193,18 @@ void XclipseTelemetry::RecordNativeResolve() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordRenderPassAttachment(bool undefined_initial_layout, bool dontcare_store) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    if (undefined_initial_layout) {
+        renderpass_undefined_initial_layouts.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (dontcare_store) {
+        renderpass_dontcare_stores.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void XclipseTelemetry::RecordImageCopy(bool native) noexcept {
     if (!Enabled()) {
         return;
@@ -261,6 +273,9 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .native_resolves = native_resolves.load(std::memory_order_relaxed),
         .native_image_copies = native_image_copies.load(std::memory_order_relaxed),
         .reinterpret_copies = reinterpret_copies.load(std::memory_order_relaxed),
+        .renderpass_undefined_initial_layouts =
+            renderpass_undefined_initial_layouts.load(std::memory_order_relaxed),
+        .renderpass_dontcare_stores = renderpass_dontcare_stores.load(std::memory_order_relaxed),
     };
 }
 
