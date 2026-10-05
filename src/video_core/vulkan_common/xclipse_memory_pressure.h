@@ -59,11 +59,11 @@ enum class XclipseTextureGcPressure : u8 {
     constexpr u64 MiB = 1024ULL * 1024ULL;
     switch (pressure) {
     case MemoryPressureClass::Elevated:
-        return 384ULL * MiB;
+        return 256ULL * MiB;
     case MemoryPressureClass::High:
-        return 192ULL * MiB;
+        return 128ULL * MiB;
     case MemoryPressureClass::Critical:
-        return 96ULL * MiB;
+        return 64ULL * MiB;
     case MemoryPressureClass::Normal:
     default:
         return 0;
