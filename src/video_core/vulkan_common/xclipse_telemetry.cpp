@@ -166,6 +166,14 @@ void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordBptcGpuDecode(bool bc7, u64 bytes) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (bc7 ? bptc_bc7_dispatches : bptc_bc6_dispatches).fetch_add(1, std::memory_order_relaxed);
+    bptc_gpu_decode_bytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+
 void XclipseTelemetry::RecordBcnGpuDecode(u64 bytes) noexcept {
     if (!Enabled()) {
         return;
@@ -275,6 +283,9 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
         .bcn_gpu_decode_fallbacks =
             bcn_gpu_decode_fallbacks.load(std::memory_order_relaxed),
+        .bptc_bc6_dispatches = bptc_bc6_dispatches.load(std::memory_order_relaxed),
+        .bptc_bc7_dispatches = bptc_bc7_dispatches.load(std::memory_order_relaxed),
+        .bptc_gpu_decode_bytes = bptc_gpu_decode_bytes.load(std::memory_order_relaxed),
         .color_shader_blits = color_shader_blits.load(std::memory_order_relaxed),
         .depth_stencil_native_blits =
             depth_stencil_native_blits.load(std::memory_order_relaxed),
