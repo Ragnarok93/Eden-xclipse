@@ -229,7 +229,6 @@ struct FenceResource {
     if (dld.vkCreateCommandPool(raw_device, &pool_ci, nullptr, &pool) != VK_SUCCESS) {
         return false;
     }
-    auto pool_guard = std::pair{dld, raw_device};
     const auto cleanup_pool = [&] { dld.vkDestroyCommandPool(raw_device, pool, nullptr); };
 
     VkCommandBuffer command_buffer{};
@@ -256,7 +255,6 @@ struct FenceResource {
     elapsed_ns = static_cast<u64>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
     cleanup_pool();
-    (void)pool_guard;
     return valid;
 }
 
@@ -578,9 +576,9 @@ struct FenceResource {
         return false;
     }
 
-    dld.vkCmdPipelineBarrier(raw_device == VK_NULL_HANDLE ? command_buffer : command_buffer,
-                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                             0, nullptr, 1, &to_dst, 0, nullptr);
+    dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &to_dst,
+                             0, nullptr);
     dld.vkCmdCopyBufferToImage(command_buffer, source.buffer, image.image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
     dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
