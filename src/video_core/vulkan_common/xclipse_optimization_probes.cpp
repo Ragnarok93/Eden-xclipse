@@ -105,7 +105,7 @@ struct FenceResource {
                                 VkPhysicalDeviceMemoryProperties memory_properties,
                                 VkDeviceSize size, VkBufferUsageFlags usage,
                                 VkMemoryPropertyFlags required, VkMemoryPropertyFlags preferred,
-                                BufferResource& resource) {
+                                BufferResource& resource, bool map_memory) {
     const VkBufferCreateInfo buffer_ci{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
@@ -139,6 +139,9 @@ struct FenceResource {
     }
     if (dld.vkBindBufferMemory(device, resource.buffer, resource.memory, 0) != VK_SUCCESS) {
         return false;
+    }
+    if (!map_memory) {
+        return true;
     }
     return dld.vkMapMemory(device, resource.memory, 0, size, 0, &resource.mapped) == VK_SUCCESS;
 }
@@ -278,15 +281,15 @@ struct FenceResource {
     if (!CreateBuffer(dld, raw_device, memory_properties, MaxSize,
                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source) ||
+                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source, true) ||
         !CreateBuffer(dld, raw_device, memory_properties, MaxSize,
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                      destination) ||
+                      destination, false) ||
         !CreateBuffer(dld, raw_device, memory_properties, MaxSize,
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback)) {
+                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback, true)) {
         return false;
     }
 
@@ -368,6 +371,15 @@ struct FenceResource {
             dld.vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 1);
         }
 
+        const VkMemoryBarrier transfer_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        };
+        dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &transfer_barrier, 0,
+                                 nullptr, 0, nullptr);
         dld.vkCmdCopyBuffer(command_buffer, destination.buffer, readback.buffer, 1, &copy_region);
 
         const VkMemoryBarrier host_barrier{
@@ -431,7 +443,6 @@ struct FenceResource {
         }
 
         dld.vkDestroyCommandPool(raw_device, pool, nullptr);
-        (void)timestamps;
     }
 
     return true;
@@ -453,11 +464,11 @@ struct FenceResource {
     if (!CreateBuffer(dld, raw_device, memory_properties, Bytes,
                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source) ||
+                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, source, true) ||
         !CreateBuffer(dld, raw_device, memory_properties, Bytes,
                       VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback)) {
+                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback, true)) {
         return false;
     }
 
@@ -586,30 +597,18 @@ struct FenceResource {
         return false;
     }
 
-    const auto start = Clock::now();
     const bool valid = SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer);
-    results.image_transfer = valid ? CapabilityState::Validated : CapabilityState::Advertised;
-    if (valid) {
-        results.buffer_transfer = CapabilityState::Validated;
-        results.storage_image_create = CapabilityState::Advertised;
-        results.buffer_transfer = CapabilityState::Validated;
-        if (std::memcmp(source_bytes, readback_bytes, static_cast<std::size_t>(Bytes)) == 0) {
-            results.image_transfer = CapabilityState::Validated;
-        } else {
-            results.image_transfer = CapabilityState::Advertised;
-        }
-        results.empty_queue_submit = results.empty_queue_submit == CapabilityState::Validated
-                                         ? results.empty_queue_submit
-                                         : CapabilityState::Advertised;
+    results.image_transfer = CapabilityState::Advertised;
+    if (valid && std::memcmp(source_bytes, readback_bytes, static_cast<std::size_t>(Bytes)) == 0) {
+        results.image_transfer = CapabilityState::Validated;
     }
-    results.empty_submit_ns += static_cast<u64>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
 
     dld.vkDestroyCommandPool(raw_device, pool, nullptr);
     if (results.image_transfer != CapabilityState::Validated) {
         return false;
     }
 
+    results.storage_image_create = CapabilityState::Advertised;
     const VkImageCreateInfo storage_image_ci{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = nullptr,
@@ -717,10 +716,6 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
 
     results = {};
     CaptureStaticProfile(device, results);
-
-    if (!results.timestamp_queries == CapabilityState::Unsupported) {
-        // Intentionally empty: static capability remains in the profile even if timing fails.
-    }
 
     results.empty_queue_submit =
         RunEmptySubmitProbe(device, results.empty_submit_ns)
