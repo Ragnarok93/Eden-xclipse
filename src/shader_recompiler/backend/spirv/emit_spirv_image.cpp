@@ -460,7 +460,8 @@ Id EmitDrefCompareVector(EmitContext& ctx, Id sampled, Id dref) {
 
 bool ShouldEmulateR32Dref(const EmitContext& ctx, const IR::TextureInstInfo& info) {
     return ctx.runtime_info.xclipse_r32_dref_emulation &&
-           ctx.profile.unified_descriptor_binding && info.is_depth == 0;
+           ctx.profile.unified_descriptor_binding && info.is_depth == 0 &&
+           info.type != TextureType::Buffer && !IsTextureInteger(ctx, info);
 }
 
 void AddOffsetToCoordinates(EmitContext& ctx, const IR::TextureInstInfo& info, Id& coords,
