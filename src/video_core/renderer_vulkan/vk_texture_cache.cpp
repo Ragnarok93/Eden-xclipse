@@ -234,14 +234,15 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
     case PixelFormat::BC4_SNORM:
     case PixelFormat::BC5_UNORM:
     case PixelFormat::BC5_SNORM:
-        // The RGTC decoder has CPU-reference coverage. Keep the more complex BPTC
-        // BC6H/BC7 path on Eden's proven CPU fallback until an on-device decoder
-        // self-test validates Samsung's shader/image path end-to-end.
         break;
     case PixelFormat::BC6H_UFLOAT:
     case PixelFormat::BC6H_SFLOAT:
     case PixelFormat::BC7_UNORM:
     case PixelFormat::BC7_SRGB:
+        if (!device.UseXclipseBptcGpuDecode()) {
+            return false;
+        }
+        break;
     default:
         return false;
     }
@@ -1081,12 +1082,30 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                 bcn_decoder_passes[*index].reset();
             }
         }
-        // BC6H/BC7 remain on the CPU conversion path. The shader implementation is
-        // retained for future validation work, but must not be selected merely because
-        // Samsung advertises the destination storage formats.
-        LOG_INFO(Render_Vulkan,
-                 "XCLIPSE BCN policy: validated BC4/BC5 GPU decode enabled; "
-                 "BC6H/BC7 remain on CPU fallback pending on-device validation");
+
+        if (device.UseXclipseBptcGpuDecode()) {
+            try {
+                bptc_bc6_decoder_pass.emplace(device, scheduler, descriptor_pool,
+                                              compute_pass_descriptor_queue,
+                                              BPTCDecoderPass::Kind::BC6H);
+                bptc_bc7_decoder_pass.emplace(device, scheduler, descriptor_pool,
+                                              compute_pass_descriptor_queue,
+                                              BPTCDecoderPass::Kind::BC7);
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE BCN policy: BC6H/BC7 GPU compute decode enabled by "
+                            "explicit debug opt-in; path is capability-gated but not bit-exact self-tested");
+            } catch (const vk::Exception& exception) {
+                bptc_bc6_decoder_pass.reset();
+                bptc_bc7_decoder_pass.reset();
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE BC6H/BC7 GPU decoder unavailable; retaining CPU fallback: {}",
+                            exception.what());
+            }
+        } else {
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE BCN policy: validated BC4/BC5 GPU decode enabled; "
+                     "BC6H/BC7 remain on CPU fallback");
+        }
     }
     if (!device.IsKhrImageFormatListSupported()) {
         return;
