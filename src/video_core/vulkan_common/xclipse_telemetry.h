@@ -33,6 +33,7 @@ struct XclipseTelemetrySnapshot {
     u64 queue_submits{};
     u64 upload_submits{};
     u64 non_upload_submits{};
+    u64 dispatch_deferrals{};
     u64 commands_submitted{};
     u64 sync2_submits{};
     u64 legacy_submits{};
@@ -88,6 +89,7 @@ public:
     void RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept;
     void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2, bool has_upload) noexcept;
+    void RecordDispatchDeferral() noexcept;
     void RecordGpuWait(bool timeline,
                        XclipseWaitSource source = XclipseWaitSource::Unknown) noexcept;
     void RecordSchedulerFinish() noexcept;
@@ -130,6 +132,7 @@ private:
     std::atomic<u64> queue_submits{};
     std::atomic<u64> upload_submits{};
     std::atomic<u64> non_upload_submits{};
+    std::atomic<u64> dispatch_deferrals{};
     std::atomic<u64> commands_submitted{};
     std::atomic<u64> sync2_submits{};
     std::atomic<u64> legacy_submits{};
