@@ -2187,13 +2187,13 @@ void Device::LogXclipseTelemetry() const {
              static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} upload_submits={} "
-             "non_upload_submits={} sync2_submits={} legacy_submits={} "
+             "non_upload_submits={} dispatch_deferrals={} sync2_submits={} legacy_submits={} "
              "host_waits={} timeline_waits={} wait_unknown={} buffer_cache_waits={} "
              "fence_waits={} descriptor_waits={} staging_pressure_waits={} scheduler_finishes={} "
              "all_commands_barriers={} "
              "transfer_consumer_barriers={} compute_consumer_barriers={}",
              t.queue_submits, commands_per_submit, t.upload_submits, t.non_upload_submits,
-             t.sync2_submits, t.legacy_submits, t.host_waits,
+             t.dispatch_deferrals, t.sync2_submits, t.legacy_submits, t.host_waits,
              t.timeline_waits, t.wait_unknown, t.wait_buffer_cache, t.wait_fence,
              t.wait_descriptor_buffer, t.wait_staging_pressure, t.scheduler_finishes,
              t.all_commands_barriers,
