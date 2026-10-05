@@ -121,7 +121,7 @@ struct XclipseHardwareProfile {
     bool sparse_binding_validated{};
     bool synchronization2_validated{};
     bool rgtc_gpu_decode_validated{};
-    bool bptc_gpu_decode_validated{};
+    bool bptc_gpu_decode_capable{};
 };
 
 struct VulkanDevicePolicy {
