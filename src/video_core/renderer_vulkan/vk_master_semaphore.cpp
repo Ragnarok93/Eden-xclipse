@@ -204,7 +204,6 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
 
     const std::array cmdbuffers{*upload_cmdbuf, *cmdbuf};
     const u32 command_buffer_count = has_upload ? 2U : 1U;
-    const u32 command_buffer_count = has_upload ? 2U : 1U;
 
     const u32 num_wait_semaphores = wait_semaphore ? 1 : 0;
     // Pointers must be null when the count is zero (best-practices)
@@ -239,11 +238,11 @@ VkResult MasterSemaphore::SubmitQueueTimeline(vk::CommandBuffer& cmdbuf,
 }
 
 VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
-                                           vk::CommandBuffer& upload_cmdbuf,
-                                           VkSemaphore signal_semaphore, VkSemaphore wait_semaphore,
-                                           u64 host_tick) {
+                                           vk::CommandBuffer& upload_cmdbuf, bool has_upload,
+                                           VkSemaphore signal_semaphore,
+                                           VkSemaphore wait_semaphore, u64 host_tick) {
     if (device.HasSynchronization2()) {
-        const std::array<VkCommandBufferSubmitInfo, 2> cmdbuffer_infos{{
+        std::array<VkCommandBufferSubmitInfo, 2> cmdbuffer_infos{{
             {
                 .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
                 .pNext = nullptr,
@@ -257,6 +256,7 @@ VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
                 .deviceMask = 0,
             },
         }};
+        const u32 command_buffer_count = has_upload ? 2U : 1U;
 
         const u32 num_signal_semaphores = signal_semaphore ? 1 : 0;
         const VkSemaphoreSubmitInfo signal_info{
@@ -312,6 +312,7 @@ VkResult MasterSemaphore::SubmitQueueFence(vk::CommandBuffer& cmdbuf,
     const VkSemaphore* p_signal_sems =
         (num_signal_semaphores > 0) ? &signal_semaphore : nullptr;
     const std::array cmdbuffers{*upload_cmdbuf, *cmdbuf};
+    const u32 command_buffer_count = has_upload ? 2U : 1U;
 
     const VkSubmitInfo submit_info{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
