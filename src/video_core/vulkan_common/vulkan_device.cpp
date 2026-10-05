@@ -1198,8 +1198,8 @@ void Device::RunXclipseDescriptorBufferValidationProbe() {
 
     constexpr u32 ProbeInvocations = 64;
     constexpr VkDeviceSize OutputBytes = sizeof(u32) * ProbeInvocations * 2;
-    const VkDeviceSize descriptor_capacity =
-        Common::AlignUp(std::max<VkDeviceSize>(descriptor_size, 64), alignment) + alignment;
+    // Keep the probe buffer comfortably above implementation-specific layout padding.
+    const VkDeviceSize descriptor_capacity = Common::AlignUp(4096, alignment);
 
     const VkPhysicalDeviceMemoryProperties memory_properties =
         physical.GetMemoryProperties().memoryProperties;
