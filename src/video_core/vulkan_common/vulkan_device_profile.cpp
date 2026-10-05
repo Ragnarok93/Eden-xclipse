@@ -242,8 +242,6 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.wave64_validated);
     hash.AddIntegral(xclipse.allowed_wave_mask);
     hash.AddIntegral(xclipse.preferred_compute_wave);
-    hash.AddIntegral(xclipse.wave32_probe_ns);
-    hash.AddIntegral(xclipse.wave64_probe_ns);
     hash.AddIntegral(xclipse.bc1_native);
     hash.AddIntegral(xclipse.bc2_native);
     hash.AddIntegral(xclipse.bc3_native);
@@ -254,7 +252,6 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.descriptor_buffer_validated);
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
-    hash.AddIntegral(xclipse.descriptor_buffer_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
     hash.AddIntegral(xclipse.bptc_gpu_decode_capable);
 
@@ -264,6 +261,12 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(probes.buffer_transfer);
     hash.AddIntegral(probes.image_transfer);
     hash.AddIntegral(probes.storage_image_create);
+    hash.AddIntegral(probes.r32_sampled_image);
+    hash.AddIntegral(probes.r32_dref_sample);
+    hash.AddIntegral(probes.r32_compare_non_dref);
+    hash.AddIntegral(probes.r32_compare_dref);
+    hash.AddIntegral(probes.d32_compare_dref);
+    hash.AddIntegral(probes.mutable_r32_d32_view);
     hash.AddIntegral(probes.queue_family_count);
     hash.AddIntegral(probes.graphics_queue_count);
     hash.AddIntegral(probes.dedicated_compute_queue_count);
