@@ -19,4 +19,14 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
 /// readback. The result is fail-closed and is suitable for enabling the RGTC GPU decode path.
 [[nodiscard]] bool RunXclipseRgtcDecodeValidationProbe(const Device& device);
 
+struct XclipseBptcDecodeValidation {
+    bool bc6{};
+    bool bc7{};
+};
+
+/// Executes Eden's production BC6H/BC7 decoder shaders over mode-covering vectors and compares
+/// storage-image readback against the CPU decoder. BC6H and BC7 results are independent.
+[[nodiscard]] XclipseBptcDecodeValidation RunXclipseBptcDecodeValidationProbe(
+    const Device& device);
+
 } // namespace Vulkan
