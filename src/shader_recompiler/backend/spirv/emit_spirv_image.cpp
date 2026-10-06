@@ -446,13 +446,13 @@ Id EmitDrefCompare(EmitContext& ctx, Id sampled, Id dref, Id compare_op) {
     const Id greater_equal{ctx.OpFOrdGreaterThanEqual(ctx.U1, dref, sampled)};
 
     Id result{never};
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(7u)), always, result);
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(6u)), greater_equal, result);
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(5u)), not_equal, result);
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(4u)), greater, result);
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(3u)), less_equal, result);
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(2u)), equal, result);
-    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(1u)), less, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::Always))), always, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::GreaterThanEqual))), greater_equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::NotEqual))), not_equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::Greater))), greater, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::LessThanEqual))), less_equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::Equal))), equal, result);
+    result = ctx.OpSelect(ctx.U1, ctx.OpIEqual(ctx.U1, compare_op, ctx.Const(static_cast<u32>(CompareFunction::Less))), less, result);
     return ctx.OpSelect(ctx.F32[1], result, ctx.Const(1.0f), ctx.Const(0.0f));
 }
 
