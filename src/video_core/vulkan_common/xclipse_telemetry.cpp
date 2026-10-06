@@ -354,6 +354,22 @@ void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
     }
 }
 
+void XclipseTelemetry::RecordDrefBinding(bool compare_dropped,
+                                         bool software_emulated) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    dref_shader_bindings.fetch_add(1, std::memory_order_relaxed);
+    (software_emulated ? dref_software_bindings : dref_native_bindings)
+        .fetch_add(1, std::memory_order_relaxed);
+    if (compare_dropped) {
+        dref_compare_drops.fetch_add(1, std::memory_order_relaxed);
+        if (!software_emulated) {
+            dref_unemulated_drops.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
 void XclipseTelemetry::RecordBcnNativePath(XclipseBcnFormat format) noexcept {
     if (!Enabled()) {
         return;
@@ -543,6 +559,11 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .descriptor_stalls = descriptor_stalls.load(std::memory_order_relaxed),
         .descriptor_frame_wait_requests =
             descriptor_frame_wait_requests.load(std::memory_order_relaxed),
+        .dref_shader_bindings = dref_shader_bindings.load(std::memory_order_relaxed),
+        .dref_native_bindings = dref_native_bindings.load(std::memory_order_relaxed),
+        .dref_software_bindings = dref_software_bindings.load(std::memory_order_relaxed),
+        .dref_compare_drops = dref_compare_drops.load(std::memory_order_relaxed),
+        .dref_unemulated_drops = dref_unemulated_drops.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),

@@ -552,7 +552,9 @@ public:
     }
 
     [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth,
-                                      VkImageView descriptor_view);
+                                      VkImageView descriptor_view, bool software_dref = false,
+                                      u8 dref_opcode_mask = 0, u64 shader_hash = 0,
+                                      u32 descriptor_index = 0);
 
 private:
     struct VariantKey {
@@ -578,7 +580,8 @@ private:
 
     static constexpr size_t MAX_VARIANTS = 32;
 
-    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth) const noexcept;
+    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth,
+                                     bool software_dref) const noexcept;
     [[nodiscard]] VkSampler Find(const VariantKey& key) const noexcept;
     VkSampler Emplace(VariantKey key);
 

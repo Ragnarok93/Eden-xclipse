@@ -517,6 +517,19 @@ u32 GetTextureHandle(Environment& env, const ConstBufferAddr& cbuf) {
     return env.IsTexturePixelFormatInteger(GetTextureHandle(env, cbuf));
 }
 
+u8 DrefOpcodeMask(IR::Opcode opcode) noexcept {
+    switch (opcode) {
+    case IR::Opcode::ImageSampleDrefImplicitLod:
+        return 1U << 0;
+    case IR::Opcode::ImageSampleDrefExplicitLod:
+        return 1U << 1;
+    case IR::Opcode::ImageGatherDref:
+        return 1U << 2;
+    default:
+        return 0;
+    }
+}
+
 class Descriptors {
 public:
     explicit Descriptors(TextureBufferDescriptors& texture_buffer_descriptors_,
@@ -567,6 +580,8 @@ public:
         // TODO: Read this from TIC
         texture_descriptors[index].is_multisample |= desc.is_multisample;
         texture_descriptors[index].is_integer |= desc.is_integer;
+        texture_descriptors[index].is_r32_dref_candidate |= desc.is_r32_dref_candidate;
+        texture_descriptors[index].dref_opcode_mask |= desc.dref_opcode_mask;
         return index;
     }
 
@@ -812,12 +827,22 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
             } else {
                 count = std::min(count, sampled_dynamic_cap);
                 const bool is_integer{is_texture_pixel_format_integer(cbuf)};
+                const u8 dref_opcode_mask = DrefOpcodeMask(inst->GetOpcode());
+                // The compiler can only select the R32 software-DREF path when the sampled
+                // descriptor is statically identifiable. Dynamic descriptor arrays remain
+                // conservative and are surfaced by runtime dropped-compare diagnostics.
+                const bool is_r32_dref_candidate =
+                    dref_opcode_mask != 0 && cbuf.count == 1 &&
+                    ReadTexturePixelFormatCached(env, cbuf) == TexturePixelFormat::R32_FLOAT;
                 index = descriptors.Add(TextureDescriptor{
                     .type = flags.type,
                     .is_depth = flags.is_depth != 0,
                     .is_multisample = is_multisample,
                     .is_integer = is_integer,
                     .has_secondary = cbuf.has_secondary,
+                    .is_r32_dref_candidate = is_r32_dref_candidate,
+                    .xclipse_software_dref = false,
+                    .dref_opcode_mask = dref_opcode_mask,
                     .cbuf_index = cbuf.index,
                     .cbuf_offset = cbuf.offset,
                     .shift_left = cbuf.shift_left,

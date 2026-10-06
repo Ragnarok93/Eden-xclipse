@@ -211,6 +211,9 @@ struct TextureDescriptor {
     bool is_multisample;
     bool is_integer;
     bool has_secondary;
+    bool is_r32_dref_candidate;
+    bool xclipse_software_dref;
+    u8 dref_opcode_mask;
     u32 cbuf_index;
     u32 cbuf_offset;
     u32 shift_left;
@@ -322,6 +325,7 @@ struct Info {
     IR::Type used_storage_buffer_types{};
     IR::Type used_indirect_cbuf_types{};
 
+    u64 xclipse_shader_hash{};
     u32 constant_buffer_mask{};
     std::array<u32, MAX_CBUFS> constant_buffer_used_sizes{};
     u32 nvn_buffer_base{};

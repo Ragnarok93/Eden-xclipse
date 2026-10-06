@@ -34,6 +34,7 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     telemetry.RecordDescriptorBufferAllocation(64);
     telemetry.RecordDescriptorBufferUse(true);
     telemetry.RecordDescriptorFrameWaitRequest();
+    telemetry.RecordDrefBinding(true, false);
     telemetry.RecordColorShaderBlit();
     telemetry.RecordDepthStencilBlit(true);
     telemetry.RecordDepthStencilBlit(false);
@@ -64,6 +65,8 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     REQUIRE(snapshot.descriptor_push_updates == 0);
     REQUIRE(snapshot.descriptor_buffer_uses == 0);
     REQUIRE(snapshot.descriptor_frame_wait_requests == 0);
+    REQUIRE(snapshot.dref_shader_bindings == 0);
+    REQUIRE(snapshot.dref_unemulated_drops == 0);
     REQUIRE(snapshot.descriptor_bytes == 0);
     REQUIRE(snapshot.color_shader_blits == 0);
     REQUIRE(snapshot.depth_stencil_native_blits == 0);
@@ -123,6 +126,9 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordDescriptorBufferWrap(false);
     telemetry.RecordDescriptorBufferWrap(true);
     telemetry.RecordDescriptorFrameWaitRequest();
+    telemetry.RecordDrefBinding(false, false);
+    telemetry.RecordDrefBinding(true, true);
+    telemetry.RecordDrefBinding(true, false);
     telemetry.RecordBcnNativePath(Vulkan::XclipseBcnFormat::BC3);
     telemetry.RecordBcnGpuDecode(Vulkan::XclipseBcnFormat::BC5, 4096);
     telemetry.RecordBptcGpuDecode(Vulkan::XclipseBcnFormat::BC7, 8192);
@@ -203,6 +209,11 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.descriptor_buffer_wraps == 2);
     REQUIRE(snapshot.descriptor_stalls == 1);
     REQUIRE(snapshot.descriptor_frame_wait_requests == 1);
+    REQUIRE(snapshot.dref_shader_bindings == 3);
+    REQUIRE(snapshot.dref_native_bindings == 2);
+    REQUIRE(snapshot.dref_software_bindings == 1);
+    REQUIRE(snapshot.dref_compare_drops == 2);
+    REQUIRE(snapshot.dref_unemulated_drops == 1);
     REQUIRE(snapshot.bcn_gpu_decode_dispatches == 2);
     REQUIRE(snapshot.bcn_gpu_decode_bytes == 12288);
     REQUIRE(snapshot.bcn_gpu_decode_fallbacks == 1);

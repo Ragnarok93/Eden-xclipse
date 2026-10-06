@@ -358,6 +358,7 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
     const u32 num_image_buffers = Shader::NumDescriptors(info.image_buffer_descriptors);
     views += num_texture_buffers;
     views += num_image_buffers;
+    u32 sampled_descriptor_index{};
     for (const auto& desc : info.texture_descriptors) {
         bool is_rescaled{};
         for (u32 index = 0; index < desc.count; ++index) {
@@ -373,13 +374,15 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
             if (sampler.CompareEnabled()) {
                 rescaling.SetDrefCompareOp(static_cast<u32>(sampler.CompareOp()));
             }
-            const VkSampler vk_sampler =
-                sampler.HandleFor(image_view, desc.is_depth, vk_image_view);
+            const VkSampler vk_sampler = sampler.HandleFor(
+                image_view, desc.is_depth, vk_image_view, desc.xclipse_software_dref,
+                desc.dref_opcode_mask, info.xclipse_shader_hash, sampled_descriptor_index);
             guest_descriptor_queue.AddSampledImage(vk_image_view, vk_sampler);
             const bool element_rescaled{texture_cache.IsRescaling(image_view)};
             is_rescaled |= element_rescaled;
         }
         rescaling.PushTexture(is_rescaled);
+        ++sampled_descriptor_index;
     }
     for (const auto& desc : info.image_descriptors) {
         bool is_rescaled{};

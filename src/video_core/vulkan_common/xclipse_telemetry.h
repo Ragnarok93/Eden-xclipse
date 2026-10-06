@@ -238,6 +238,12 @@ struct XclipseTelemetrySnapshot {
     u64 descriptor_stalls{};
     u64 descriptor_frame_wait_requests{};
 
+    u64 dref_shader_bindings{};
+    u64 dref_native_bindings{};
+    u64 dref_software_bindings{};
+    u64 dref_compare_drops{};
+    u64 dref_unemulated_drops{};
+
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
     u64 bcn_gpu_decode_fallbacks{};
@@ -305,6 +311,7 @@ public:
     void RecordDescriptorBufferUse(bool reused) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordDescriptorFrameWaitRequest() noexcept;
+    void RecordDrefBinding(bool compare_dropped, bool software_emulated) noexcept;
     void RecordBcnNativePath(XclipseBcnFormat format) noexcept;
     void RecordBcnGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept;
     void RecordBptcGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept;
@@ -387,6 +394,12 @@ private:
     std::atomic<u64> descriptor_buffer_wraps{};
     std::atomic<u64> descriptor_stalls{};
     std::atomic<u64> descriptor_frame_wait_requests{};
+
+    std::atomic<u64> dref_shader_bindings{};
+    std::atomic<u64> dref_native_bindings{};
+    std::atomic<u64> dref_software_bindings{};
+    std::atomic<u64> dref_compare_drops{};
+    std::atomic<u64> dref_unemulated_drops{};
 
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
