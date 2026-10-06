@@ -116,7 +116,51 @@ constexpr bool IsZetaFormat(PixelFormat pixel_format) {
     return pixel_format >= PixelFormat::MaxColorFormat && pixel_format < PixelFormat::MaxDepthStencilFormat;
 }
 
-FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with_srgb, PixelFormat pixel_format) {
+VkFormat NativeBcnFormat(PixelFormat pixel_format) {
+    switch (pixel_format) {
+    case PixelFormat::BC1_RGBA_UNORM:
+        return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+    case PixelFormat::BC1_RGBA_SRGB:
+        return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+    case PixelFormat::BC2_UNORM:
+        return VK_FORMAT_BC2_UNORM_BLOCK;
+    case PixelFormat::BC2_SRGB:
+        return VK_FORMAT_BC2_SRGB_BLOCK;
+    case PixelFormat::BC3_UNORM:
+        return VK_FORMAT_BC3_UNORM_BLOCK;
+    case PixelFormat::BC3_SRGB:
+        return VK_FORMAT_BC3_SRGB_BLOCK;
+    case PixelFormat::BC4_UNORM:
+        return VK_FORMAT_BC4_UNORM_BLOCK;
+    case PixelFormat::BC4_SNORM:
+        return VK_FORMAT_BC4_SNORM_BLOCK;
+    case PixelFormat::BC5_UNORM:
+        return VK_FORMAT_BC5_UNORM_BLOCK;
+    case PixelFormat::BC5_SNORM:
+        return VK_FORMAT_BC5_SNORM_BLOCK;
+    case PixelFormat::BC6H_UFLOAT:
+        return VK_FORMAT_BC6H_UFLOAT_BLOCK;
+    case PixelFormat::BC6H_SFLOAT:
+        return VK_FORMAT_BC6H_SFLOAT_BLOCK;
+    case PixelFormat::BC7_UNORM:
+        return VK_FORMAT_BC7_UNORM_BLOCK;
+    case PixelFormat::BC7_SRGB:
+        return VK_FORMAT_BC7_SRGB_BLOCK;
+    default:
+        return VK_FORMAT_UNDEFINED;
+    }
+}
+
+bool IsBcnNative(const Device& device, PixelFormat pixel_format, bool require_transfer_src,
+                 bool require_transfer_dst) {
+    const VkFormat format = NativeBcnFormat(pixel_format);
+    return format != VK_FORMAT_UNDEFINED &&
+           device.IsOptimalBcnSupported(format, require_transfer_src, require_transfer_dst);
+}
+
+FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with_srgb,
+                         PixelFormat pixel_format, bool require_transfer_src,
+                         bool require_transfer_dst) {
     u32 const usage_attachable = 1 << 0;
     u32 const usage_storage = 1 << 1;
     FormatTuple tuple;
@@ -263,7 +307,10 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
             break;
         }
     }
-    if (!device.IsOptimalBcnSupported() && VideoCore::Surface::IsPixelFormatBCn(pixel_format)) {
+    const bool native_bcn = VideoCore::Surface::IsPixelFormatBCn(pixel_format) &&
+                            device.IsOptimalBcnSupported(tuple.format, require_transfer_src,
+                                                         require_transfer_dst);
+    if (VideoCore::Surface::IsPixelFormatBCn(pixel_format) && !native_bcn) {
         // Transcode on hardware that doesn't support BCn natively
         if (pixel_format == PixelFormat::BC4_SNORM) {
             tuple.format = VK_FORMAT_R8_SNORM;
@@ -280,6 +327,17 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         } else {
             tuple.format = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
         }
+        const bool gpu_decode_base_storage_candidate =
+            device.UseXclipseBcnGpuDecode() && !device.HasBrokenCompute() &&
+            (pixel_format == PixelFormat::BC4_UNORM || pixel_format == PixelFormat::BC4_SNORM ||
+             pixel_format == PixelFormat::BC5_UNORM || pixel_format == PixelFormat::BC5_SNORM);
+        if (gpu_decode_base_storage_candidate &&
+            device.IsFormatSupported(tuple.format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
+                                     FormatType::Optimal)) {
+            tuple.usage |= usage_storage;
+        }
+        // BC6H/BC7 use their independently validated GPU decoder when selected by policy. Do not
+        // require storage for this format-selection fallback; the decoded destination decides it.
     } else if (!device.IsOptimalEtc2Supported() && VideoCore::Surface::IsPixelFormatETC2(pixel_format)) {
         // Transcode on hardware that doesn't support ETC2 natively
         if (pixel_format == PixelFormat::EAC_R11_SNORM) {
@@ -303,9 +361,18 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
             VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT | VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
         break;
     case FormatType::Linear:
-    case FormatType::Optimal:
-        usage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
-                VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+    case FormatType::Optimal: {
+        // Converted BC images retain the conservative transfer requirements. Only a validated
+        // native BC image may omit a transfer operation that the caller does not use.
+        const bool use_requested_transfer_usage =
+            !VideoCore::Surface::IsPixelFormatBCn(pixel_format) || native_bcn;
+        usage = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        if (!use_requested_transfer_usage || require_transfer_dst) {
+            usage |= VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        }
+        if (!use_requested_transfer_usage || require_transfer_src) {
+            usage |= VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+        }
         if (attachable) {
             usage |= IsZetaFormat(pixel_format) ? VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
                                                 : VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
@@ -315,7 +382,11 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
         }
         break;
     }
-    return {device.GetSupportedFormat(tuple.format, usage, format_type), attachable, storage};
+    }
+    const VkFormat requested_format{tuple.format};
+    const VkFormat supported_format{device.GetSupportedFormat(tuple.format, usage, format_type)};
+    return {supported_format, attachable, storage, requested_format,
+            supported_format != requested_format};
 }
 
 VkShaderStageFlagBits ShaderStage(Shader::Stage stage) {

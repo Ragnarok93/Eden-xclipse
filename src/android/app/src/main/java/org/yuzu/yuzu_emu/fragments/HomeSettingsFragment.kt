@@ -43,7 +43,6 @@ import org.yuzu.yuzu_emu.model.HomeViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
-import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.LosslessScalingHelper
 import org.yuzu.yuzu_emu.utils.ViewUtils.updateMargins
 
@@ -465,74 +464,72 @@ class HomeSettingsFragment : Fragment() {
         }
     }
 
-    // Share the current log if we just returned from a game but share the old log
-    // if we just started the app and the old log exists.
-    private fun shareLog() {
-        val currentLog = DocumentFile.fromSingleUri(
-            mainActivity,
-            DocumentsContract.buildDocumentUri(
-                DocumentProvider.AUTHORITY,
-                "${DocumentProvider.ROOT_ID}/log/eden_log.txt"
+    private fun findDebugLog(fileName: String): DocumentFile? {
+        fun resolve(name: String): DocumentFile? =
+            DocumentFile.fromSingleUri(
+                mainActivity,
+                DocumentsContract.buildDocumentUri(
+                    DocumentProvider.AUTHORITY,
+                    "${DocumentProvider.ROOT_ID}/log/$name"
+                )
             )
-        )!!
-        val oldLog = DocumentFile.fromSingleUri(
-            mainActivity,
-            DocumentsContract.buildDocumentUri(
-                DocumentProvider.AUTHORITY,
-                "${DocumentProvider.ROOT_ID}/log/eden_log.txt.old.txt"
-            )
-        )!!
 
-        val intent = Intent(Intent.ACTION_SEND)
-            .setDataAndType(currentLog.uri, FileUtil.TEXT_PLAIN)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        if (!Log.gameLaunched && oldLog.exists()) {
-            intent.putExtra(Intent.EXTRA_STREAM, oldLog.uri)
-            startActivity(Intent.createChooser(intent, getText(R.string.share_log)))
-        } else if (currentLog.exists()) {
-            intent.putExtra(Intent.EXTRA_STREAM, currentLog.uri)
-            startActivity(Intent.createChooser(intent, getText(R.string.share_log)))
-        } else {
+        val current = resolve(fileName)
+        if (current?.exists() == true) {
+            return current
+        }
+
+        return resolve("$fileName.old.txt")?.takeIf { it.exists() }
+    }
+
+    // Export the canonical debug history. GPU logging is included when present so one share action
+    // captures the state needed to diagnose renderer failures.
+    private fun shareLog() {
+        val logs = listOfNotNull(
+            findDebugLog("eden_log.txt"),
+            findDebugLog("eden_gpu.log")
+        )
+        if (logs.isEmpty()) {
             Toast.makeText(
                 requireContext(),
                 getText(R.string.share_log_missing),
                 Toast.LENGTH_SHORT
             ).show()
+            return
         }
+
+        val intent = if (logs.size == 1) {
+            Intent(Intent.ACTION_SEND)
+                .setType(FileUtil.TEXT_PLAIN)
+                .putExtra(Intent.EXTRA_STREAM, logs.first().uri)
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE)
+                .setType(FileUtil.TEXT_PLAIN)
+                .putParcelableArrayListExtra(
+                    Intent.EXTRA_STREAM,
+                    ArrayList(logs.map { it.uri })
+                )
+        }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(Intent.createChooser(intent, getText(R.string.share_log)))
     }
 
     private fun shareGpuLog() {
-        val currentLog = DocumentFile.fromSingleUri(
-            mainActivity,
-            DocumentsContract.buildDocumentUri(
-                DocumentProvider.AUTHORITY,
-                "${DocumentProvider.ROOT_ID}/log/eden_gpu.log"
-            )
-        )!!
-        val oldLog = DocumentFile.fromSingleUri(
-            mainActivity,
-            DocumentsContract.buildDocumentUri(
-                DocumentProvider.AUTHORITY,
-                "${DocumentProvider.ROOT_ID}/log/eden_gpu.log.old.txt"
-            )
-        )!!
-
-        val intent = Intent(Intent.ACTION_SEND)
-            .setDataAndType(currentLog.uri, FileUtil.TEXT_PLAIN)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        if (!Log.gameLaunched && oldLog.exists()) {
-            intent.putExtra(Intent.EXTRA_STREAM, oldLog.uri)
-            startActivity(Intent.createChooser(intent, getText(R.string.share_gpu_log)))
-        } else if (currentLog.exists()) {
-            intent.putExtra(Intent.EXTRA_STREAM, currentLog.uri)
-            startActivity(Intent.createChooser(intent, getText(R.string.share_gpu_log)))
-        } else {
+        val gpuLog = findDebugLog("eden_gpu.log")
+        if (gpuLog == null) {
             Toast.makeText(
                 requireContext(),
                 getText(R.string.share_gpu_log_missing),
                 Toast.LENGTH_SHORT
             ).show()
+            return
         }
+
+        val intent = Intent(Intent.ACTION_SEND)
+            .setDataAndType(gpuLog.uri, FileUtil.TEXT_PLAIN)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .putExtra(Intent.EXTRA_STREAM, gpuLog.uri)
+        startActivity(Intent.createChooser(intent, getText(R.string.share_gpu_log)))
     }
 
     private fun setInsets() =

@@ -307,7 +307,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                                 "[EmulationFragment] Found existing custom settings for ${gameInstance.title}, loading them"
                             )
                             SettingsFile.loadCustomConfig(gameInstance)
-                            NativeConfig.unloadPerGameConfig()
                         } else {
                             shouldUseCustom = false
                             Log.info(
@@ -327,7 +326,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
                     if (shouldUseCustom) {
                         SettingsFile.loadCustomConfig(game!!)
-                        NativeConfig.unloadPerGameConfig()
                         Log.info("[EmulationFragment] Loading custom settings for ${game!!.title}")
                     } else {
                         Log.info("[EmulationFragment] Using global settings")
@@ -882,10 +880,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             override fun onDrawerOpened(drawerView: View) {
                 if (drawerView == binding.quickSettingsSheet) {
                     isQuickSettingsMenuOpen = true
-                    if (shouldUseCustom) {
-                        SettingsFile.loadCustomConfig(game!!)
-                    }
-                    refreshPostProcessing()
+                    Log.info(
+                        "[QuickSettings] opened; reusing active config and post-processing state"
+                    )
                     addQuickSettings()
                 }
             }
@@ -893,9 +890,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             override fun onDrawerClosed(drawerView: View) {
                 if (drawerView == binding.quickSettingsSheet) {
                     isQuickSettingsMenuOpen = false
-                    if (shouldUseCustom) {
-                        NativeConfig.unloadPerGameConfig()
-                    }
                 }
             }
 
@@ -1478,6 +1472,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         socRunnable?.let { socUpdateHandler.removeCallbacks(it) }
         handler.removeCallbacksAndMessages(null)
         clearPausedFrame()
+        if (shouldUseCustom && NativeConfig.isPerGameConfigLoaded()) {
+            NativeConfig.unloadPerGameConfig()
+        }
         _binding?.surfaceInputOverlay?.touchEventListener = null
         _binding = null
         isAmiiboPickerOpen = false

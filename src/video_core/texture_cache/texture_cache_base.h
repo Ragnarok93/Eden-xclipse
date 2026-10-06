@@ -152,8 +152,9 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
 public:
     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
 
-    /// Notify the cache that a new frame has been queued
-    void TickFrame();
+    /// Notify the cache that a new frame has been queued.
+    /// External pressure only reuses the existing LRU GC modes; defaults preserve normal policy.
+    void TickFrame(bool force_high_priority_gc = false, bool force_aggressive_gc = false);
 
     /// Return a constant reference to the given image view id
     [[nodiscard]] const ImageView& GetImageView(ImageViewId id) const noexcept;
@@ -295,7 +296,8 @@ private:
     void OnGPUASRegister(size_t map_id) final override;
 
     /// Runs the Garbage Collector.
-    void RunGarbageCollector();
+    void RunGarbageCollector(bool force_high_priority_gc = false,
+                             bool force_aggressive_gc = false);
 
     /// Find or create an image view in the guest descriptor table
     ImageViewId VisitImageView(u32 index, bool compute);
@@ -389,7 +391,7 @@ private:
     void RemoveFramebuffers(std::span<const ImageViewId> removed_views);
 
     /// Mark an image as modified from the GPU
-    void MarkModification(ImageBase& image) noexcept;
+    void MarkModification(Image& image) noexcept;
 
     /// Synchronize image aliases, copying data if needed
     void SynchronizeAliases(ImageId image_id);

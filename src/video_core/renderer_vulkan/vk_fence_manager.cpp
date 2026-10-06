@@ -37,7 +37,7 @@ void InnerFence::Wait() {
     if (is_stubbed) {
         return;
     }
-    scheduler.Wait(wait_tick);
+    scheduler.Wait(wait_tick, 0.0, XclipseWaitSource::Fence);
 }
 
 FenceManager::FenceManager(VideoCore::RasterizerInterface& rasterizer_, Tegra::GPU& gpu_,

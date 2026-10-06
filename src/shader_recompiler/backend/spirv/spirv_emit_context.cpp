@@ -1021,7 +1021,7 @@ void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
 }
 
 void EmitContext::DefineRescalingInput(const Info& info) {
-    if (!info.uses_rescaling_uniform) {
+    if (!info.uses_rescaling_uniform && !info.uses_xclipse_r32_dref_emulation) {
         return;
     }
     if (profile.unified_descriptor_binding) {
@@ -1032,7 +1032,7 @@ void EmitContext::DefineRescalingInput(const Info& info) {
 }
 
 void EmitContext::DefineRescalingInputPushConstant() {
-    boost::container::static_vector<Id, 3> members{};
+    boost::container::static_vector<Id, 4> members{};
     u32 member_index{0};
 
     rescaling_textures_type = TypeArray(U32[1], Const(4u));
@@ -1044,6 +1044,11 @@ void EmitContext::DefineRescalingInputPushConstant() {
     Decorate(rescaling_images_type, spv::Decoration::ArrayStride, 4u);
     members.push_back(rescaling_images_type);
     rescaling_images_member_index = member_index++;
+
+    const Id dref_compare_type{TypeArray(U32[1], Const(NUM_DREF_COMPARE_OP_WORDS))};
+    Decorate(dref_compare_type, spv::Decoration::ArrayStride, 4u);
+    members.push_back(dref_compare_type);
+    rescaling_dref_compare_member_index = member_index++;
 
     if (stage != Stage::Compute) {
         members.push_back(F32[1]);
@@ -1060,6 +1065,11 @@ void EmitContext::DefineRescalingInputPushConstant() {
     MemberDecorate(push_constant_struct, rescaling_images_member_index, spv::Decoration::Offset,
                    static_cast<u32>(offsetof(RescalingLayout, rescaling_images)));
     MemberName(push_constant_struct, rescaling_images_member_index, "rescaling_images");
+
+    MemberDecorate(push_constant_struct, rescaling_dref_compare_member_index,
+                   spv::Decoration::Offset,
+                   static_cast<u32>(offsetof(RescalingLayout, dref_compare_ops)));
+    MemberName(push_constant_struct, rescaling_dref_compare_member_index, "dref_compare_ops");
 
     if (stage != Stage::Compute) {
         MemberDecorate(push_constant_struct, rescaling_downfactor_member_index,
@@ -1390,6 +1400,7 @@ void EmitContext::DefineTextures(const Info& info, u32& binding, u32& scaling_in
             .pointer_type = pointer_type,
             .image_type = image_type,
             .count = desc.count,
+            .dref_mode = desc.dref_mode,
             .is_multisample = desc.is_multisample,
             .is_integer = desc.is_integer,
         });
@@ -1692,8 +1703,10 @@ void EmitContext::DefineOutputs(const IR::Program& program) {
     case Stage::Fragment:
         for (u32 index = 0; index < 8; ++index) {
             const bool need_dual_source = runtime_info.dual_source_blend && index <= 1;
-            if (!need_dual_source && !info.stores_frag_color[index] &&
-                !profile.need_declared_frag_colors) {
+            if (!ShouldDeclareFragmentColorOutput(runtime_info.color_output_types[index],
+                                                  info.stores_frag_color[index],
+                                                  profile.need_declared_frag_colors,
+                                                  need_dual_source)) {
                 continue;
             }
             const Id type{GetAttributeType(*this, runtime_info.color_output_types[index])};

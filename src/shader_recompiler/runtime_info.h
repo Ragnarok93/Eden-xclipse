@@ -25,6 +25,17 @@ enum class AttributeType : u8 {
     Disabled,
 };
 
+[[nodiscard]] constexpr bool ShouldDeclareFragmentColorOutput(
+    AttributeType output_type, bool stores_color, bool force_declaration,
+    bool dual_source) noexcept {
+    return output_type != AttributeType::Disabled &&
+           (stores_color || force_declaration || dual_source);
+}
+
+[[nodiscard]] constexpr bool ShouldEmitFragmentColorStore(AttributeType output_type) noexcept {
+    return output_type != AttributeType::Disabled;
+}
+
 enum class InputTopology {
     Points,
     Lines,
@@ -61,6 +72,41 @@ enum class CompareFunction {
     GreaterThanEqual,
     Always,
 };
+
+[[nodiscard]] constexpr bool EvaluateDrefCompare(CompareFunction comparison, float reference,
+                                                  float sampled) noexcept {
+    if (comparison == CompareFunction::Never) {
+        return false;
+    }
+    if (comparison == CompareFunction::Always) {
+        return true;
+    }
+
+    // The SPIR-V software-DREF path uses ordered floating-point comparisons. Match that
+    // guest-visible behavior here: every non-constant comparison is false for NaN operands.
+    if (reference != reference || sampled != sampled) {
+        return false;
+    }
+
+    switch (comparison) {
+    case CompareFunction::Less:
+        return reference < sampled;
+    case CompareFunction::Equal:
+        return reference == sampled;
+    case CompareFunction::LessThanEqual:
+        return reference <= sampled;
+    case CompareFunction::Greater:
+        return reference > sampled;
+    case CompareFunction::NotEqual:
+        return reference != sampled;
+    case CompareFunction::GreaterThanEqual:
+        return reference >= sampled;
+    case CompareFunction::Never:
+    case CompareFunction::Always:
+        break;
+    }
+    return false;
+}
 
 enum class TessPrimitive {
     Isolines,
@@ -104,6 +150,8 @@ struct RuntimeInfo {
     bool y_negate{};
     /// Use storage buffers instead of global pointers on GLASM
     bool glasm_use_storage_buffers{};
+    /// Emulate R32_FLOAT Dref operations on Xclipse when validated execution probes require it.
+    bool xclipse_r32_dref_emulation{};
 
     /// Transform feedback state for each varying
     std::array<TransformFeedbackVarying, 256> xfb_varyings{};

@@ -38,6 +38,7 @@ void Scheduler::CommandChunk::ExecuteAll(vk::CommandBuffer cmdbuf,
     }
     submit = false;
     command_offset = 0;
+    command_count = 0;
     first = nullptr;
     last = nullptr;
 }
@@ -62,10 +63,11 @@ u64 Scheduler::Flush(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore) {
 }
 
 void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore) {
+    device.GetXclipseTelemetry().RecordSchedulerFinish();
     // When finishing, we need to wait for the submission to have executed on the device.
     const u64 presubmit_tick = CurrentTick();
     SubmitExecution(signal_semaphore, wait_semaphore);
-    Wait(presubmit_tick);
+    Wait(presubmit_tick, 0.0, XclipseWaitSource::SchedulerFinish);
     AllocateNewContext();
 }
 
@@ -162,6 +164,7 @@ void Scheduler::RealizeDeferredClear() {
         dc.color_clear_mask, dc.depth_stencil, color_discard_mask, depth_stencil_discard);
     EndRenderPass();
     BeginRenderPassImpl(dc.framebuffer, renderpass, clear_values.data(), count);
+    dc.framebuffer->RecordProvenanceWrite(dc.color_clear_mask, dc.depth_stencil);
 }
 
 bool Scheduler::DeferColorClear(const Framebuffer* framebuffer, u32 rt_slot,
@@ -343,8 +346,9 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
     EndPendingOperations();
     InvalidateState();
 
+    const u64 recorded_commands = chunk ? chunk->CommandCount() : 0;
     const u64 signal_value = master_semaphore->NextTick();
-    RecordWithUploadBuffer([signal_semaphore, wait_semaphore, signal_value,
+    RecordWithUploadBuffer([signal_semaphore, wait_semaphore, signal_value, recorded_commands,
                             this](vk::CommandBuffer cmdbuf, vk::CommandBuffer upload_cmdbuf) {
         static constexpr VkMemoryBarrier WRITE_BARRIER{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -352,7 +356,17 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         };
-        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, WRITE_BARRIER);
+        const bool precise_upload_barrier = device.UseXclipseSyncPolicy();
+        const VkPipelineStageFlags upload_consumer_stages =
+            precise_upload_barrier ? vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER
+                                   : VkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        if (precise_upload_barrier) {
+            device.GetXclipseTelemetry().RecordTransferConsumerBarrier();
+        } else {
+            device.GetXclipseTelemetry().RecordAllCommandsBarrier();
+        }
+        upload_cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, upload_consumer_stages, 0,
+                                     WRITE_BARRIER);
         upload_cmdbuf.End();
         cmdbuf.End();
 
@@ -364,6 +378,8 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
         switch (const VkResult result = master_semaphore->SubmitQueue(
                     cmdbuf, upload_cmdbuf, signal_semaphore, wait_semaphore, signal_value)) {
         case VK_SUCCESS:
+            device.GetXclipseTelemetry().RecordQueueSubmit(recorded_commands,
+                                                           device.HasSynchronization2());
             // Log successful queue submission
             if (GPU::Logging::IsActive() &&
                 Settings::values.gpu_log_vulkan_calls.GetValue()) {

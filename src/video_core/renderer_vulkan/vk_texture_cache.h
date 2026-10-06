@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <array>
+#include <memory>
 #include <span>
 
 #include "video_core/texture_cache/texture_cache_base.h"
@@ -14,6 +16,7 @@
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
+#include "video_core/renderer_vulkan/xclipse_image_diagnostics.h"
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -89,9 +92,11 @@ public:
 
     void ConvertImage(Framebuffer* dst, ImageView& dst_view, ImageView& src_view);
 
-    bool CanAccelerateImageUpload(Image&) const noexcept {
-        return false;
-    }
+    bool CanAccelerateImageUpload(Image& image) const noexcept;
+
+    BCDecoderPass* BcnDecoderPassFor(PixelFormat format) noexcept;
+
+    BPTCDecoderPass* BptcDecoderPassFor(PixelFormat format) noexcept;
 
     bool CanUploadMSAA() const noexcept {
         return true;
@@ -157,6 +162,9 @@ public:
     BlitImageHelper& blit_image_helper;
     RenderPassCache& render_pass_cache;
     std::optional<ASTCDecoderPass> astc_decoder_pass;
+    std::array<std::optional<BCDecoderPass>, 4> bcn_decoder_passes;
+    std::optional<BPTCDecoderPass> bptc_bc6_decoder_pass;
+    std::optional<BPTCDecoderPass> bptc_bc7_decoder_pass;
 
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;
     const Settings::ResolutionScalingInfo& resolution;
@@ -278,6 +286,12 @@ public:
     /// once it ends.
     void MarkResolveShadowsUpToDate() const;
 
+    /// Records an authoritative GPU writer after its command has been assembled.
+    void RecordProvenanceWrite(XclipseImageWriter writer) const noexcept;
+
+    /// Records only the render-target slots affected by a clear operation.
+    void RecordProvenanceWrite(u32 color_mask, bool depth_stencil) const noexcept;
+
 private:
     static constexpr size_t NUM_MEMOIZED_RENDER_PASS_VARIANTS = 8;
 
@@ -289,6 +303,7 @@ private:
     u32 num_images = 0;
     std::array<VkImage, 9> images{};
     std::array<VkImageSubresourceRange, 9> image_ranges{};
+    std::array<ImageView*, 9> image_views{};
     std::array<size_t, NUM_RT> rt_map{};
     bool has_depth{};
     bool has_stencil{};
@@ -353,6 +368,23 @@ public:
         return std::exchange(initialized, true);
     }
 
+    void RecordProvenanceWrite(XclipseImageWriter writer) noexcept;
+    void RecordGpuModification() noexcept {
+        // Texture-cache preparation happens before the GPU command is known to be
+        // authoritative. Keep this separate from RecordProvenanceWrite so an
+        // aborted draw cannot make an undefined image look initialized.
+        xclipse_provenance.gpu_write_pending = true;
+    }
+    void RecordProvenanceTransition(VkImageLayout old_layout, VkImageLayout new_layout) noexcept;
+
+    [[nodiscard]] const XclipseImageProvenance& Provenance() const noexcept {
+        return xclipse_provenance;
+    }
+
+    [[nodiscard]] bool IsInitialized() const noexcept {
+        return initialized;
+    }
+
     VkImageView StorageImageView(s32 level) noexcept;
 
     bool IsRescaled() const noexcept;
@@ -389,6 +421,7 @@ private:
     std::vector<vk::ImageView> storage_image_views;
     VkImageAspectFlags aspect_mask = 0;
     bool initialized = false;
+    XclipseImageProvenance xclipse_provenance{};
 
     std::optional<Framebuffer> scale_framebuffer;
     std::optional<Framebuffer> normal_framebuffer;
@@ -444,6 +477,10 @@ public:
         return supports_depth_comparison;
     }
 
+    [[nodiscard]] bool SupportsLinearFilter() const noexcept {
+        return supports_linear_filter;
+    }
+
     [[nodiscard]] bool RequiresBorderColorFormat() const noexcept {
         return requires_border_color_format;
     }
@@ -467,6 +504,10 @@ public:
     [[nodiscard]] u32 BufferSize() const noexcept {
         return buffer_size;
     }
+
+    [[nodiscard]] const Image* SourceImage() const noexcept;
+    [[nodiscard]] Image* SourceImage() noexcept;
+    void RecordImageWrite(XclipseImageWriter writer) noexcept;
 
 private:
     struct StorageViews {
@@ -495,6 +536,7 @@ private:
     VkComponentMapping swizzle_mapping{};
 
     bool supports_depth_comparison = false;
+    bool supports_linear_filter = false;
     bool requires_border_color_format = false;
     bool supports_minmax_filter = false;
     bool has_identity_swizzle = true;
@@ -530,12 +572,23 @@ public:
         return *variants.front().sampler;
     }
 
-    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth);
+    [[nodiscard]] bool CompareEnabled() const noexcept {
+        return base_ci.compareEnable != VK_FALSE;
+    }
+
+    [[nodiscard]] VkCompareOp CompareOp() const noexcept {
+        return base_ci.compareOp;
+    }
+
+    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view,
+                                      Shader::DrefExecutionMode dref_mode,
+                                      VkImageView descriptor_view);
 
 private:
     struct VariantKey {
         bool reduce_anisotropy;
         bool force_nearest;
+        bool drop_depth_comparison;
         bool drop_reduction;
         bool drop_custom_border;
         bool srgb_border;
@@ -555,12 +608,14 @@ private:
 
     static constexpr size_t MAX_VARIANTS = 32;
 
-    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth) const noexcept;
+    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view,
+                                     Shader::DrefExecutionMode dref_mode) const noexcept;
     [[nodiscard]] VkSampler Find(const VariantKey& key) const noexcept;
     VkSampler Emplace(VariantKey key);
 
     CustomBorderColorBudget custom_border_color_budget;
     std::vector<Variant> variants;
+    std::unique_ptr<XclipseImageDiagnosticBindingSet> depth_compare_diagnostic_bindings;
 
     const Device* device_ptr{nullptr};
     VkSamplerCreateInfo base_ci{};

@@ -38,6 +38,7 @@
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
+#include "video_core/renderer_vulkan/xclipse_image_diagnostics.h"
 #include "video_core/shader_cache.h"
 #include "video_core/texture_cache/texture_cache_base.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -257,6 +258,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     HandleTransformFeedback();
     query_cache.CounterEnable(VideoCommon::QueryType::ZPassPixelCount64, maxwell3d->regs.zpass_pixel_count_enable);
     draw_func();
+    pipeline->RecordStorageImageWrites();
 }
 
 void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
@@ -275,6 +277,8 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
                             draw_params.base_vertex, draw_params.base_instance);
             }
         });
+        texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+            XclipseImageWriter::GpuModification);
 
         // Log draw call
         if (GPU::Logging::IsActive() &&
@@ -305,6 +309,8 @@ void RasterizerVulkan::DrawIndirect() {
                 cmdbuf.DrawIndirectByteCountEXT(1, 0, buffer_obj, offset, 0,
                                                 static_cast<u32>(stride));
             });
+            texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+                XclipseImageWriter::GpuModification);
             return;
         }
         if (params.include_count) {
@@ -324,6 +330,8 @@ void RasterizerVulkan::DrawIndirect() {
                                              static_cast<u32>(params.stride));
                 }
             });
+            texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+                XclipseImageWriter::GpuModification);
             return;
         }
         scheduler.Record([buffer_obj = buffer->Handle(), offset, params](vk::CommandBuffer cmdbuf) {
@@ -336,6 +344,8 @@ void RasterizerVulkan::DrawIndirect() {
                                     static_cast<u32>(params.stride));
             }
         });
+        texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+            XclipseImageWriter::GpuModification);
 
         // Log indirect draw call
         if (GPU::Logging::IsActive() &&
@@ -366,8 +376,8 @@ void RasterizerVulkan::DrawTexture() {
     query_cache.NotifySegment(true);
     query_cache.CounterEnable(VideoCommon::QueryType::ZPassPixelCount64, maxwell3d->regs.zpass_pixel_count_enable);
     const auto& draw_texture_state = maxwell3d->draw_manager.draw_texture_state;
-    const auto& sampler = texture_cache.GetSampler(draw_texture_state.src_sampler, false);
-    const auto& texture = texture_cache.GetImageView(draw_texture_state.src_texture);
+    auto* sampler = texture_cache.GetSampler(draw_texture_state.src_sampler, false);
+    auto& texture = texture_cache.GetImageView(draw_texture_state.src_texture);
     const auto* framebuffer = texture_cache.GetFramebuffer();
 
     const bool src_rescaling = texture_cache.IsRescaling() && texture.IsRescaled();
@@ -393,8 +403,12 @@ void RasterizerVulkan::DrawTexture() {
                                     .y = ScaleSrc(draw_texture_state.src_y1)}};
     Extent3D src_size = {static_cast<u32>(ScaleSrc(texture.size.width)),
                          static_cast<u32>(ScaleSrc(texture.size.height)), texture.size.depth};
+    // DrawTexture binds a raw image view, so adapt the sampler to that view's format first.
+    const VkSampler source_sampler = sampler->HandleFor(
+        texture, Shader::DrefExecutionMode::NonDref, texture.RenderTarget());
     blit_image.BlitColor(framebuffer, texture.RenderTarget(), texture.ImageHandle(),
-                         sampler->Handle(), dst_region, src_region, src_size);
+                         source_sampler, dst_region, src_region, src_size);
+    framebuffer->RecordProvenanceWrite(XclipseImageWriter::Blit);
 }
 
 void RasterizerVulkan::Clear(u32 layer_count) {
@@ -502,6 +516,9 @@ void RasterizerVulkan::Clear(u32 layer_count) {
     UpdateViewportsState(regs);
 
     const u32 color_attachment = regs.clear_surface.RT;
+    const auto record_color_clear = [&] {
+        framebuffer->RecordProvenanceWrite(1u << color_attachment, false);
+    };
     if (use_color && framebuffer->HasAspectColorBit(color_attachment)) {
         const auto format = VideoCore::Surface::PixelFormatFromRenderTargetFormat(regs.rt[color_attachment].format);
         bool is_integer = IsPixelFormatInteger(format);
@@ -530,6 +547,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
                     };
                     cmdbuf.ClearAttachments(attachment, clear_rect);
                 });
+                record_color_clear();
             }
         } else {
             u8 color_mask = u8(regs.clear_surface.R | regs.clear_surface.G << 1 | regs.clear_surface.B << 2 | regs.clear_surface.A << 3);
@@ -538,6 +556,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
                 Offset2D{.x = clear_rect.rect.offset.x + s32(clear_rect.rect.extent.width),
                          .y = clear_rect.rect.offset.y + s32(clear_rect.rect.extent.height)}};
             blit_image.ClearColor(framebuffer, color_mask, regs.clear_color, dst_region);
+            record_color_clear();
         }
     }
 
@@ -564,6 +583,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
         blit_image.ClearDepthStencil(framebuffer, use_depth, regs.clear_depth,
                                      u8(regs.stencil_front_mask), regs.clear_stencil,
                                      regs.stencil_front_func_mask, dst_region);
+        framebuffer->RecordProvenanceWrite(0, true);
     } else if (can_defer_clear) {
         VkClearValue ds_value{};
         ds_value.depthStencil.depth = regs.clear_depth;
@@ -579,6 +599,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
             attachment.clearValue.depthStencil.stencil = clear_stencil;
             cmdbuf.ClearAttachments(attachment, clear_rect);
         });
+        framebuffer->RecordProvenanceWrite(0, true);
     }
 }
 
@@ -591,8 +612,9 @@ void RasterizerVulkan::DispatchCompute() {
         return;
     }
     std::scoped_lock lock{texture_cache.mutex, buffer_cache.mutex};
+    boost::container::small_vector<VideoCommon::ImageViewId, 64> written_image_views;
     if (!pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,
-                             texture_cache)) {
+                             texture_cache, written_image_views)) {
         return;
     }
 
@@ -612,6 +634,10 @@ void RasterizerVulkan::DispatchCompute() {
             }
             cmdbuf.DispatchIndirect(indirect_buffer, indirect_offset);
         });
+        for (const VideoCommon::ImageViewId image_view_id : written_image_views) {
+            texture_cache.GetImageView(image_view_id).RecordImageWrite(
+                XclipseImageWriter::GpuModification);
+        }
         return;
     }
     const std::array<u32, 3> dim{qmd.grid_dim_x, qmd.grid_dim_y, qmd.grid_dim_z};
@@ -634,6 +660,10 @@ void RasterizerVulkan::DispatchCompute() {
         }
         cmdbuf.Dispatch(dim[0], dim[1], dim[2]);
     });
+    for (const VideoCommon::ImageViewId image_view_id : written_image_views) {
+        texture_cache.GetImageView(image_view_id).RecordImageWrite(
+            XclipseImageWriter::GpuModification);
+    }
 
     // Log compute dispatch
     if (GPU::Logging::IsActive() &&
@@ -892,6 +922,237 @@ void RasterizerVulkan::FlushCommands() {
 
 void RasterizerVulkan::TickFrame() {
     draw_counter = 0;
+    auto& telemetry = device.GetXclipseTelemetry();
+    telemetry.RecordFrame();
+    ++xclipse_runtime_frame_counter;
+
+    const bool memory_monitor_enabled =
+        Settings::values.xclipse_memory_pressure_monitor.GetValue();
+    XclipseTextureGcPressure texture_gc_pulse = XclipseTextureGcPressure::None;
+    const auto pressure_update =
+        xclipse_memory_pressure.Tick(device, memory_monitor_enabled);
+    if (!memory_monitor_enabled) {
+        static_cast<void>(staging_pool.ApplyMemoryPressure(MemoryPressureClass::Normal));
+    } else if (pressure_update.sampled) {
+        texture_gc_pulse =
+            TextureGcPressureFor(pressure_update.pressure, pressure_update.sample);
+
+        // Pressure sampling is time-gated inside XclipseMemoryPressureController, so call it every
+        // frame. On each fresh sample, immediately reclaim already-free staging before any later
+        // telemetry or allocations can obscure the actual returned footprint.
+        const auto staging_reclaim =
+            staging_pool.ApplyMemoryPressure(pressure_update.pressure);
+        if ((pressure_update.changed || staging_reclaim.released_bytes != 0) &&
+            Settings::values.xclipse_diagnostic_logging.GetValue()) {
+            const auto staging_after = staging_pool.Stats();
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE STAGING RECLAIM pressure={} cached_before={} cached_after={} "
+                     "released_bytes={} cache_limit={} largest_upload={} largest_free_upload={} "
+                     "largest_active_upload={}",
+                     MemoryPressureClassName(pressure_update.pressure),
+                     staging_reclaim.before_cached_bytes, staging_reclaim.after_cached_bytes,
+                     staging_reclaim.released_bytes, staging_after.cache_limit_bytes,
+                     staging_after.largest_upload_bucket_bytes,
+                     staging_after.largest_free_upload_bucket_bytes,
+                     staging_after.largest_active_upload_bucket_bytes);
+        }
+    }
+    // Reclaim renderer-owned caches above, but leave guest working-set paging to Android.
+    // MADV_PAGEOUT over the entire live guest backing can evict hot pages on each
+    // High/Critical transition and introduce swap faults in subsequent frames.
+
+    if (pressure_update.sampled && pressure_update.changed &&
+        Settings::values.xclipse_diagnostic_logging.GetValue()) {
+        const auto& sample = pressure_update.sample;
+        const s32 budget_pct = sample.memory_budget_used_percent
+                                   ? static_cast<s32>(*sample.memory_budget_used_percent)
+                                   : -1;
+        const s64 vulkan_usage_mib =
+            sample.memory_usage_bytes
+                ? static_cast<s64>(*sample.memory_usage_bytes / (1024ULL * 1024ULL))
+                : -1;
+        const s64 vulkan_budget_mib =
+            sample.memory_budget_bytes
+                ? static_cast<s64>(*sample.memory_budget_bytes / (1024ULL * 1024ULL))
+                : -1;
+        const s32 ram_available_pct =
+            sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
+        const s64 ram_available_kib =
+            sample.ram_available_kib ? static_cast<s64>(*sample.ram_available_kib) : -1;
+        const s64 swap_total_kib =
+            sample.swap_total_kib ? static_cast<s64>(*sample.swap_total_kib) : -1;
+        const s64 swap_free_kib =
+            sample.swap_free_kib ? static_cast<s64>(*sample.swap_free_kib) : -1;
+        const s64 swap_used_kib =
+            sample.swap_used_kib ? static_cast<s64>(*sample.swap_used_kib) : -1;
+        const s32 rss_mib =
+            sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+        const s32 rss_pct =
+            sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
+        const s32 process_swap_mib =
+            sample.process_swap_mib ? static_cast<s32>(*sample.process_swap_mib) : -1;
+        const s32 process_rss_swap_mib =
+            sample.process_rss_swap_mib ? static_cast<s32>(*sample.process_rss_swap_mib) : -1;
+        const s32 process_rss_swap_pct =
+            sample.process_rss_swap_percent
+                ? static_cast<s32>(*sample.process_rss_swap_percent)
+                : -1;
+        const s32 gtt_pct =
+            sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE MEMORY PRESSURE guest_pageout=disabled state={} budget_pct={} "
+                 "vulkan_usage_mib={} "
+                 "vulkan_budget_mib={} ram_available_pct={} ram_available_kib={} "
+                 "swap_total_kib={} swap_free_kib={} swap_used_kib={} rss_mib={} rss_pct={} "
+                 "process_swap_mib={} "
+                 "process_rss_swap_mib={} process_rss_swap_pct={} gtt_pct={} "
+                 "psi_some={:.2f} psi_full={:.2f} trend={}",
+                 MemoryPressureClassName(pressure_update.pressure), budget_pct,
+                 vulkan_usage_mib, vulkan_budget_mib, ram_available_pct, ram_available_kib,
+                 swap_total_kib, swap_free_kib, swap_used_kib, rss_mib, rss_pct,
+                 process_swap_mib, process_rss_swap_mib, process_rss_swap_pct, gtt_pct,
+                 sample.psi_some_avg10.value_or(-1.0f),
+                 sample.psi_full_avg10.value_or(-1.0f),
+                 pressure_update.psi_trending_up);
+    }
+
+    if (telemetry.Enabled() && Settings::values.xclipse_diagnostic_logging.GetValue() &&
+        xclipse_runtime_frame_counter % 300 == 0) {
+        const auto snapshot = telemetry.Snapshot();
+        const auto& create_latency = snapshot.vulkan_pipeline_create_latency;
+        const double compile_avg_ms = create_latency.count != 0
+            ? static_cast<double>(create_latency.total_ns) /
+                  static_cast<double>(create_latency.count) / 1'000'000.0
+            : 0.0;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PIPELINE RUNTIME frame={} creates={} graphics={} compute={} "
+                 "runtime_map_hits={} runtime_map_misses={} failures={} policy_violations={} "
+                 "compile_avg_ms={:.3f} compile_max_ms={:.3f}",
+                 xclipse_runtime_frame_counter, snapshot.pipeline_creates,
+                 snapshot.graphics_pipeline_creates, snapshot.compute_pipeline_creates,
+                 snapshot.runtime_pipeline_map_hits, snapshot.runtime_pipeline_map_misses,
+                 snapshot.pipeline_failures, snapshot.pipeline_policy_violations,
+                 compile_avg_ms,
+                 static_cast<double>(create_latency.max_ns) / 1'000'000.0);
+        const auto& pressure = xclipse_memory_pressure.LastSnapshot();
+        const auto& sample = pressure.sample;
+        const s32 budget_pct = sample.memory_budget_used_percent
+                                   ? static_cast<s32>(*sample.memory_budget_used_percent)
+                                   : -1;
+        const s64 vulkan_usage_mib =
+            sample.memory_usage_bytes
+                ? static_cast<s64>(*sample.memory_usage_bytes / (1024ULL * 1024ULL))
+                : -1;
+        const s64 vulkan_budget_mib =
+            sample.memory_budget_bytes
+                ? static_cast<s64>(*sample.memory_budget_bytes / (1024ULL * 1024ULL))
+                : -1;
+        const s32 ram_available_pct =
+            sample.ram_available_percent ? static_cast<s32>(*sample.ram_available_percent) : -1;
+        const s64 ram_available_kib =
+            sample.ram_available_kib ? static_cast<s64>(*sample.ram_available_kib) : -1;
+        const s64 swap_total_kib =
+            sample.swap_total_kib ? static_cast<s64>(*sample.swap_total_kib) : -1;
+        const s64 swap_free_kib =
+            sample.swap_free_kib ? static_cast<s64>(*sample.swap_free_kib) : -1;
+        const s64 swap_used_kib =
+            sample.swap_used_kib ? static_cast<s64>(*sample.swap_used_kib) : -1;
+        const s32 rss_mib =
+            sample.process_rss_mib ? static_cast<s32>(*sample.process_rss_mib) : -1;
+        const s32 rss_pct =
+            sample.process_rss_percent ? static_cast<s32>(*sample.process_rss_percent) : -1;
+        const s32 process_swap_mib =
+            sample.process_swap_mib ? static_cast<s32>(*sample.process_swap_mib) : -1;
+        const s32 process_rss_swap_mib =
+            sample.process_rss_swap_mib ? static_cast<s32>(*sample.process_rss_swap_mib) : -1;
+        const s32 process_rss_swap_pct =
+            sample.process_rss_swap_percent
+                ? static_cast<s32>(*sample.process_rss_swap_percent)
+                : -1;
+        const s32 gtt_pct =
+            sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE RUNTIME frame={} submits={} host_waits={} wait_unknown={} "
+                 "buffer_cache_waits={} fence_waits={} descriptor_waits={} "
+                 "staging_pressure_waits={} finishes={} "
+                 "descriptor_sets={} set_updates={} push_updates={} buffer_uses={} "
+                 "buffer_reuses={} buffer_allocations={} descriptor_wait_requests={} stalls={} "
+                 "bcn_dispatches={} bcn_fallbacks={} color_shader_blits={} "
+                 "depth_native_blits={} depth_shader_blits={} native_resolves={} "
+                 "native_copies={} reinterpret_copies={} memory_monitor={} pressure={} "
+                 "texture_gc_policy={} texture_gc_pulse={} budget_pct={} vulkan_usage_mib={} "
+                 "vulkan_budget_mib={} ram_available_pct={} ram_available_kib={} "
+                 "swap_total_kib={} swap_free_kib={} swap_used_kib={} rss_mib={} rss_pct={} "
+                 "process_swap_mib={} "
+                 "process_rss_swap_mib={} process_rss_swap_pct={} gtt_pct={} "
+                 "psi_some={:.2f} psi_full={:.2f}",
+                 snapshot.frame_count, snapshot.queue_submits, snapshot.host_waits,
+                 snapshot.wait_unknown, snapshot.wait_buffer_cache, snapshot.wait_fence,
+                 snapshot.wait_descriptor_buffer, snapshot.wait_staging_pressure,
+                 snapshot.scheduler_finishes,
+                 snapshot.descriptor_set_allocations,
+                 snapshot.descriptor_set_updates, snapshot.descriptor_push_updates,
+                 snapshot.descriptor_buffer_uses, snapshot.descriptor_buffer_reuses,
+                 snapshot.descriptor_buffer_allocations,
+                 snapshot.descriptor_frame_wait_requests, snapshot.descriptor_stalls,
+                 snapshot.bcn_gpu_decode_dispatches, snapshot.bcn_gpu_decode_fallbacks,
+                 snapshot.color_shader_blits, snapshot.depth_stencil_native_blits,
+                 snapshot.depth_stencil_shader_blits, snapshot.native_resolves,
+                 snapshot.native_image_copies, snapshot.reinterpret_copies,
+                 memory_monitor_enabled, MemoryPressureClassName(pressure.pressure),
+                 memory_monitor_enabled
+                     ? TextureGcPressureName(TextureGcPressureFor(pressure.pressure, sample))
+                     : "off",
+                 memory_monitor_enabled ? TextureGcPressureName(texture_gc_pulse) : "off",
+                 budget_pct, vulkan_usage_mib, vulkan_budget_mib, ram_available_pct,
+                 ram_available_kib, swap_total_kib, swap_free_kib, swap_used_kib, rss_mib,
+                 rss_pct, process_swap_mib, process_rss_swap_mib, process_rss_swap_pct, gtt_pct,
+                 sample.psi_some_avg10.value_or(-1.0f),
+                 sample.psi_full_avg10.value_or(-1.0f));
+
+        const auto staging = staging_pool.Stats();
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE STAGING stream_bytes={} stream_requests={} stream_request_bytes={} "
+                 "stream_size_bypasses={} stream_size_bypass_bytes={} "
+                 "stream_ring_conflicts={} stream_ring_conflict_bytes={} stream_ring_wraps={} "
+                 "upload_bytes={} "
+                 "download_bytes={} device_local_bytes={} active_cached_bytes={} "
+                 "deferred_cached_bytes={} "
+                 "total_bytes={} peak_total_bytes={} cache_limit_bytes={} allocations={} reuses={} "
+                 "releases={} released_bytes={} pressure_releases={} pressure_released_bytes={} "
+                 "pressure_waits={} pressure_wait_reused_bytes={} pressure_pending_releases={} "
+                 "pressure_pending_release_bytes={} pressure_reallocations={} "
+                 "pressure_reallocated_bytes={} pressure_realloc_p50_ms={:.3f} "
+                 "pressure_realloc_p95_ms={:.3f} pressure_realloc_max_ms={:.3f} "
+                 "cache_limit_hits={} over_limit_allocations={} largest_upload_bucket={} "
+                 "largest_free_upload_bucket={} largest_active_upload_bucket={}",
+                 staging.stream_bytes, staging.stream_upload_requests,
+                 staging.stream_upload_request_bytes, staging.stream_size_bypasses,
+                 staging.stream_size_bypass_bytes, staging.stream_ring_conflicts,
+                 staging.stream_ring_conflict_bytes, staging.stream_ring_wraps,
+                 staging.cached_upload_bytes, staging.cached_download_bytes,
+                 staging.cached_device_local_bytes,
+                 staging.active_cached_bytes, staging.deferred_cached_bytes,
+                 staging.total_bytes, staging.peak_total_bytes, staging.cache_limit_bytes,
+                 staging.allocations, staging.reuses, staging.releases, staging.released_bytes,
+                 staging.pressure_releases, staging.pressure_released_bytes,
+                 staging.pressure_waits, staging.pressure_wait_reused_bytes,
+                 staging.pressure_pending_releases, staging.pressure_pending_release_bytes,
+                 snapshot.staging_pressure_reallocations,
+                 snapshot.staging_pressure_reallocated_bytes,
+                 static_cast<double>(
+                     snapshot.staging_pressure_reallocation_latency.PercentileUpperBoundNs(50)) /
+                     1'000'000.0,
+                 static_cast<double>(
+                     snapshot.staging_pressure_reallocation_latency.PercentileUpperBoundNs(95)) /
+                     1'000'000.0,
+                 static_cast<double>(snapshot.staging_pressure_reallocation_latency.max_ns) /
+                     1'000'000.0,
+                 staging.cache_limit_hits, staging.over_limit_allocations,
+                 staging.largest_upload_bucket_bytes, staging.largest_free_upload_bucket_bytes,
+                 staging.largest_active_upload_bucket_bytes);
+    }
+
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();
     descriptor_buffer_ring.TickFrame();
@@ -899,7 +1160,10 @@ void RasterizerVulkan::TickFrame() {
     staging_pool.TickFrame();
     {
         std::scoped_lock lock{texture_cache.mutex};
-        texture_cache.TickFrame();
+        // External Android pressure is a bounded nudge, not a persistent per-frame override.
+        // Normal Eden texture GC remains authoritative on all frames between fresh samples.
+        texture_cache.TickFrame(texture_gc_pulse != XclipseTextureGcPressure::None,
+                                texture_gc_pulse == XclipseTextureGcPressure::Critical);
     }
     {
         std::scoped_lock lock{buffer_cache.mutex};
@@ -1307,6 +1571,70 @@ void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
                 static_cast<double>(1ULL << (32 - 24)) / (static_cast<double>(0x1.ep+127));
             units = static_cast<float>(static_cast<double>(units) * rescale_factor);
         }
+    }
+
+    if (device.XclipseDetailedDiagnosticsEnabled() &&
+        (regs.polygon_offset_point_enable != 0 || regs.polygon_offset_line_enable != 0 ||
+         regs.polygon_offset_fill_enable != 0 || regs.depth_bias != 0 ||
+         regs.depth_bias_clamp != 0.0f || regs.slope_scale_depth_bias != 0.0f) &&
+        xclipse_dref_binding_diagnostic_budget.TryConsume(
+            XclipseImageDiagnosticCategory::DepthBias)) {
+        constexpr size_t POINT = 0;
+        constexpr size_t LINE = 1;
+        constexpr size_t POLYGON = 2;
+        static constexpr std::array POLYGON_OFFSET_ENABLE_LUT = {
+            POINT, LINE, LINE, LINE, POLYGON, POLYGON, POLYGON, POLYGON,
+            POLYGON, POLYGON, LINE, LINE, POLYGON, POLYGON, POLYGON,
+        };
+        const std::array enabled_lut{
+            regs.polygon_offset_point_enable,
+            regs.polygon_offset_line_enable,
+            regs.polygon_offset_fill_enable,
+        };
+        const u32 topology_index = u32(maxwell3d->draw_manager.draw_state.topology);
+        const bool effective_enable =
+            enabled_lut[POLYGON_OFFSET_ENABLE_LUT[topology_index]] != 0;
+        const GraphicsPipeline* const pipeline = pipeline_cache.CurrentGraphicsPipeline();
+        const auto guest_depth_format =
+            VideoCore::Surface::PixelFormatFromDepthFormat(regs.zeta.format);
+        const VkFormat host_depth_format =
+            MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, guest_depth_format).format;
+        const bool bias_enable_dynamic_cap = device.IsExtExtendedDynamicState2Supported();
+        const bool bias_enable_dynamic_used =
+            pipeline ? pipeline->UsesExtendedDynamicState2() : false;
+        const bool extended_dynamic_state_cap = device.IsExtExtendedDynamicStateSupported();
+        const bool extended_dynamic_state_used =
+            pipeline ? pipeline->UsesExtendedDynamicState() : false;
+        const bool depth_bias_control_cap = device.IsExtDepthBiasControlSupported();
+        // UpdateDepthBias attaches VkDepthBiasRepresentationInfoEXT whenever the extension is
+        // available. Exact representation is intentionally not requested by the renderer.
+        const bool depth_bias_control_used = depth_bias_control_cap;
+        const bool depth_bias_exact_cap = device.HasExactDepthBiasControl();
+        const bool depth_bias_exact_used = false;
+        const bool bias_values_dynamic = true; // VK_DYNAMIC_STATE_DEPTH_BIAS is always used.
+        const u32 host_depth_compare =
+            static_cast<u32>(MaxwellToVK::ComparisonOp(regs.depth_test_func));
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE DEPTH BIAS [diag=depth-bias] frame={} pipeline={:016x} "
+                 "enabled={} point={} line={} fill={} topology={} "
+                 "guest_constant={} host_constant={} slope={} clamp={} zeta_fmt={} "
+                 "host_depth_fmt={} guest_depth_compare={} host_depth_compare={} "
+                 "dref_pipeline={} bias_values_dynamic={} "
+                 "bias_enable_dynamic_cap={} bias_enable_dynamic_used={} "
+                 "extended_dynamic_state_cap={} extended_dynamic_state_used={} "
+                 "depth_bias_control_cap={} depth_bias_control_used={} "
+                 "depth_bias_exact_cap={} depth_bias_exact_used={}",
+                 device.GetXclipseTelemetry().FrameCount(),
+                 pipeline ? pipeline->DiagnosticHash() : 0, effective_enable,
+                 regs.polygon_offset_point_enable != 0, regs.polygon_offset_line_enable != 0,
+                 regs.polygon_offset_fill_enable != 0, topology_index, regs.depth_bias / 2.0f,
+                 units, regs.slope_scale_depth_bias, regs.depth_bias_clamp,
+                 static_cast<u32>(regs.zeta.format), static_cast<u32>(host_depth_format),
+                 static_cast<u32>(regs.depth_test_func), host_depth_compare,
+                 pipeline ? pipeline->HasDrefDescriptors() : false, bias_values_dynamic,
+                 bias_enable_dynamic_cap, bias_enable_dynamic_used, extended_dynamic_state_cap,
+                 extended_dynamic_state_used, depth_bias_control_cap, depth_bias_control_used,
+                 depth_bias_exact_cap, depth_bias_exact_used);
     }
 
     scheduler.Record([constant = units, clamp = regs.depth_bias_clamp,

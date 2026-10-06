@@ -130,12 +130,14 @@ public:
     }
 
     /// Waits for the given GPU tick, optionally pacing frames.
-    void Wait(u64 tick, double target_fps = 0.0) {
+    /// The source only tags an actual blocking wait for Xclipse diagnostics.
+    void Wait(u64 tick, double target_fps = 0.0,
+              XclipseWaitSource source = XclipseWaitSource::Unknown) {
         if (tick > 0) {
             if (tick >= master_semaphore->CurrentTick()) {
                 Flush();
             }
-            master_semaphore->Wait(tick);
+            master_semaphore->Wait(tick, source);
         }
         if (Settings::values.use_speed_limit.GetValue() && target_fps > 0.0) {
             auto now = std::chrono::steady_clock::now();
@@ -230,6 +232,7 @@ private:
                 first = last;
             }
             command_offset += sizeof(FuncType);
+            ++command_count;
             return true;
         }
 
@@ -245,11 +248,16 @@ private:
             return submit;
         }
 
+        u64 CommandCount() const {
+            return command_count;
+        }
+
     private:
         Command* first = nullptr;
         Command* last = nullptr;
 
         size_t command_offset = 0;
+        u64 command_count = 0;
         bool submit = false;
         alignas(std::max_align_t) std::array<u8, 0x8000> data{};
     };

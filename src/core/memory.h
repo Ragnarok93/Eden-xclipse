@@ -497,6 +497,9 @@ public:
 
     bool InvalidateSeparateHeap(void* fault_address);
 
+    /** Reclaims file-backed guest memory pages when Android is under severe memory pressure. */
+    [[nodiscard]] bool TrimHostMemoryForPressure();
+
 private:
     Core::System& system;
 

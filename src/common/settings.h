@@ -708,6 +708,43 @@ struct Values {
                                                        "vertex_input_dynamic_state", Category::RendererExtensions};
 
     Setting<bool> renderer_debug{linkage, false, "debug", Category::RendererDebug};
+    Setting<bool> xclipse_validation_probes{linkage, true, "xclipse_validation_probes",
+                                             Category::RendererDebug};
+    Setting<bool> xclipse_runtime_telemetry{linkage, true, "xclipse_runtime_telemetry",
+                                            Category::RendererDebug};
+    // Observability-only controls. These must never participate in renderer/device policy.
+    Setting<bool> xclipse_diagnostic_logging{linkage, false, "xclipse_diagnostic_logging",
+                                             Category::RendererDebug};
+    Setting<bool> xclipse_dref_diagnostics{linkage, false, "xclipse_dref_diagnostics",
+                                           Category::RendererDebug};
+    Setting<bool> xclipse_host_memory_diagnostics{linkage, false,
+                                                  "xclipse_host_memory_diagnostics",
+                                                  Category::RendererDebug};
+    Setting<bool> xclipse_gpu_memory_diagnostics{linkage, false,
+                                                 "xclipse_gpu_memory_diagnostics",
+                                                 Category::RendererDebug};
+    Setting<bool> xclipse_scheduler_diagnostics{linkage, false,
+                                                "xclipse_scheduler_diagnostics",
+                                                Category::RendererDebug};
+    Setting<bool> xclipse_memory_pressure_monitor{linkage, true,
+                                                  "xclipse_memory_pressure_monitor",
+                                                  Category::RendererDebug};
+    Setting<bool> xclipse_gpu_bcn_decode{linkage, false, "xclipse_gpu_bcn_decode",
+                                         Category::RendererDebug};
+    Setting<bool> xclipse_gpu_bptc_decode{linkage, false, "xclipse_gpu_bptc_decode",
+                                          Category::RendererDebug};
+    Setting<bool> xclipse_pipeline_policy{linkage, true, "xclipse_pipeline_policy",
+                                           Category::RendererDebug};
+    Setting<bool> xclipse_sync_policy{linkage, true, "xclipse_sync_policy",
+                                      Category::RendererDebug};
+    // Keep experimental queue coalescing opt-in until device-side frame pacing is validated.
+    Setting<bool> xclipse_submission_batching{linkage, false, "xclipse_submission_batching",
+                                              Category::RendererDebug};
+    // Keep required subgroup-size forcing opt-in; validation of a tiny probe is not enough to
+    // establish correctness for all guest compute shaders.
+    Setting<bool> xclipse_subgroup_size_control{linkage, false,
+                                                "xclipse_subgroup_size_control",
+                                                Category::RendererDebug};
     Setting<bool> renderer_shader_feedback{linkage, false, "shader_feedback",
                                            Category::RendererDebug};
     Setting<bool> enable_nsight_aftermath{linkage, false, "nsight_aftermath",

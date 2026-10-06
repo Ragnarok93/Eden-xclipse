@@ -94,6 +94,7 @@ DescriptorAllocator::DescriptorAllocator(const Device& device_, MasterSemaphore&
 
 VkDescriptorSet DescriptorAllocator::Commit() {
     const size_t index = CommitResource();
+    device->GetXclipseTelemetry().RecordDescriptorSetAllocation();
     return sets[index / SETS_GROW_RATE][index % SETS_GROW_RATE];
 }
 

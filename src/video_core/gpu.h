@@ -257,6 +257,9 @@ public:
     /// Notify rasterizer that any caches of the specified region should be flushed and invalidated
     void FlushAndInvalidateRegion(DAddr addr, u64 size);
 
+    /// Reclaims file-backed guest memory pages when Android is under severe memory pressure.
+    [[nodiscard]] bool TrimMemoryForPressure();
+
 private:
     struct Impl;
     mutable std::unique_ptr<Impl> impl;

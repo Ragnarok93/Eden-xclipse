@@ -739,6 +739,14 @@ struct Memory::Impl {
         PAddr last_address;
     };
 
+    bool TrimHostMemoryForPressure() {
+#ifdef __ANDROID__
+        return system.DeviceMemory().buffer.TryReclaimBackingPages();
+#else
+        return false;
+#endif
+    }
+
     void InvalidateGPUMemory(u8* p, size_t size) {
         constexpr size_t sys_core = Core::Hardware::NUM_CPU_CORES - 1;
         const size_t core = (std::min)(system.GetCurrentHostThreadID(),
@@ -992,6 +1000,10 @@ bool Memory::InvalidateSeparateHeap(void* fault_address) {
 #else
     return false;
 #endif
+}
+
+bool Memory::TrimHostMemoryForPressure() {
+    return impl->TrimHostMemoryForPressure();
 }
 
 } // namespace Core::Memory

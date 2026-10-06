@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+#if defined(XCLIPSE_PROBE_BALLOT)
+#extension GL_KHR_shader_subgroup_ballot : require
+#elif defined(XCLIPSE_PROBE_SHUFFLE)
+#extension GL_KHR_shader_subgroup_shuffle : require
+#elif defined(XCLIPSE_PROBE_ARITHMETIC)
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#elif defined(XCLIPSE_PROBE_QUAD)
+#extension GL_KHR_shader_subgroup_quad : require
+#else
+#error "Select exactly one Xclipse subgroup operation probe"
+#endif
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0, std430) buffer ProbeOutput {
+    uint data[];
+} output_buffer;
+
+void main() {
+    const uint invocation = gl_LocalInvocationIndex;
+    const uint base = invocation * 3u;
+    const uint lane = gl_SubgroupInvocationID;
+
+    output_buffer.data[base + 0u] = gl_SubgroupSize;
+    output_buffer.data[base + 2u] = lane;
+
+#if defined(XCLIPSE_PROBE_BALLOT)
+    const uvec4 ballot = subgroupBallot(true);
+    output_buffer.data[base + 1u] =
+        bitCount(ballot.x) + bitCount(ballot.y) + bitCount(ballot.z) + bitCount(ballot.w);
+#elif defined(XCLIPSE_PROBE_SHUFFLE)
+    output_buffer.data[base + 1u] = subgroupShuffle(lane, 0u);
+#elif defined(XCLIPSE_PROBE_ARITHMETIC)
+    output_buffer.data[base + 1u] = subgroupAdd(1u);
+#elif defined(XCLIPSE_PROBE_QUAD)
+    output_buffer.data[base + 1u] = subgroupQuadSwapHorizontal(lane);
+#endif
+}

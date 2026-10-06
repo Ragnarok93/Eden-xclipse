@@ -58,7 +58,10 @@ class SettingsFragmentPresenter(
 
     // Extension for altering settings list based on each setting's properties
     fun ArrayList<SettingsItem>.add(key: String) {
-        val item = SettingsItem.settingsItems[key]!!
+        // A missing registry entry must never crash the settings screen. Keep this null-safe even
+        // though every exposed key should have a SettingsItem below; it makes future debug-setting
+        // additions fail closed instead of taking down the Activity.
+        val item = SettingsItem.settingsItems[key] ?: return
         if (settingsViewModel.game != null && !item.setting.isSwitchable) {
             return
         }
@@ -1514,14 +1517,58 @@ class SettingsFragmentPresenter(
         }
     }
 
+    private fun nativePgoAvailable(): Boolean =
+        org.json.JSONObject(org.yuzu.yuzu_emu.utils.NativePgo.buildInfo()).optBoolean("instrumented")
+
+
     private fun addDebugSettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
+            if (nativePgoAvailable()) {
+                add(RunnableSetting(
+                    titleString = "Run automated PGO profiling",
+                    descriptionString = "Train native workloads without games, then export the profile. Stop emulation first.",
+                    isRunnable = !NativeLibrary.isRunning()
+                ) {
+                    activity?.let {
+                        it.startActivity(android.content.Intent(it, org.yuzu.yuzu_emu.activities.PgoTrainingActivity::class.java)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                })
+                add(RunnableSetting(
+                    titleString = "Export latest PGO results",
+                    descriptionString = "Includes retained results after a profiling timeout or crash.",
+                    isRunnable = !NativeLibrary.isRunning() &&
+                        org.yuzu.yuzu_emu.utils.PgoProfileExporter.hasResults(context)
+                ) {
+                    activity?.let { org.yuzu.yuzu_emu.utils.PgoProfileExporter.export(it) }
+                })
+            }
             add(HeaderSetting(R.string.gpu))
 
             add(IntSetting.RENDERER_BACKEND.key)
             add(BooleanSetting.RENDERER_DEBUG.key)
             add(BooleanSetting.RENDERER_PATCH_OLD_QCOM_DRIVERS.key)
             add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
+
+            add(HeaderSetting(R.string.xclipse_runtime_header))
+            add(BooleanSetting.XCLIPSE_MEMORY_PRESSURE_MONITOR.key)
+            add(BooleanSetting.XCLIPSE_GPU_BCN_DECODE.key)
+            add(BooleanSetting.XCLIPSE_GPU_BPTC_DECODE.key)
+            add(BooleanSetting.XCLIPSE_SYNC_POLICY.key)
+            add(BooleanSetting.XCLIPSE_SUBMISSION_BATCHING.key)
+            add(BooleanSetting.XCLIPSE_SUBGROUP_SIZE_CONTROL.key)
+
+            add(HeaderSetting(R.string.xclipse_validation_header))
+            add(BooleanSetting.XCLIPSE_VALIDATION_PROBES.key)
+            add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
+
+            add(HeaderSetting(R.string.xclipse_diagnostics_header))
+            add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
+            add(BooleanSetting.XCLIPSE_DIAGNOSTIC_LOGGING.key)
+            add(BooleanSetting.XCLIPSE_DREF_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_HOST_MEMORY_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_GPU_MEMORY_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_SCHEDULER_DIAGNOSTICS.key)
 
             add(HeaderSetting(R.string.cpu))
 

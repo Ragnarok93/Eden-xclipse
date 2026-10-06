@@ -4,7 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstddef>
 #include <algorithm>
+#include <chrono>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
@@ -79,12 +81,19 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
         }
     }
 
-    auto func{[this, shader_notify, pipeline_statistics] {
+    const auto queued_at = std::chrono::steady_clock::now();
+    auto func{[this, shader_notify, pipeline_statistics, queued_at] {
+        const auto worker_start = std::chrono::steady_clock::now();
+        device.GetXclipseTelemetry().RecordPipelineQueueResidence(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(worker_start - queued_at).count()));
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
             .pNext = nullptr,
             .requiredSubgroupSize = GuestWarpSize,
         };
+        const bool set_guest_subgroup_size =
+            device.IsXclipse() ? device.IsGuestWarpSizeSupported(VK_SHADER_STAGE_COMPUTE_BIT)
+                               : device.IsExtSubgroupSizeControlSupported();
         VkPipelineCreateFlags flags{};
         if (device.IsKhrPipelineExecutablePropertiesEnabled() && Settings::values.renderer_debug.GetValue()) {
             flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
@@ -98,8 +107,7 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             .flags = flags,
             .stage{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .pNext =
-                    device.IsExtSubgroupSizeControlSupported() ? &subgroup_size_ci : nullptr,
+                .pNext = set_guest_subgroup_size ? &subgroup_size_ci : nullptr,
                 .flags = 0,
                 .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                 .module = *spv_module,
@@ -110,9 +118,15 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             .basePipelineHandle = 0,
             .basePipelineIndex = 0,
         };
+        const auto compile_start = std::chrono::steady_clock::now();
         try {
             pipeline = device.GetLogical().CreateComputePipeline(compute_ci, *pipeline_cache);
         } catch (const vk::Exception& exception) {
+            const auto compile_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - compile_start)
+                    .count());
+            device.GetXclipseTelemetry().RecordPipelineCreate(false, compile_ns, false);
             LOG_CRITICAL(Render_Vulkan, "Adreno rejected compute shader {:016X}: {}", shader_hash,
                          exception.what());
             std::scoped_lock lock{build_mutex};
@@ -123,6 +137,12 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
             }
             return;
         }
+
+        const auto compile_ns = static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - compile_start)
+                .count());
+        device.GetXclipseTelemetry().RecordPipelineCreate(false, compile_ns, true);
 
         // Log compute pipeline creation
         if (GPU::Logging::IsActive()) {
@@ -150,7 +170,10 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
 
 bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
-                                BufferCache& buffer_cache, TextureCache& texture_cache) {
+                                BufferCache& buffer_cache, TextureCache& texture_cache,
+                                boost::container::small_vector<VideoCommon::ImageViewId, 64>&
+                                    written_image_views) {
+    written_image_views.clear();
     guest_descriptor_queue.Acquire(scheduler, num_descriptor_entries, uses_descriptor_buffer);
 
     buffer_cache.SetComputeUniformBufferState(info.constant_buffer_mask, &uniform_buffer_sizes);
@@ -215,10 +238,20 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             samplers.push_back(sampler);
         }
     }
+    const size_t storage_image_view_start = views.size();
     for (const auto& desc : info.image_descriptors) {
         add_image(desc, desc.is_written);
     }
     texture_cache.FillImageViews(std::span(views.data(), views.size()), true);
+    size_t storage_image_view = storage_image_view_start;
+    for (const auto& desc : info.image_descriptors) {
+        for (u32 index = 0; index < desc.count; ++index) {
+            if (desc.is_written) {
+                written_image_views.push_back(views[storage_image_view].id);
+            }
+            ++storage_image_view;
+        }
+    }
 
     buffer_cache.UnbindComputeTextureBuffers();
     size_t index{};
@@ -255,14 +288,36 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     RescalingPushConstant rescaling;
     const VideoCommon::SamplerId* samplers_it{samplers.data()};
     const VideoCommon::ImageViewInOut* views_it{views.data()};
-    PushImageDescriptors(texture_cache, guest_descriptor_queue, info, rescaling, samplers_it,
-                         views_it);
+    const DrefDiagnosticContext dref_context{
+        .pipeline_hash = shader_hash,
+        .shader_hash = shader_hash,
+        .stage = static_cast<u32>(Shader::Stage::Compute),
+    };
+    if (!PushImageDescriptors(device, texture_cache, guest_descriptor_queue, info, rescaling,
+                              samplers_it, views_it, dref_context)) {
+        return false;
+    }
+
+    // A completed asynchronous build with no pipeline is a hard failure. Do not leave writable
+    // image provenance pending or record a dispatch that the scheduler will skip.
+    if (is_built.load(std::memory_order::relaxed) && !pipeline) {
+        return false;
+    }
 
     if (!is_built.load(std::memory_order::relaxed)) {
         // Wait for the pipeline to be built
         scheduler.Record([this](vk::CommandBuffer) {
             std::unique_lock lock{build_mutex};
-            build_condvar.wait(lock, [this] { return is_built.load(std::memory_order::relaxed); });
+            if (!is_built.load(std::memory_order::relaxed)) {
+                const auto wait_start = std::chrono::steady_clock::now();
+                build_condvar.wait(
+                    lock, [this] { return is_built.load(std::memory_order::relaxed); });
+                const auto wait_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - wait_start)
+                        .count());
+                device.GetXclipseTelemetry().RecordPipelineBlockingWait(wait_ns);
+            }
         });
     }
 
@@ -283,6 +338,7 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             return false;
         }
         WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
+        device.GetXclipseTelemetry().RecordDescriptorBufferUse(false);
         descriptor_buffer_offset = alloc.offset;
         descriptor_buffer_chunk = alloc.chunk;
     }
@@ -293,7 +349,8 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     const bool is_rescaling = !info.texture_descriptors.empty() || !info.image_descriptors.empty();
     scheduler.Record([this, descriptor_data, is_rescaling, descriptor_buffer_offset,
                       descriptor_buffer_chunk, bind_descriptor_buffer,
-                      rescaling_data = rescaling.Data()](vk::CommandBuffer cmdbuf) {
+                      rescaling_data = rescaling.Data(),
+                      dref_compare_ops = rescaling.DrefCompareOps()](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
                 descriptor_buffer_ring.BindingInfo(descriptor_buffer_chunk)};
@@ -311,16 +368,21 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                  RESCALING_LAYOUT_WORDS_OFFSET, sizeof(rescaling_data),
                                  rescaling_data.data());
         }
+        cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                             offsetof(Shader::Backend::SPIRV::RescalingLayout, dref_compare_ops),
+                             sizeof(dref_compare_ops), dref_compare_ops.data());
         if (uses_descriptor_buffer) {
             const u32 buffer_index{};
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
+            device.GetXclipseTelemetry().RecordDescriptorPushUpdate();
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else {
             const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
             const vk::Device& dev{device.GetLogical()};
+            device.GetXclipseTelemetry().RecordDescriptorSetUpdate();
             dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
             cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0,
                                       descriptor_set, nullptr);

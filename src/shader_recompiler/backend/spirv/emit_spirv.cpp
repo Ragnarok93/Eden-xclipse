@@ -16,6 +16,7 @@
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
 #include "shader_recompiler/frontend/ir/program.h"
+#include "shader_recompiler/frontend/ir/modifiers.h"
 
 namespace Shader::Backend::SPIRV {
 namespace {
@@ -524,6 +525,26 @@ void PatchPhiNodes(IR::Program& program, EmitContext& ctx) {
 } // Anonymous namespace
 
 std::vector<u32> EmitSPIRV(const Profile& profile, const RuntimeInfo& runtime_info, IR::Program& program, Bindings& bindings) {
+    if (runtime_info.xclipse_r32_dref_emulation && profile.unified_descriptor_binding) {
+        for (IR::Block* const block : program.blocks) {
+            for (IR::Inst& inst : block->Instructions()) {
+                switch (inst.GetOpcode()) {
+                case IR::Opcode::ImageSampleDrefImplicitLod:
+                case IR::Opcode::ImageSampleDrefExplicitLod:
+                case IR::Opcode::ImageGatherDref:
+                    if (inst.Flags<IR::TextureInstInfo>().is_depth == 0) {
+                        program.info.uses_xclipse_r32_dref_emulation = true;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        if (program.info.uses_xclipse_r32_dref_emulation) {
+            program.info.uses_rescaling_uniform = true;
+        }
+    }
     EmitContext ctx{profile, runtime_info, program, bindings};
     const Id main{DefineMain(ctx, program)};
     DefineEntryPoint(program, ctx, main);

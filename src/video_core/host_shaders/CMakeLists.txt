@@ -86,6 +86,10 @@ set(SHADER_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/vulkan_quad_indexed.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/vulkan_turbo_mode.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/vulkan_uint8.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_bcn_sample_probe.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_r32_sample_probe.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_r32_dref_probe.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_subgroup_probe.comp
 
     # Snapdragon Game Super Resolution
     ${CMAKE_CURRENT_SOURCE_DIR}/sgsr1_shader.vert
@@ -206,6 +210,99 @@ foreach(VARIANT IN ITEMS ${SHADER_TYPE_VARIANTS})
     set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
 endforeach()
 
+# Typed BC4/BC5 decoder variants. Samsung's Xclipse compiler gets an exact storage
+# format and Eden does not need shaderStorageImageWriteWithoutFormat for this path.
+set(BCN_DECODER_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bcn_decoder.comp)
+set(BCN_DECODER_VARIANTS
+    "r8|r8|BCN_DECODER_R8_COMP_SPV"
+    "r8_snorm|r8_snorm|BCN_DECODER_R8_SNORM_COMP_SPV"
+    "rg8|rg8|BCN_DECODER_RG8_COMP_SPV"
+    "rg8_snorm|rg8_snorm|BCN_DECODER_RG8_SNORM_COMP_SPV"
+)
+
+foreach(VARIANT IN ITEMS ${BCN_DECODER_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS ${VARIANT})
+    list(GET VARIANT_PARTS 0 VARIANT_SUFFIX)
+    list(GET VARIANT_PARTS 1 VARIANT_FORMAT)
+    list(GET VARIANT_PARTS 2 VARIANT_VARIABLE_NAME)
+    set(VARIANT_HEADER_FILE ${SHADER_DIR}/bcn_decoder_${VARIANT_SUFFIX}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${VARIANT_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -I"${FIDELITYFX_INCLUDE_DIR}" ${GLSL_FLAGS}
+            -DBCN_DST_FORMAT=${VARIANT_FORMAT}
+            --variable-name ${VARIANT_VARIABLE_NAME}
+            -o ${VARIANT_HEADER_FILE} ${BCN_DECODER_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${BCN_DECODER_SOURCE}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
+endforeach()
+
+# Typed BC6H/BC7 BPTC decoder variants. Keep these separate from the lightweight
+# BC4/BC5 shader so Samsung's compiler does not carry the BPTC mode tables into RGTC pipelines.
+set(BPTC_DECODER_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bcn_bptc_decoder.comp)
+set(BPTC_DECODER_VARIANTS
+    "rgba16f|rgba16f|BCN_BPTC_DECODER_RGBA16F_COMP_SPV"
+    "rgba8|rgba8|BCN_BPTC_DECODER_RGBA8_COMP_SPV"
+)
+
+foreach(VARIANT IN ITEMS ${BPTC_DECODER_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS ${VARIANT})
+    list(GET VARIANT_PARTS 0 VARIANT_SUFFIX)
+    list(GET VARIANT_PARTS 1 VARIANT_FORMAT)
+    list(GET VARIANT_PARTS 2 VARIANT_VARIABLE_NAME)
+    set(VARIANT_HEADER_FILE ${SHADER_DIR}/bcn_bptc_decoder_${VARIANT_SUFFIX}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${VARIANT_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -I"${FIDELITYFX_INCLUDE_DIR}" ${GLSL_FLAGS}
+            -DBPTC_DST_FORMAT=${VARIANT_FORMAT}
+            --variable-name ${VARIANT_VARIABLE_NAME}
+            -o ${VARIANT_HEADER_FILE} ${BPTC_DECODER_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${BPTC_DECODER_SOURCE}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
+endforeach()
+
+# Compile subgroup operation probes independently so a broken Samsung path
+# cannot invalidate unrelated wave/subgroup capabilities.
+set(XCLIPSE_SUBGROUP_OP_PROBE_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_subgroup_op_probe.comp)
+set(XCLIPSE_SUBGROUP_OP_PROBE_VARIANTS
+    "ballot|XCLIPSE_PROBE_BALLOT|XCLIPSE_SUBGROUP_OP_PROBE_BALLOT_COMP_SPV"
+    "shuffle|XCLIPSE_PROBE_SHUFFLE|XCLIPSE_SUBGROUP_OP_PROBE_SHUFFLE_COMP_SPV"
+    "arithmetic|XCLIPSE_PROBE_ARITHMETIC|XCLIPSE_SUBGROUP_OP_PROBE_ARITHMETIC_COMP_SPV"
+    "quad|XCLIPSE_PROBE_QUAD|XCLIPSE_SUBGROUP_OP_PROBE_QUAD_COMP_SPV"
+)
+
+foreach(VARIANT IN ITEMS ${XCLIPSE_SUBGROUP_OP_PROBE_VARIANTS})
+    string(REPLACE "|" ";" VARIANT_PARTS ${VARIANT})
+    list(GET VARIANT_PARTS 0 VARIANT_SUFFIX)
+    list(GET VARIANT_PARTS 1 VARIANT_DEFINE)
+    list(GET VARIANT_PARTS 2 VARIANT_VARIABLE_NAME)
+    set(VARIANT_HEADER_FILE
+        ${SHADER_DIR}/xclipse_subgroup_op_probe_${VARIANT_SUFFIX}_comp_spv.h)
+    add_custom_command(
+        OUTPUT
+            ${VARIANT_HEADER_FILE}
+        COMMAND
+            ${GLSLANGVALIDATOR} -V ${QUIET_FLAG} -I"${FIDELITYFX_INCLUDE_DIR}" ${GLSL_FLAGS}
+            -D${VARIANT_DEFINE}=1
+            --variable-name ${VARIANT_VARIABLE_NAME}
+            -o ${VARIANT_HEADER_FILE} ${XCLIPSE_SUBGROUP_OP_PROBE_SOURCE}
+            --target-env ${SPIR_V_VERSION}
+        MAIN_DEPENDENCY
+            ${XCLIPSE_SUBGROUP_OP_PROBE_SOURCE}
+    )
+    set(SHADER_HEADERS ${SHADER_HEADERS} ${VARIANT_HEADER_FILE})
+endforeach()
+
 foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
     get_filename_component(FILENAME ${FILEPATH} NAME)
     string(REPLACE "." "_" HEADER_NAME ${FILENAME})
@@ -226,7 +323,10 @@ foreach(FILEPATH IN ITEMS ${FIDELITYFX_FILES})
 endforeach()
 
 set(SHADER_SOURCES ${SHADER_FILES})
+list(APPEND SHADER_SOURCES ${BCN_DECODER_SOURCE})
+list(APPEND SHADER_SOURCES ${BPTC_DECODER_SOURCE})
 list(APPEND SHADER_SOURCES ${GLSL_INCLUDES})
+list(APPEND SHADER_SOURCES ${XCLIPSE_SUBGROUP_OP_PROBE_SOURCE})
 
 add_custom_target(host_shaders
     DEPENDS

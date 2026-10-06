@@ -173,6 +173,8 @@ add_library(video_core STATIC
     renderer_vulkan/vk_master_semaphore.h
     renderer_vulkan/vk_pipeline_cache.cpp
     renderer_vulkan/vk_pipeline_cache.h
+    renderer_vulkan/vk_pipeline_policy.cpp
+    renderer_vulkan/vk_pipeline_policy.h
     renderer_vulkan/vk_present_manager.cpp
     renderer_vulkan/vk_present_manager.h
     renderer_vulkan/vk_query_cache.cpp
@@ -195,6 +197,7 @@ add_library(video_core STATIC
     renderer_vulkan/vk_swapchain.h
     renderer_vulkan/vk_texture_cache.cpp
     renderer_vulkan/vk_texture_cache.h
+    renderer_vulkan/vk_image_copy_validation.h
     renderer_vulkan/vk_texture_cache_base.cpp
     renderer_vulkan/vk_turbo_mode.cpp
     renderer_vulkan/vk_turbo_mode.h
@@ -204,6 +207,15 @@ add_library(video_core STATIC
     vulkan_common/vulkan_debug_callback.h
     vulkan_common/vulkan_device.cpp
     vulkan_common/vulkan_device.h
+    vulkan_common/vulkan_device_profile.cpp
+    vulkan_common/vulkan_device_profile.h
+    vulkan_common/xclipse_memory_pressure.cpp
+    vulkan_common/xclipse_memory_pressure.h
+    vulkan_common/xclipse_optimization_probes.cpp
+    vulkan_common/xclipse_depth_comparison_probes.cpp
+    vulkan_common/xclipse_optimization_probes.h
+    vulkan_common/xclipse_telemetry.cpp
+    vulkan_common/xclipse_telemetry.h
     vulkan_common/vulkan_instance.cpp
     vulkan_common/vulkan_instance.h
     vulkan_common/vulkan_library.cpp

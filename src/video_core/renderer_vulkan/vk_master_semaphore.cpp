@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <thread>
 
 #include <ranges>
@@ -76,17 +77,27 @@ void MasterSemaphore::Refresh() {
                                              std::memory_order_relaxed));
 }
 
-void MasterSemaphore::Wait(u64 tick) {
+void MasterSemaphore::Wait(u64 tick, XclipseWaitSource source) {
     if (!semaphore) {
         // Fast check: already reached the requested tick?
         if (gpu_tick.load(std::memory_order_acquire) >= tick) {
             return;
         }
 
+        const bool measure = device.GetXclipseTelemetry().Enabled();
+        const auto wait_start = measure ? std::chrono::steady_clock::now()
+                                        : std::chrono::steady_clock::time_point{};
         u64 last_tick = gpu_tick.load(std::memory_order_relaxed);
         while (gpu_tick.load(std::memory_order_acquire) < tick) {
             gpu_tick.wait(last_tick, std::memory_order_acquire);
             last_tick = gpu_tick.load(std::memory_order_relaxed);
+        }
+        if (measure) {
+            const auto wait_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - wait_start)
+                    .count());
+            device.GetXclipseTelemetry().RecordGpuWait(false, source, wait_ns);
         }
         return;
     }
@@ -103,8 +114,18 @@ void MasterSemaphore::Wait(u64 tick) {
         return;
     }
 
-    // If none of the above is hit, fallback to a regular wait
+    // If none of the above is hit, fallback to a regular wait.
+    const bool measure = device.GetXclipseTelemetry().Enabled();
+    const auto wait_start = measure ? std::chrono::steady_clock::now()
+                                    : std::chrono::steady_clock::time_point{};
     while (!semaphore.Wait(tick)) {
+    }
+    if (measure) {
+        const auto wait_ns = static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - wait_start)
+                .count());
+        device.GetXclipseTelemetry().RecordGpuWait(true, source, wait_ns);
     }
 
     Refresh();

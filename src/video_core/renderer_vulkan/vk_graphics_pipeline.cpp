@@ -4,7 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstddef>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -20,6 +22,8 @@
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
+#include "video_core/renderer_vulkan/vk_pipeline_policy.h"
+#include "video_core/vulkan_common/vulkan_feature_policy.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -309,12 +313,22 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
 
-    auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
+    const auto queued_at = std::chrono::steady_clock::now();
+    auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics, queued_at] {
+        const auto worker_start = std::chrono::steady_clock::now();
+        device.GetXclipseTelemetry().RecordPipelineQueueResidence(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(worker_start - queued_at).count()));
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
+        const auto build_start = std::chrono::steady_clock::now();
         try {
             MakePipeline(render_pass);
         } catch (const vk::Exception& exception) {
+            const auto compile_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - build_start)
+                    .count());
+            device.GetXclipseTelemetry().RecordPipelineBuild(compile_ns);
             LOG_CRITICAL(Render_Vulkan, "Graphics pipeline build failed: {}", exception.what());
             std::scoped_lock lock{build_mutex};
             is_built = true;
@@ -324,6 +338,11 @@ GraphicsPipeline::GraphicsPipeline(
             }
             return;
         }
+        const auto compile_ns = static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - build_start)
+                .count());
+        device.GetXclipseTelemetry().RecordPipelineBuild(compile_ns);
         if (pipeline_statistics) {
             pipeline_statistics->Collect(device, *pipeline);
         }
@@ -352,8 +371,10 @@ template <typename Spec>
 bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     boost::container::small_vector<VideoCommon::ImageViewInOut, 64> views;
     boost::container::small_vector<VideoCommon::SamplerId, 64> samplers;
+    boost::container::small_vector<size_t, 64> writable_view_indices;
     views.reserve(num_image_elements);
     samplers.reserve(num_textures);
+    written_image_views.clear();
 
     texture_cache.SynchronizeDescriptors(false);
 
@@ -426,7 +447,13 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         }
         if constexpr (Spec::has_images) {
             for (const auto& desc : info.image_descriptors) {
+                const size_t view_start = views.size();
                 add_image(desc, desc.is_written);
+                if (desc.is_written) {
+                    for (u32 index = 0; index < desc.count; ++index) {
+                        writable_view_indices.push_back(view_start + index);
+                    }
+                }
             }
         }
 
@@ -450,6 +477,9 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     ASSERT(views.size() == num_image_elements);
     ASSERT(samplers.size() == num_textures);
     texture_cache.FillImageViews(std::span(views.data(), views.size()), false, Spec::has_images);
+    for (const size_t view_index : writable_view_indices) {
+        written_image_views.push_back(views[view_index].id);
+    }
 
     VideoCommon::ImageViewInOut* texture_buffer_it{views.data()};
     const auto bind_stage_info{[&](size_t stage) LAMBDA_FORCEINLINE {
@@ -522,31 +552,39 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     RenderAreaPushConstant render_area;
     const VideoCommon::SamplerId* samplers_it{samplers.data()};
     const VideoCommon::ImageViewInOut* views_it{views.data()};
-    const auto prepare_stage{[&](size_t stage) LAMBDA_FORCEINLINE {
+    const auto prepare_stage{[&](size_t stage) LAMBDA_FORCEINLINE -> bool {
         buffer_cache.BindHostStageBuffers(stage);
-        PushImageDescriptors(texture_cache, guest_descriptor_queue, stage_infos[stage], rescaling,
-                             samplers_it, views_it);
+        const DrefDiagnosticContext dref_context{
+            .pipeline_hash = key.Hash(),
+            .shader_hash = key.unique_hashes[stage + 1],
+            .stage = static_cast<u32>(stage),
+        };
+        if (!PushImageDescriptors(device, texture_cache, guest_descriptor_queue, stage_infos[stage],
+                                  rescaling, samplers_it, views_it, dref_context)) {
+            return false;
+        }
         const auto& info{stage_infos[stage]};
         if (info.uses_render_area) {
             render_area.uses_render_area = true;
             render_area.words = {static_cast<float>(regs.surface_clip.width),
                                  static_cast<float>(regs.surface_clip.height)};
         }
+        return true;
     }};
     if constexpr (Spec::enabled_stages[0]) {
-        prepare_stage(0);
+        if (!prepare_stage(0)) return false;
     }
     if constexpr (Spec::enabled_stages[1]) {
-        prepare_stage(1);
+        if (!prepare_stage(1)) return false;
     }
     if constexpr (Spec::enabled_stages[2]) {
-        prepare_stage(2);
+        if (!prepare_stage(2)) return false;
     }
     if constexpr (Spec::enabled_stages[3]) {
-        prepare_stage(3);
+        if (!prepare_stage(3)) return false;
     }
     if constexpr (Spec::enabled_stages[4]) {
-        prepare_stage(4);
+        if (!prepare_stage(4)) return false;
     }
     if (buffer_cache.any_buffer_uploaded) {
         buffer_cache.runtime.PostCopyBarrier();
@@ -561,12 +599,21 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     return ConfigureDraw(rescaling, render_area);
 }
 
+void GraphicsPipeline::RecordStorageImageWrites() noexcept {
+    for (const VideoCommon::ImageViewId image_view_id : written_image_views) {
+        texture_cache.GetImageView(image_view_id).RecordImageWrite(
+            XclipseImageWriter::GpuModification);
+    }
+    written_image_views.clear();
+}
+
 bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
                                      const RenderAreaPushConstant& render_area) {
     const void* const descriptor_data{guest_descriptor_queue.UpdateData()};
 
     VkDeviceSize descriptor_buffer_offset{};
     u32 descriptor_buffer_chunk{};
+    bool descriptor_buffer_reused{};
     if (descriptor_set_layout && uses_descriptor_buffer) {
         const auto* const entries = static_cast<const DescriptorUpdateEntry*>(descriptor_data);
         const bool reuse_allocation =
@@ -575,6 +622,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             std::memcmp(last_descriptor_payload.data(), entries,
                         num_descriptor_entries * sizeof(DescriptorUpdateEntry)) == 0;
         if (reuse_allocation) {
+            descriptor_buffer_reused = true;
             descriptor_buffer_offset = last_descriptor_buffer_offset;
             descriptor_buffer_chunk = last_descriptor_buffer_chunk;
             descriptor_buffer_ring.TouchFrame(scheduler);
@@ -593,6 +641,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             last_descriptor_buffer_generation = alloc.generation;
             last_descriptor_payload.assign(entries, entries + num_descriptor_entries);
         }
+        device.GetXclipseTelemetry().RecordDescriptorBufferUse(descriptor_buffer_reused);
     }
 
     scheduler.RequestRenderpass(texture_cache.GetFramebuffer());
@@ -600,7 +649,16 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         // Wait for the pipeline to be built
         scheduler.Record([this](vk::CommandBuffer) {
             std::unique_lock lock{build_mutex};
-            build_condvar.wait(lock, [this] { return is_built.load(std::memory_order::relaxed); });
+            if (!is_built.load(std::memory_order::relaxed)) {
+                const auto wait_start = std::chrono::steady_clock::now();
+                build_condvar.wait(
+                    lock, [this] { return is_built.load(std::memory_order::relaxed); });
+                const auto wait_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - wait_start)
+                        .count());
+                device.GetXclipseTelemetry().RecordPipelineBlockingWait(wait_ns);
+            }
         });
     }
     const bool is_rescaling{texture_cache.IsRescaling()};
@@ -630,8 +688,9 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     }
     scheduler.Record([this, descriptor_data, bind_pipeline, update_descriptors,
                       descriptor_buffer_offset, descriptor_buffer_chunk, bind_descriptor_buffer,
-                      rescaling_data = rescaling.Data(), is_rescaling, update_rescaling,
-                      uses_render_area = render_area.uses_render_area,
+                      rescaling_data = rescaling.Data(),
+                      dref_compare_ops = rescaling.DrefCompareOps(),
+                      is_rescaling, update_rescaling, uses_render_area = render_area.uses_render_area,
                       render_area_data = render_area.words](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
@@ -647,6 +706,9 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_ALL_GRAPHICS,
                              RESCALING_LAYOUT_WORDS_OFFSET, sizeof(rescaling_data),
                              rescaling_data.data());
+        cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_ALL_GRAPHICS,
+                             offsetof(Shader::Backend::SPIRV::RescalingLayout, dref_compare_ops),
+                             sizeof(dref_compare_ops), dref_compare_ops.data());
         if (update_rescaling) {
             const f32 config_down_factor{Settings::values.resolution_info.down_factor};
             const f32 scale_down_factor{is_rescaling ? config_down_factor : 1.0f};
@@ -667,11 +729,13 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout,
                                                  0, buffer_index, descriptor_buffer_offset);
         } else if (uses_push_descriptor) {
+            device.GetXclipseTelemetry().RecordDescriptorPushUpdate();
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else if (update_descriptors) {
             const VkDescriptorSet descriptor_set{descriptor_allocator.Commit()};
             const vk::Device& dev{device.GetLogical()};
+            device.GetXclipseTelemetry().RecordDescriptorSetUpdate();
             dev.UpdateDescriptorSet(descriptor_set, *descriptor_update_template, descriptor_data);
             cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, *pipeline_layout, 0,
                                       descriptor_set, nullptr);
@@ -838,9 +902,8 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
     VkPipelineRasterizationLineStateCreateInfoEXT line_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT,
         .pNext = nullptr,
-        .lineRasterizationMode = key.state.smooth_lines != 0 && smooth_lines_supported
-                                     ? VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT
-                                     : VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT,
+        .lineRasterizationMode = SelectLineRasterizationMode(
+            key.state.smooth_lines != 0, device.SupportsRectangularLines(), smooth_lines_supported),
         .stippledLineEnable =
             (dynamic.line_stipple_enable && stippled_lines_supported) ? VK_TRUE : VK_FALSE,
         .lineStippleFactor = key.state.line_stipple_factor,
@@ -892,8 +955,11 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .pSampleMask = nullptr,
         .alphaToCoverageEnable =
             supports_alpha_output && key.state.alpha_to_coverage_enabled != 0 ? VK_TRUE : VK_FALSE,
-        .alphaToOneEnable = supports_alpha_output && alpha_to_one_supported &&
-                           key.state.alpha_to_one_enabled != 0 ? VK_TRUE : VK_FALSE,
+        .alphaToOneEnable =
+            CanEnableAlphaToOne(alpha_to_one_supported,
+                                supports_alpha_output && key.state.alpha_to_one_enabled != 0)
+                ? VK_TRUE
+                : VK_FALSE,
     };
     const VkPipelineDepthStencilStateCreateInfo depth_stencil_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
@@ -947,7 +1013,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .logicOpEnable = dynamic.logic_op_enable != 0,
         .logicOp = static_cast<VkLogicOp>(dynamic.logic_op.Value()),
         .attachmentCount = static_cast<u32>(cb_attachments.size()),
-        .pAttachments = cb_attachments.data(),
+        .pAttachments = cb_attachments.empty() ? nullptr : cb_attachments.data(),
         .blendConstants = {}
     };
     static_vector<VkDynamicState, 34> dynamic_states{
@@ -1054,12 +1120,16 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         if (!spv_modules[stage]) {
             continue;
         }
+        const VkShaderStageFlagBits vk_stage =
+            MaxwellToVK::ShaderStage(Shader::StageFromIndex(stage));
         [[maybe_unused]] auto& stage_ci =
             shader_stages.emplace_back(VkPipelineShaderStageCreateInfo{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .pNext = nullptr,
+                .pNext = device.IsXclipse() && device.IsGuestWarpSizeSupported(vk_stage)
+                             ? &subgroup_size_ci
+                             : nullptr,
                 .flags = 0,
-                .stage = MaxwellToVK::ShaderStage(Shader::StageFromIndex(stage)),
+                .stage = vk_stage,
                 .module = *spv_modules[stage],
                 .pName = "main",
                 .pSpecializationInfo = nullptr,
@@ -1073,7 +1143,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
-    pipeline = device.GetLogical().CreateGraphicsPipeline({
+    const VkGraphicsPipelineCreateInfo pipeline_ci{
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
         .flags = flags,
@@ -1093,7 +1163,29 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .subpass = 0,
         .basePipelineHandle = nullptr,
         .basePipelineIndex = 0,
-    }, *pipeline_cache);
+    };
+    if (device.IsXclipse() && Settings::values.xclipse_pipeline_policy.GetValue()) {
+        const auto report = InspectGraphicsPipeline(device.GetDevicePolicy(), pipeline_ci);
+        if (!report.Clean()) {
+            device.GetXclipseTelemetry().RecordPipelinePolicyViolations(report.issue_count);
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PIPELINE policy violations={} mask=0x{:x}",
+                        report.issue_count, static_cast<u32>(report.issues));
+        }
+    }
+
+    const auto create_start = std::chrono::steady_clock::now();
+    try {
+        pipeline = device.GetLogical().CreateGraphicsPipeline(pipeline_ci, *pipeline_cache);
+    } catch (...) {
+        const auto create_ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - create_start).count());
+        device.GetXclipseTelemetry().RecordPipelineCreate(true, create_ns, false);
+        throw;
+    }
+    const auto create_ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - create_start).count());
+    device.GetXclipseTelemetry().RecordPipelineCreate(true, create_ns, true);
 
     // Log graphics pipeline creation
     if (GPU::Logging::IsActive()) {

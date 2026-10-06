@@ -143,6 +143,36 @@ enum class TexturePixelFormat {
     D32_FLOAT_S8_UINT,
 };
 
+enum class DrefExecutionMode : u8 {
+    NonDref,
+    NativeDref,
+    SoftwareDref,
+    RuntimeValidatedDref,
+};
+
+[[nodiscard]] constexpr DrefExecutionMode SelectDrefExecutionMode(
+    bool guest_dref, bool dynamic_descriptor, TexturePixelFormat pixel_format,
+    bool r32_software_dref_validated) noexcept {
+    if (!guest_dref) {
+        return DrefExecutionMode::NonDref;
+    }
+    if (dynamic_descriptor) {
+        return DrefExecutionMode::RuntimeValidatedDref;
+    }
+    if (r32_software_dref_validated && pixel_format == TexturePixelFormat::R32_FLOAT) {
+        return DrefExecutionMode::SoftwareDref;
+    }
+    return DrefExecutionMode::NativeDref;
+}
+
+[[nodiscard]] constexpr bool IsDref(DrefExecutionMode mode) noexcept {
+    return mode != DrefExecutionMode::NonDref;
+}
+
+[[nodiscard]] constexpr bool IsSoftwareDref(DrefExecutionMode mode) noexcept {
+    return mode == DrefExecutionMode::SoftwareDref;
+}
+
 enum class ImageFormat : u32 {
     Typeless,
     R8_UINT,
@@ -207,6 +237,8 @@ using ImageBufferDescriptors = boost::container::small_vector<ImageBufferDescrip
 
 struct TextureDescriptor {
     TextureType type;
+    DrefExecutionMode dref_mode;
+    // Host SPIR-V image typing. Guest DREF semantics remain on the instruction flags.
     bool is_depth;
     bool is_multisample;
     bool is_integer;
@@ -314,6 +346,7 @@ struct Info {
     bool uses_atomic_image_u32{};
     bool uses_shadow_lod{};
     bool uses_rescaling_uniform{};
+    bool uses_xclipse_r32_dref_emulation{};
     bool uses_cbuf_indirect{};
     bool uses_render_area{};
 

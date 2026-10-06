@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "common/common_types.h"
 #include "shader_recompiler/environment.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
 #include "shader_recompiler/frontend/ir/program.h"
@@ -16,9 +17,14 @@ struct HostTranslateInfo;
 
 namespace Shader::Maxwell {
 
-[[nodiscard]] IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool,
-                                           ObjectPool<IR::Block>& block_pool, Environment& env,
-                                           Flow::CFG& cfg, const HostTranslateInfo& host_info);
+struct TranslateProgramTiming {
+    u64 decode_ns{};
+    u64 optimization_ns{};
+};
+
+[[nodiscard]] IR::Program TranslateProgram(
+    ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Block>& block_pool, Environment& env,
+    Flow::CFG& cfg, const HostTranslateInfo& host_info, TranslateProgramTiming* timing = nullptr);
 
 [[nodiscard]] IR::Program MergeDualVertexPrograms(IR::Program& vertex_a, IR::Program& vertex_b,
                                                   Environment& env_vertex_b);
