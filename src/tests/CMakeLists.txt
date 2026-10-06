@@ -24,6 +24,7 @@ add_executable(tests
     video_core/vk_blit_image_policy.cpp
     video_core/vk_image_copy_validation.cpp
     video_core/xclipse_bcn_decode.cpp
+    video_core/xclipse_dref_policy.cpp
     video_core/xclipse_pipeline_policy.cpp
     video_core/xclipse_memory_pressure.cpp
     video_core/xclipse_telemetry.cpp
