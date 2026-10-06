@@ -1149,11 +1149,13 @@ struct BlockDecodeProbeCase {
 
             const size_t x = static_cast<size_t>(block_x) * 4;
             const size_t y = static_cast<size_t>(block_y) * 4;
+            u8* const expected_block =
+                expected.data() + (y * width + x) * probe.bytes_per_pixel;
             if (probe.is_bc5) {
-                bcn::DecodeBc5(block.data(), expected.data(), x, y, width, height,
+                bcn::DecodeBc5(block.data(), expected_block, x, y, width, height,
                                probe.is_signed);
             } else {
-                bcn::DecodeBc4(block.data(), expected.data(), x, y, width, height,
+                bcn::DecodeBc4(block.data(), expected_block, x, y, width, height,
                                probe.is_signed);
             }
         }
@@ -1231,7 +1233,8 @@ struct BlockDecodeProbeCase {
             return false;
         }
         std::memcpy(input.data() + offset, block.data(), block.size());
-        bcn::DecodeBc7(block.data(), expected.data(), index * 4, 0, width, Height);
+        const size_t x = static_cast<size_t>(index) * 4;
+        bcn::DecodeBc7(block.data(), expected.data() + x * 4, x, 0, width, Height);
     }
     return RunBlockDecodeProbe(
         device,
@@ -1264,7 +1267,8 @@ struct BlockDecodeProbeCase {
             return false;
         }
         std::memcpy(input.data() + offset, block.data(), block.size());
-        bcn::DecodeBc6(block.data(), expected.data(), index * 4, 0, width, Height, is_signed);
+        const size_t x = static_cast<size_t>(index) * 4;
+        bcn::DecodeBc6(block.data(), expected.data() + x * 8, x, 0, width, Height, is_signed);
     }
     return RunBlockDecodeProbe(
         device,
