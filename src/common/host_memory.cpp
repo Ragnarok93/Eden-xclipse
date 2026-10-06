@@ -51,14 +51,20 @@
 
 #endif // ^^^ POSIX ^^^
 
+#include <array>
+#include <functional>
+#include <limits>
 #include <mutex>
 #include <random>
+#include <thread>
 
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/correctness_telemetry.h"
 #include "common/free_region_manager.h"
 #include "common/host_memory.h"
 #include "common/logging.h"
+#include "common/settings.h"
 
 #if defined(__ANDROID__) && __ANDROID_API__ < 30
 #include <sys/syscall.h>
@@ -71,6 +77,82 @@ static int memfd_create(const char* name, unsigned int flags) {
 #endif
 
 namespace Common {
+namespace {
+struct HostMemoryDiagnosticRecord {
+    const HostMemory* owner{};
+    const char* operation{};
+    size_t virtual_offset{};
+    size_t host_offset{};
+    size_t length{};
+    u64 sequence{};
+};
+
+std::mutex host_memory_diagnostic_mutex;
+std::array<HostMemoryDiagnosticRecord, 64> host_memory_diagnostic_history{};
+u64 host_memory_diagnostic_sequence{};
+
+[[nodiscard]] size_t SaturatingEnd(size_t offset, size_t length) noexcept {
+    const size_t max = (std::numeric_limits<size_t>::max)();
+    return length > max - offset ? max : offset + length;
+}
+
+void RecordHostMemoryOperation(const HostMemory* owner, const char* operation,
+                               size_t virtual_offset, size_t host_offset, size_t length) {
+    if (!Settings::values.xclipse_host_memory_diagnostics.GetValue()) {
+        return;
+    }
+    std::scoped_lock lock{host_memory_diagnostic_mutex};
+    const u64 sequence = ++host_memory_diagnostic_sequence;
+    host_memory_diagnostic_history[sequence % host_memory_diagnostic_history.size()] = {
+        .owner = owner,
+        .operation = operation,
+        .virtual_offset = virtual_offset,
+        .host_offset = host_offset,
+        .length = length,
+        .sequence = sequence,
+    };
+}
+
+void LogHostMemoryBoundsViolation(const HostMemory* owner, const char* operation,
+                                  size_t virtual_offset, size_t host_offset, size_t length,
+                                  size_t virtual_size, size_t backing_size,
+                                  size_t virtual_base_offset, bool separate_heap,
+                                  bool virtual_base_present, bool impl_present,
+                                  bool fallback_buffer, bool backing_range_checked) {
+    CorrectnessTelemetry::Get().RecordHostMemoryBoundsViolation();
+    LOG_ERROR(HW_Memory,
+              "HOST_MEMORY_BOUNDS_VIOLATION op={} virtual_offset={:#x} length={:#x} "
+              "computed_end={:#x} virtual_size={:#x} virtual_base_offset={:#x} "
+              "host_offset={:#x} backing_size={:#x} backing_checked={} separate_heap={} "
+              "virtual_base_present={} impl_present={} fallback={} host_thread_hash={}",
+              operation, virtual_offset, length, SaturatingEnd(virtual_offset, length),
+              virtual_size, virtual_base_offset, host_offset, backing_size,
+              backing_range_checked, separate_heap, virtual_base_present, impl_present,
+              fallback_buffer, std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+    if (!Settings::values.xclipse_host_memory_diagnostics.GetValue()) {
+        return;
+    }
+    std::scoped_lock lock{host_memory_diagnostic_mutex};
+    const HostMemoryDiagnosticRecord* latest = nullptr;
+    for (const auto& record : host_memory_diagnostic_history) {
+        if (record.owner != owner || record.sequence == 0) {
+            continue;
+        }
+        if (!latest || record.sequence > latest->sequence) {
+            latest = &record;
+        }
+    }
+    if (latest) {
+        LOG_ERROR(HW_Memory,
+                  "HOST_MEMORY_RANGE_HISTORY previous_op={} previous_virtual_offset={:#x} "
+                  "previous_host_offset={:#x} previous_length={:#x} previous_end={:#x} "
+                  "previous_sequence={}",
+                  latest->operation, latest->virtual_offset, latest->host_offset, latest->length,
+                  SaturatingEnd(latest->virtual_offset, latest->length), latest->sequence);
+    }
+}
+} // namespace
 
 [[maybe_unused]] constexpr size_t PageAlignment = 0x1000;
 [[maybe_unused]] constexpr size_t HugePageSize = 0x200000;
@@ -775,11 +857,21 @@ HostMemory& HostMemory::operator=(HostMemory&&) noexcept = default;
 
 void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, MemoryPermission perms, bool separate_heap) {
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
+    const bool virtual_range_valid =
+        virtual_offset <= virtual_size && length <= virtual_size - virtual_offset;
+    const bool backing_range_valid =
+        host_offset <= backing_size && length <= backing_size - host_offset;
+    if (!virtual_range_valid || !backing_range_valid) [[unlikely]] {
+        LogHostMemoryBoundsViolation(this, "Map", virtual_offset, host_offset, length, virtual_size,
+                                     backing_size, virtual_base_offset, separate_heap,
+                                     virtual_base != nullptr, impl != nullptr, fallback_buffer, true);
+    }
+    RecordHostMemoryOperation(this, "Map", virtual_offset, host_offset, length);
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(host_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);
-    ASSERT(virtual_offset + length <= virtual_size);
-    ASSERT(host_offset + length <= backing_size);
+    ASSERT(virtual_range_valid);
+    ASSERT(backing_range_valid);
     if (length == 0 || !virtual_base || !impl) {
         return;
     }
@@ -789,9 +881,17 @@ void HostMemory::Map(size_t virtual_offset, size_t host_offset, size_t length, M
 
 void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap) {
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
+    const bool virtual_range_valid =
+        virtual_offset <= virtual_size && length <= virtual_size - virtual_offset;
+    if (!virtual_range_valid) [[unlikely]] {
+        LogHostMemoryBoundsViolation(this, "Unmap", virtual_offset, 0, length, virtual_size,
+                                     backing_size, virtual_base_offset, separate_heap,
+                                     virtual_base != nullptr, impl != nullptr, fallback_buffer, false);
+    }
+    RecordHostMemoryOperation(this, "Unmap", virtual_offset, 0, length);
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);
-    ASSERT(virtual_offset + length <= virtual_size);
+    ASSERT(virtual_range_valid);
     if (length == 0 || !virtual_base || !impl) {
         return;
     }
@@ -801,9 +901,17 @@ void HostMemory::Unmap(size_t virtual_offset, size_t length, bool separate_heap)
 
 void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission perm) {
 #if !(defined(__OPENORBIS__) || defined(__managarm__))
+    const bool virtual_range_valid =
+        virtual_offset <= virtual_size && length <= virtual_size - virtual_offset;
+    if (!virtual_range_valid) [[unlikely]] {
+        LogHostMemoryBoundsViolation(this, "Protect", virtual_offset, 0, length, virtual_size,
+                                     backing_size, virtual_base_offset, false,
+                                     virtual_base != nullptr, impl != nullptr, fallback_buffer, false);
+    }
+    RecordHostMemoryOperation(this, "Protect", virtual_offset, 0, length);
     ASSERT(virtual_offset % PageAlignment == 0);
     ASSERT(length % PageAlignment == 0);
-    ASSERT(virtual_offset + length <= virtual_size);
+    ASSERT(virtual_range_valid);
     if (length == 0 || !virtual_base || !impl) {
         return;
     }

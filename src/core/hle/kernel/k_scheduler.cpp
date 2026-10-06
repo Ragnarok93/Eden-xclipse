@@ -11,8 +11,10 @@
 
 #include "common/assert.h"
 #include "common/bit_util.h"
+#include "common/correctness_telemetry.h"
 #include "common/fiber.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "core/arm/arm_interface.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -33,6 +35,7 @@ namespace {
 // The mutex does not expose its owner; do not present an expected owner as an observed one.
 void LogContextGuardFailure(const char* site, s32 scheduler_core, const KThread* target,
                             const KThread* current, bool needs_scheduling) {
+    Common::CorrectnessTelemetry::Get().RecordSchedulerContextGuardFailure();
     static std::atomic<u32> reports{};
     const u32 report = reports.fetch_add(1, std::memory_order_relaxed);
     if (report >= 16) {
@@ -46,6 +49,23 @@ void LogContextGuardFailure(const char* site, s32 scheduler_core, const KThread*
               report + 1, site, std::hash<std::thread::id>{}(std::this_thread::get_id()),
               scheduler_core, target ? target->GetThreadId() : 0,
               current ? current->GetThreadId() : 0, needs_scheduling);
+    if (!Settings::values.xclipse_scheduler_diagnostics.GetValue()) {
+        return;
+    }
+    LOG_ERROR(Debug,
+              "SCHEDULER_CONTEXT_GUARD_STATE report={} site={} target_state={} "
+              "target_priority={} target_current_core={} target_active_core={} "
+              "target_disable_dispatch={} target_last_scheduled_tick={} current_state={} "
+              "current_priority={} current_core={} current_disable_dispatch={}",
+              report + 1, site, target ? static_cast<u32>(target->GetState()) : 0,
+              target ? target->GetPriority() : 0, target ? target->GetCurrentCore() : -1,
+              target ? target->GetActiveCore() : -1,
+              target ? target->GetDisableDispatchCount() : 0,
+              target ? target->GetLastScheduledTick() : 0,
+              current ? static_cast<u32>(current->GetState()) : 0,
+              current ? current->GetPriority() : 0,
+              current ? current->GetCurrentCore() : -1,
+              current ? current->GetDisableDispatchCount() : 0);
 }
 
 } // namespace
