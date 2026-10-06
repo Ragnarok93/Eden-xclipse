@@ -706,7 +706,7 @@ void RunXclipseOptimizationProbeSuite(const Device& device,
         return;
     }
 
-    results = {};
+    results.ResetTransferMeasurements();
     CaptureStaticProfile(device, results);
 
     results.empty_queue_submit =

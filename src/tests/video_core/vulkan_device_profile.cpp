@@ -5,6 +5,55 @@
 
 #include "video_core/vulkan_common/vulkan_device_profile.h"
 
+TEST_CASE("VulkanDeviceProfile: subgroup timing cannot churn cache identity", "[video_core]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.xclipse.wave32_validated = true;
+    policy.xclipse.wave64_validated = true;
+    policy.xclipse.allowed_wave_mask = 3;
+    policy.xclipse.preferred_compute_wave = Vulkan::SelectXclipseComputeWave(true, true);
+    REQUIRE(policy.xclipse.preferred_compute_wave == 0);
+    const auto hash = Vulkan::ComputeVulkanPolicyHash(policy);
+    for (const auto timing : {1ULL, 600000ULL, 8000000ULL}) {
+        policy.xclipse.wave32_probe_ns = timing;
+        policy.xclipse.wave64_probe_ns = 9000000ULL - timing;
+        policy.xclipse.preferred_compute_wave = Vulkan::SelectXclipseComputeWave(
+            policy.xclipse.wave32_validated, policy.xclipse.wave64_validated);
+        REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) == hash);
+    }
+    REQUIRE(Vulkan::SelectXclipseComputeWave(true, false) == 32);
+    REQUIRE(Vulkan::SelectXclipseComputeWave(false, true) == 64);
+    REQUIRE(Vulkan::SelectXclipseComputeWave(false, false) == 0);
+}
+
+TEST_CASE("VulkanDeviceProfile: transfer reset preserves independent depth evidence", "[video_core]") {
+    using Vulkan::CapabilityState;
+    Vulkan::XclipseOptimizationProbeResults probes{};
+    probes.r32_sampled_image = CapabilityState::Validated;
+    probes.r32_dref_sample = CapabilityState::Advertised;
+    probes.r32_compare_non_dref = CapabilityState::Validated;
+    probes.r32_compare_dref = CapabilityState::Unsupported;
+    probes.d32_compare_dref = CapabilityState::Validated;
+    probes.mutable_r32_d32_view = CapabilityState::Validated;
+    probes.depth_compare_probe_cases = 5;
+    probes.depth_compare_probe_failures = 1;
+    probes.graphics_queue_count = 4;
+    probes.copy_1m_ns = 734101;
+    probes.buffer_transfer = CapabilityState::Validated;
+    probes.ResetTransferMeasurements();
+    REQUIRE(probes.r32_sampled_image == CapabilityState::Validated);
+    REQUIRE(probes.r32_dref_sample == CapabilityState::Advertised);
+    REQUIRE(probes.r32_compare_non_dref == CapabilityState::Validated);
+    REQUIRE(probes.r32_compare_dref == CapabilityState::Unsupported);
+    REQUIRE(probes.d32_compare_dref == CapabilityState::Validated);
+    REQUIRE(probes.mutable_r32_d32_view == CapabilityState::Validated);
+    REQUIRE(probes.depth_compare_probe_cases == 5);
+    REQUIRE(probes.depth_compare_probe_failures == 1);
+    REQUIRE(probes.graphics_queue_count == 0);
+    REQUIRE(probes.copy_1m_ns == 0);
+    REQUIRE(probes.buffer_transfer == CapabilityState::Unsupported);
+}
+
 TEST_CASE("VulkanDeviceProfile: Xclipse detection requires device-name evidence", "[video_core]") {
     Vulkan::VulkanDeviceIdentity xclipse{};
     xclipse.device_name = "Samsung Xclipse 940";

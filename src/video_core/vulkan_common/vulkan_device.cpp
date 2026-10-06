@@ -2184,21 +2184,8 @@ void Device::RunXclipseSubgroupValidationProbes() {
     xclipse.allowed_wave_mask = (xclipse.wave32_validated ? 0x1U : 0U) |
                                 (xclipse.wave64_validated ? 0x2U : 0U);
 
-    if (xclipse.wave32_validated && xclipse.wave64_validated) {
-        // The probe is intentionally small, so use a conservative 5% winner threshold.
-        // A near-tie leaves the driver's advertised subgroup size as the neutral choice.
-        const u64 wave32 = xclipse.wave32_probe_ns;
-        const u64 wave64 = xclipse.wave64_probe_ns;
-        if (wave32 * 100ULL < wave64 * 95ULL) {
-            xclipse.preferred_compute_wave = 32U;
-        } else if (wave64 * 100ULL < wave32 * 95ULL) {
-            xclipse.preferred_compute_wave = 64U;
-        } else {
-            xclipse.preferred_compute_wave = 0;
-        }
-    } else {
-        xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
-    }
+    xclipse.preferred_compute_wave =
+        SelectXclipseComputeWave(xclipse.wave32_validated, xclipse.wave64_validated);
     if (xclipse.allowed_wave_mask != 0) {
         caps.required_subgroup_size = CapabilityState::Validated;
     }
@@ -3364,10 +3351,6 @@ bool Device::GetSuitability(bool requires_swapchain) {
     bool suitable = true;
 
     // Configure properties.
-    VkPhysicalDeviceVulkan12Features features_1_2{};
-    VkPhysicalDeviceVulkan13Features features_1_3{};
-
-    // Configure properties.
     properties.properties = physical.GetProperties();
 
     // Set instance version.
@@ -3464,16 +3447,6 @@ bool Device::GetSuitability(bool requires_swapchain) {
     // Set next pointer.
     void** next = &features2.pNext;
 
-    // Vulkan 1.2 and 1.3 features
-    if (instance_version >= VK_API_VERSION_1_2) {
-        features_1_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-        features_1_3.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-
-        features_1_2.pNext = &features_1_3;
-
-        *next = &features_1_2;
-    }
-
 // Test all features we know about. If the feature is not available in core at our
 // current API version, and was not enabled by an extension, skip testing the feature.
 // We set the structure sType explicitly here as it is zeroed by the constructor.
@@ -3508,7 +3481,7 @@ bool Device::GetSuitability(bool requires_swapchain) {
     physical.GetFeatures2(features2);
 
     // Base Vulkan 1.0 features are always valid regardless of instance version.
-    // Vulkan 1.2 core can replace several extension names in device enumeration.\n    if (instance_version >= VK_API_VERSION_1_2) {\n        extensions.driver_properties = true;\n        extensions.shader_float_controls = true;\n        extensions.sampler_mirror_clamp_to_edge = features_1_2.samplerMirrorClampToEdge;\n        extensions.sampler_filter_minmax = features_1_2.samplerFilterMinmax;\n        extensions.shader_viewport_index_layer =\n            features_1_2.shaderOutputViewportIndex && features_1_2.shaderOutputLayer;\n    }\n\n    features.features = features2.features;
+    features.features = features2.features;
 
 // Some features are mandatory. Check those.
 #define CHECK_FEATURE(feature, name)                                                               \
@@ -4202,3 +4175,4 @@ void Device::ShutdownGPULogging() {
 }
 
 } // namespace Vulkan
+

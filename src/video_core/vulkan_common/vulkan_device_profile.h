@@ -11,6 +11,12 @@
 
 namespace Vulkan {
 
+// Startup wall-clock measurements include scheduling and compilation noise. Keep the driver
+// default when both sizes work; force a size only when it is the sole validated alternative.
+[[nodiscard]] constexpr std::uint32_t SelectXclipseComputeWave(bool wave32, bool wave64) noexcept {
+    return wave32 == wave64 ? 0U : wave32 ? 32U : 64U;
+}
+
 enum class CapabilityState : std::uint8_t {
     Unsupported,
     Advertised,
@@ -177,6 +183,20 @@ struct XclipseOptimizationProbeResults {
     // Diagnostics only: actual execution result and output validation for depth comparison.
     std::uint32_t depth_compare_probe_cases{};
     std::uint32_t depth_compare_probe_failures{};
+
+    // The transfer suite owns the other fields, but runs after the independent depth probes.
+    void ResetTransferMeasurements() noexcept {
+        const auto depth = *this;
+        *this = {};
+        r32_sampled_image = depth.r32_sampled_image;
+        r32_dref_sample = depth.r32_dref_sample;
+        r32_compare_non_dref = depth.r32_compare_non_dref;
+        r32_compare_dref = depth.r32_compare_dref;
+        d32_compare_dref = depth.d32_compare_dref;
+        mutable_r32_d32_view = depth.mutable_r32_d32_view;
+        depth_compare_probe_cases = depth.depth_compare_probe_cases;
+        depth_compare_probe_failures = depth.depth_compare_probe_failures;
+    }
 };
 
 struct VulkanDevicePolicy {
