@@ -4,10 +4,14 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <cstring>
+#include <functional>
+#include <thread>
 #include <optional>
 #include "common/assert.h"
 #include "common/bit_util.h"
+#include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/core.h"
@@ -37,6 +41,10 @@ Maxwell3D::Maxwell3D(MemoryManager& memory_manager_)
 {
     dirty.flags.flip();
     InitializeRegisterDefaults();
+    LOG_INFO(Debug,
+             "MAXWELL_MACRO_DIAGNOSTICS engine={} history_capacity={} history_bytes={} "
+             "report_limit=4",
+             fmt::ptr(this), macro_diagnostic_history.size(), sizeof(macro_diagnostic_history));
     execution_mask.reset();
     for (size_t i = 0; i < execution_mask.size(); i++)
         execution_mask[i] = IsMethodExecutable(u32(i));
@@ -200,8 +208,51 @@ bool Maxwell3D::IsMethodExecutable(u32 method) {
     }
 }
 
+void Maxwell3D::LogMacroSequenceFailure(const char* site, u32 method, u32 argument,
+                                       u32 amount, bool last) {
+    if (macro_diagnostic_reports >= 4) {
+        return;
+    }
+    const u32 report = ++macro_diagnostic_reports;
+    LOG_ERROR(Debug,
+              "MAXWELL_MACRO_SEQUENCE_FAILURE report={} engine={} site={} host_thread_hash={} "
+              "sequence={} method=0x{:x} executing_macro=0x{:x} expected_arg_method=0x{:x} "
+              "pending_macro={} argument=0x{:x} amount={} packet_pending=unknown last={} "
+              "dma_segment=0x{:x} params={} segments={} macro_dirty={} dma_dirty={} detail_limit=4",
+              report, fmt::ptr(this), site,
+              std::hash<std::thread::id>{}(std::this_thread::get_id()),
+              macro_diagnostic_sequence, method, executing_macro, executing_macro + 1,
+              executing_macro != 0, argument, amount, last, current_dma_segment,
+              macro_params.size(), macro_segments.size(), current_macro_dirty, current_dirty);
+    const u64 first = macro_diagnostic_sequence > macro_diagnostic_history.size()
+                          ? macro_diagnostic_sequence - macro_diagnostic_history.size()
+                          : 0;
+    for (u64 index = first; index < macro_diagnostic_sequence; ++index) {
+        const auto& event = macro_diagnostic_history[index % macro_diagnostic_history.size()];
+        LOG_ERROR(Debug,
+                  "MAXWELL_MACRO_HISTORY report={} engine={} sequence={} method=0x{:x} "
+                  "executing_macro=0x{:x} amount={} first_argument=0x{:x} last={} dma_segment=0x{:x}",
+                  report, fmt::ptr(this), event.sequence, event.method, event.executing,
+                  event.amount, event.first_argument, event.last, event.dma_segment);
+    }
+    for (size_t index = 0; index < std::min<size_t>(macro_segments.size(), 8); ++index) {
+        const auto& [address, count] = macro_segments[index];
+        LOG_ERROR(Debug,
+                  "MAXWELL_MACRO_SEGMENT report={} engine={} index={} address=0x{:x} words={}",
+                  report, fmt::ptr(this), index, address, count);
+    }
+}
+
 void Maxwell3D::ProcessMacro(Core::System& system, u32 method, const u32* base_start, u32 amount, bool is_last_call) {
+    auto& event =
+        macro_diagnostic_history[macro_diagnostic_sequence % macro_diagnostic_history.size()];
+    event = {++macro_diagnostic_sequence, current_dma_segment, method, executing_macro,
+             amount, amount != 0 ? base_start[0] : 0, is_last_call};
     if (executing_macro == 0) {
+        if ((method % 2) != 0) {
+            LogMacroSequenceFailure("ProcessMacro/start", method, amount != 0 ? base_start[0] : 0,
+                                    amount, is_last_call);
+        }
         // A macro call must begin by writing the macro method's register, not its argument.
         ASSERT((method % 2) == 0 && "Can't start macro execution by writing to the ARGS register");
         executing_macro = method;
@@ -396,6 +447,9 @@ void Maxwell3D::CallMethod(Core::System& system, u32 method, u32 method_argument
     // It is an error to write to a register other than the current macro's ARG register before
     // it has finished execution.
     if (executing_macro != 0) {
+        if (method != executing_macro + 1) {
+            LogMacroSequenceFailure("CallMethod", method, method_argument, 1, is_last_call);
+        }
         ASSERT(method == executing_macro + 1);
     }
 

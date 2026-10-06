@@ -3263,6 +3263,23 @@ private:
     /// Parameters that have been submitted to the macro call so far.
     std::vector<u32> macro_params;
 
+    // Temporary investigation history: fixed storage, no per-command log output.
+    // Written by the engine's existing command consumer, outside guest register state.
+    struct MacroDiagnosticEvent {
+        u64 sequence{};
+        GPUVAddr dma_segment{};
+        u32 method{};
+        u32 executing{};
+        u32 amount{};
+        u32 first_argument{};
+        bool last{};
+    };
+    std::array<MacroDiagnosticEvent, 8> macro_diagnostic_history{};
+    u64 macro_diagnostic_sequence{};
+    u32 macro_diagnostic_reports{};
+    void LogMacroSequenceFailure(const char* site, u32 method, u32 argument, u32 amount,
+                                 bool last);
+
     /// Interpreter for the macro codes uploaded to the GPU.
     MacroEngine macro_engine;
 
