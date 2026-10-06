@@ -717,6 +717,15 @@ struct Values {
                                              Category::RendererDebug};
     Setting<bool> xclipse_dref_diagnostics{linkage, false, "xclipse_dref_diagnostics",
                                            Category::RendererDebug};
+    Setting<bool> xclipse_host_memory_diagnostics{linkage, false,
+                                                  "xclipse_host_memory_diagnostics",
+                                                  Category::RendererDebug};
+    Setting<bool> xclipse_gpu_memory_diagnostics{linkage, false,
+                                                 "xclipse_gpu_memory_diagnostics",
+                                                 Category::RendererDebug};
+    Setting<bool> xclipse_scheduler_diagnostics{linkage, false,
+                                                "xclipse_scheduler_diagnostics",
+                                                Category::RendererDebug};
     Setting<bool> xclipse_memory_pressure_monitor{linkage, true,
                                                   "xclipse_memory_pressure_monitor",
                                                   Category::RendererDebug};

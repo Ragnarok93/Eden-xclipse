@@ -1563,6 +1563,9 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
             add(BooleanSetting.XCLIPSE_DIAGNOSTIC_LOGGING.key)
             add(BooleanSetting.XCLIPSE_DREF_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_HOST_MEMORY_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_GPU_MEMORY_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_SCHEDULER_DIAGNOSTICS.key)
 
             add(HeaderSetting(R.string.cpu))
 
