@@ -1574,6 +1574,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColor(dst_framebuffer, src, dst_region, src_region, filter,
                                     operation);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     ASSERT(src.format == dst.format);
@@ -1585,6 +1586,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         }
         device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
         blit_image_helper.ResolveDepthStencil(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
@@ -1607,6 +1609,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
             UNIMPLEMENTED_IF(is_src_msaa || is_dst_msaa);
             blit_image_helper.BlitDepthStencil(dst_framebuffer, src, dst_region, src_region,
                                                filter, operation);
+            dst.RecordImageWrite(XclipseImageWriter::Blit);
             return;
         }
     }
@@ -1617,11 +1620,13 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
     if (is_msaa_to_msaa && aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT) {
         device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColorMSAA(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (is_msaa_to_msaa) {
         device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
         blit_image_helper.BlitDepthStencilMSAA(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
@@ -1633,6 +1638,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         // Scaled MSAA resolve uses the shader path, not vkCmdResolveImage.
         device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColorMSAA(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (is_resolve) {
@@ -1725,6 +1731,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                        0, write_barrier);
     });
+    dst.RecordImageWrite(XclipseImageWriter::Blit);
 }
 
 void TextureCacheRuntime::ConvertImage(Framebuffer* dst, ImageView& dst_view, ImageView& src_view) {
