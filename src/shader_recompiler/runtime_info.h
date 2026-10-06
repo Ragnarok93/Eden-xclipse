@@ -75,9 +75,20 @@ enum class CompareFunction {
 
 [[nodiscard]] constexpr bool EvaluateDrefCompare(CompareFunction comparison, float reference,
                                                   float sampled) noexcept {
-    switch (comparison) {
-    case CompareFunction::Never:
+    if (comparison == CompareFunction::Never) {
         return false;
+    }
+    if (comparison == CompareFunction::Always) {
+        return true;
+    }
+
+    // The SPIR-V software-DREF path uses ordered floating-point comparisons. Match that
+    // guest-visible behavior here: every non-constant comparison is false for NaN operands.
+    if (reference != reference || sampled != sampled) {
+        return false;
+    }
+
+    switch (comparison) {
     case CompareFunction::Less:
         return reference < sampled;
     case CompareFunction::Equal:
@@ -90,8 +101,9 @@ enum class CompareFunction {
         return reference != sampled;
     case CompareFunction::GreaterThanEqual:
         return reference >= sampled;
+    case CompareFunction::Never:
     case CompareFunction::Always:
-        return true;
+        break;
     }
     return false;
 }

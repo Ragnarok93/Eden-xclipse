@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <limits>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "shader_recompiler/runtime_info.h"
@@ -47,6 +49,16 @@ TEST_CASE("Xclipse software DREF comparison semantics", "[video_core][xclipse][d
 
     REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::Never, high, high));
     REQUIRE(EvaluateDrefCompare(CompareFunction::Always, high, high));
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::Less, nan, high));
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::Equal, nan, high));
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::LessThanEqual, nan, high));
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::Greater, nan, high));
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::NotEqual, nan, high));
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::GreaterThanEqual, nan, high));
+    REQUIRE_FALSE(EvaluateDrefCompare(CompareFunction::Never, nan, nan));
+    REQUIRE(EvaluateDrefCompare(CompareFunction::Always, nan, nan));
 }
 
 TEST_CASE("Xclipse DREF comparison ops pack per descriptor across word boundaries",

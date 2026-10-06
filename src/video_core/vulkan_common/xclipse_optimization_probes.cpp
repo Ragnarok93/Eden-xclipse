@@ -1161,6 +1161,18 @@ struct BlockDecodeProbeCase {
         }
     }
 
+    if (probe.is_signed) {
+        // The CPU decoder can represent the SNORM endpoint -1.0 as raw -128. The production
+        // shader writes normalized floating-point values to an R8/RG8 SNORM storage image, for
+        // which Vulkan's canonical 8-bit conversion stores -1.0 as -127. Both sample as -1.0;
+        // canonicalize the CPU reference before requiring exact storage readback equality.
+        for (u8& value : expected) {
+            if (value == 0x80u) {
+                value = 0x81u;
+            }
+        }
+    }
+
     return RunBlockDecodeProbe(
         device,
         BlockDecodeProbeCase{
