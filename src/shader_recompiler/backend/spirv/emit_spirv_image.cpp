@@ -704,9 +704,10 @@ Id EmitImageSampleDrefExplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Va
     if (ShouldEmulateR32Dref(ctx, info)) {
         const ImageOperands operands(ctx, false, true, false, lod, offset);
         const Id sampled{Emit(&EmitContext::OpImageSparseSampleExplicitLod,
-                              &EmitContext::OpImageSampleExplicitLod, ctx, inst, ctx.F32[1],
+                              &EmitContext::OpImageSampleExplicitLod, ctx, inst, ctx.F32[4],
                               Texture(ctx, info, index), coords, operands.Mask(), operands.Span())};
-        return EmitDrefCompare(ctx, sampled, dref, info);
+        return EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 0u), dref,
+                               info);
     }
     const ImageOperands operands(ctx, false, true, false, lod, offset);
     return Emit(&EmitContext::OpImageSparseSampleDrefExplicitLod,
