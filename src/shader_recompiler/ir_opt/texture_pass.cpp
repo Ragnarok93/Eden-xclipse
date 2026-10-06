@@ -554,7 +554,8 @@ public:
 
     u32 Add(const TextureDescriptor& desc) {
         const u32 index{Add(texture_descriptors, desc, [&desc](const auto& existing) {
-            return desc.type == existing.type && desc.is_depth == existing.is_depth &&
+            return desc.type == existing.type && desc.dref_mode == existing.dref_mode &&
+                   desc.is_depth == existing.is_depth &&
                    desc.has_secondary == existing.has_secondary &&
                    desc.cbuf_index == existing.cbuf_index &&
                    desc.cbuf_offset == existing.cbuf_offset &&
@@ -812,9 +813,20 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
             } else {
                 count = std::min(count, sampled_dynamic_cap);
                 const bool is_integer{is_texture_pixel_format_integer(cbuf)};
+                const bool guest_dref{flags.is_depth != 0};
+                const bool dynamic_descriptor{count > 1};
+                const TexturePixelFormat pixel_format{ReadTexturePixelFormatCached(env, cbuf)};
+                const DrefExecutionMode dref_mode{SelectDrefExecutionMode(
+                    guest_dref, dynamic_descriptor, pixel_format,
+                    host_info.support_r32_software_dref)};
+                const bool host_depth = dref_mode == DrefExecutionMode::NativeDref ||
+                                        dref_mode == DrefExecutionMode::RuntimeValidatedDref;
+                program.info.uses_xclipse_r32_dref_emulation |=
+                    dref_mode == DrefExecutionMode::SoftwareDref;
                 index = descriptors.Add(TextureDescriptor{
                     .type = flags.type,
-                    .is_depth = flags.is_depth != 0,
+                    .dref_mode = dref_mode,
+                    .is_depth = host_depth,
                     .is_multisample = is_multisample,
                     .is_integer = is_integer,
                     .has_secondary = cbuf.has_secondary,
