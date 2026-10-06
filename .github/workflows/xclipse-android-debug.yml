@@ -108,3 +108,51 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -d "{\"state\":\"${STATE}\",\"context\":\"xclipse/android-debug\",\"description\":\"Xclipse optimized diagnostic build ${STATE}\",\"target_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"
+
+  policy-tests:
+    name: Xclipse policy verification gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install focused host test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build catch2 libvulkan-dev
+
+      - name: Build actual policy sources and existing regression tests
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/xclipse-policy"
+          cat > "$RUNNER_TEMP/xclipse-policy/CMakeLists.txt" <<'CMAKE'
+          cmake_minimum_required(VERSION 3.22)
+          project(xclipse_policy_gate LANGUAGES CXX)
+          find_package(Catch2 3 REQUIRED)
+          find_package(Vulkan REQUIRED)
+          enable_testing()
+          add_executable(policy_tests
+            "${EDEN_SOURCE_DIR}/src/video_core/vulkan_common/vulkan_device_profile.cpp"
+            "${EDEN_SOURCE_DIR}/src/video_core/renderer_vulkan/vk_pipeline_policy.cpp"
+            "${EDEN_SOURCE_DIR}/src/tests/video_core/vulkan_device_profile.cpp"
+            "${EDEN_SOURCE_DIR}/src/tests/video_core/xclipse_pipeline_policy.cpp")
+          target_compile_features(policy_tests PRIVATE cxx_std_20)
+          target_include_directories(policy_tests PRIVATE "${EDEN_SOURCE_DIR}/src" ${Vulkan_INCLUDE_DIRS})
+          target_link_libraries(policy_tests PRIVATE Catch2::Catch2WithMain)
+          add_test(NAME policy_gate COMMAND policy_tests)
+          CMAKE
+          cmake -S "$RUNNER_TEMP/xclipse-policy" -B "$RUNNER_TEMP/xclipse-policy/build" -G Ninja \
+            -DEDEN_SOURCE_DIR="$GITHUB_WORKSPACE" -DCMAKE_BUILD_TYPE=Debug
+          cmake --build "$RUNNER_TEMP/xclipse-policy/build" --parallel 2
+
+      - name: Run policy gate without skipping failing tests
+        run: ctest --test-dir "$RUNNER_TEMP/xclipse-policy/build" --output-on-failure
+
+      - name: Upload policy test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xclipse-policy-test-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/xclipse-policy/build/Testing/Temporary/
+          if-no-files-found: ignore
+          retention-days: 14
