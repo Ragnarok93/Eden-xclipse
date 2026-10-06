@@ -394,8 +394,8 @@ void RasterizerVulkan::DrawTexture() {
     Extent3D src_size = {static_cast<u32>(ScaleSrc(texture.size.width)),
                          static_cast<u32>(ScaleSrc(texture.size.height)), texture.size.depth};
     // DrawTexture binds a raw image view, so adapt the sampler to that view's format first.
-    const VkSampler source_sampler =
-        sampler->HandleFor(texture, false, texture.RenderTarget());
+    const VkSampler source_sampler = sampler->HandleFor(
+        texture, Shader::DrefExecutionMode::NonDref, texture.RenderTarget());
     blit_image.BlitColor(framebuffer, texture.RenderTarget(), texture.ImageHandle(),
                          source_sampler, dst_region, src_region, src_size);
 }
