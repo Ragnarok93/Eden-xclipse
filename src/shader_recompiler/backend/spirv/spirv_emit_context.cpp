@@ -1045,7 +1045,9 @@ void EmitContext::DefineRescalingInputPushConstant() {
     members.push_back(rescaling_images_type);
     rescaling_images_member_index = member_index++;
 
-    members.push_back(U32[1]);
+    const Id dref_compare_type{TypeArray(U32[1], Const(NUM_DREF_COMPARE_OP_WORDS))};
+    Decorate(dref_compare_type, spv::Decoration::ArrayStride, 4u);
+    members.push_back(dref_compare_type);
     rescaling_dref_compare_member_index = member_index++;
 
     if (stage != Stage::Compute) {
@@ -1066,8 +1068,8 @@ void EmitContext::DefineRescalingInputPushConstant() {
 
     MemberDecorate(push_constant_struct, rescaling_dref_compare_member_index,
                    spv::Decoration::Offset,
-                   static_cast<u32>(offsetof(RescalingLayout, dref_compare_op)));
-    MemberName(push_constant_struct, rescaling_dref_compare_member_index, "dref_compare_op");
+                   static_cast<u32>(offsetof(RescalingLayout, dref_compare_ops)));
+    MemberName(push_constant_struct, rescaling_dref_compare_member_index, "dref_compare_ops");
 
     if (stage != Stage::Compute) {
         MemberDecorate(push_constant_struct, rescaling_downfactor_member_index,
@@ -1398,6 +1400,7 @@ void EmitContext::DefineTextures(const Info& info, u32& binding, u32& scaling_in
             .pointer_type = pointer_type,
             .image_type = image_type,
             .count = desc.count,
+            .dref_mode = desc.dref_mode,
             .is_multisample = desc.is_multisample,
             .is_integer = desc.is_integer,
         });
