@@ -10,6 +10,8 @@
 #include <condition_variable>
 #include <mutex>
 
+#include <boost/container/small_vector.hpp>
+
 #include "common/common_types.h"
 #include "common/thread_worker.h"
 #include "shader_recompiler/shader_info.h"
@@ -50,7 +52,9 @@ public:
 
     [[nodiscard]] bool Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                  Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
-                                 BufferCache& buffer_cache, TextureCache& texture_cache);
+                                 BufferCache& buffer_cache, TextureCache& texture_cache,
+                                 boost::container::small_vector<VideoCommon::ImageViewId, 64>&
+                                     written_image_views);
 
     bool IsBound() const noexcept {
         return static_cast<bool>(pipeline);

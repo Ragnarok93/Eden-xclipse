@@ -21,7 +21,9 @@
 
 #include <fmt/format.h>
 
+#include "common/alignment.h"
 #include "common/assert.h"
+#include "common/correctness_telemetry.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/literals.h"
@@ -32,11 +34,15 @@
 #include "video_core/vulkan_common/vma.h"
 #include "video_core/host_shaders/xclipse_bcn_sample_probe_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_probe_comp_spv.h"
+#include "video_core/host_shaders/xclipse_r32_sample_probe_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_ballot_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_shuffle_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_arithmetic_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_quad_comp_spv.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vulkan_feature_policy.h"
+#include "video_core/vulkan_common/xclipse_optimization_probes.h"
+#include "video_core/vulkan_common/xclipse_depth_comparison_probes.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
@@ -209,7 +215,7 @@ FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties pro
     const bool transfer_src = (flags & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) != 0;
     const bool transfer_dst = (flags & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) != 0;
     return {
-        .image_create = Advertised(sampled && transfer_src && transfer_dst),
+        .image_create = Advertised(sampled && transfer_dst),
         .sampled = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT),
         .linear_filter = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
         .storage_image = has(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT),
@@ -221,33 +227,21 @@ FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties pro
 }
 
 bool SupportsAdvertisedNativeBcnPath(const FormatCapabilitySnapshot& format) {
-    return format.image_create != CapabilityState::Unsupported &&
-           format.sampled != CapabilityState::Unsupported &&
-           format.linear_filter != CapabilityState::Unsupported &&
-           format.transfer_src != CapabilityState::Unsupported &&
-           format.transfer_dst != CapabilityState::Unsupported;
-}
-
-bool SupportsValidatedNativeBcnPath(const FormatCapabilitySnapshot& format) {
-    return format.image_create == CapabilityState::Validated &&
-           format.sampled == CapabilityState::Validated &&
-           format.linear_filter == CapabilityState::Validated &&
-           format.transfer_src == CapabilityState::Validated &&
-           format.transfer_dst == CapabilityState::Validated;
+    return SupportsAdvertisedBcnUsage(format);
 }
 
 bool HasValidatedImageCreation(const FormatCapabilitySnapshot& format) {
     return format.image_create == CapabilityState::Validated &&
-           SupportsAdvertisedNativeBcnPath(format);
+           SupportsAdvertisedBcnUsage(format, false, true);
 }
 
-bool SupportsXclipseRuntimeNativeBcnPath(VkFormat,
-                                         const FormatCapabilitySnapshot& capability) {
+bool SupportsXclipseRuntimeNativeBcnPath(VkFormat, const FormatCapabilitySnapshot& capability,
+                                         bool require_transfer_src = true,
+                                         bool require_transfer_dst = true) {
     // Image creation alone is not enough evidence for the native compressed-texture path.
-    // Sampling, linear filtering, and transfer behavior must all be execution-validated first.
-    // Until those probes exist, preserve Eden's conversion path instead of trusting Samsung's
-    // advertised BC operation bits.
-    return SupportsValidatedNativeBcnPath(capability);
+    // Sampling, linear filtering, and each requested transfer operation must be validated before
+    // selecting the native path. An operation that the image never requests must not veto it.
+    return SupportsValidatedBcnUsage(capability, require_transfer_src, require_transfer_dst);
 }
 
 ::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
@@ -566,6 +560,15 @@ void Device::BuildDevicePolicy() {
                    features.descriptor_buffer.descriptorBuffer != VK_FALSE);
     caps.sparse_binding =
         Advertised(features.features.sparseBinding != VK_FALSE && graphics_family_sparse_binding);
+    caps.alpha_to_one = features.features.alphaToOne != VK_FALSE;
+    caps.storage_push_constant_8 = features.bit8_storage.storagePushConstant8 != VK_FALSE;
+    caps.residency_non_resident_strict =
+        properties.properties.sparseProperties.residencyNonResidentStrict != VK_FALSE;
+    caps.sparse_address_space_size = properties.properties.limits.sparseAddressSpaceSize;
+    caps.buffer_capture_replay_descriptor_size =
+        static_cast<std::uint64_t>(properties.descriptor_buffer.bufferCaptureReplayDescriptorDataSize);
+    caps.image_capture_replay_descriptor_size =
+        static_cast<std::uint64_t>(properties.descriptor_buffer.imageCaptureReplayDescriptorDataSize);
 
     const VkSubgroupFeatureFlags subgroup_ops = properties.subgroup_properties.supportedOperations;
     caps.subgroup_ballot =
@@ -594,10 +597,23 @@ void Device::BuildDevicePolicy() {
     }
 
     device_policy.xclipse = DetectXclipseHardware(identity);
+    if (device_policy.xclipse.detected && !HasBrokenCompute()) {
+        device_policy.xclipse.bc6_gpu_decode_capable =
+            IsFormatSupported(VK_FORMAT_R16G16B16A16_SFLOAT,
+                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+        device_policy.xclipse.bc7_gpu_decode_capable =
+            IsFormatSupported(VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+        device_policy.xclipse.bptc_gpu_decode_capable =
+            device_policy.xclipse.bc6_gpu_decode_capable ||
+            device_policy.xclipse.bc7_gpu_decode_capable;
+    }
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
     UpdateXclipseBcnDecodePolicy(device_policy,
                                  Settings::values.xclipse_gpu_bcn_decode.GetValue());
+    UpdateXclipseBptcDecodePolicy(device_policy,
+                                   Settings::values.xclipse_gpu_bptc_decode.GetValue());
     UpdateXclipseSubgroupSizePolicy(
         device_policy, Settings::values.xclipse_subgroup_size_control.GetValue());
     UpdateXclipseBcnProfile();
@@ -638,11 +654,8 @@ void Device::RunXclipseBcnNativeValidationProbes() {
     constexpr u64 ProbeTimeoutNs = 250'000'000ULL;
 
     const auto advertised_for_probe = [](const FormatCapabilitySnapshot& format) {
-        return format.image_create == CapabilityState::Validated &&
-               format.sampled != CapabilityState::Unsupported &&
-               format.linear_filter != CapabilityState::Unsupported &&
-               format.transfer_src != CapabilityState::Unsupported &&
-               format.transfer_dst != CapabilityState::Unsupported;
+        return SupportsAdvertisedBcnUsage(format, false, true) &&
+               format.image_create == CapabilityState::Validated;
     };
     if (std::ranges::none_of(
             std::span{caps.bcn}.first(BasicBcnFormatCount), advertised_for_probe)) {
@@ -908,7 +921,9 @@ void Device::RunXclipseBcnNativeValidationProbes() {
         std::copy_n(block.begin(), block_bytes, mapped);
 
         ImageResource image_resource{dld, raw_device};
-        const VkImageCreateInfo image_ci{
+        bool validate_transfer_src =
+            format_caps.transfer_src != CapabilityState::Unsupported;
+        VkImageCreateInfo image_ci{
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
@@ -919,8 +934,10 @@ void Device::RunXclipseBcnNativeValidationProbes() {
             .arrayLayers = 1,
             .samples = VK_SAMPLE_COUNT_1_BIT,
             .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            // Upload and sampling are the baseline native texture operations. Transfer-source
+            // readback is added only when the format advertises it and is validated separately.
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                     (validate_transfer_src ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : VkImageUsageFlags{}),
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = nullptr,
@@ -928,7 +945,22 @@ void Device::RunXclipseBcnNativeValidationProbes() {
         };
 
         try {
-            vk::Check(dld.vkCreateImage(raw_device, &image_ci, nullptr, &image_resource.image));
+            VkResult image_create_result =
+                dld.vkCreateImage(raw_device, &image_ci, nullptr, &image_resource.image);
+            if (image_create_result != VK_SUCCESS && validate_transfer_src) {
+                // A driver may advertise the optional transfer-source bit while rejecting an
+                // image create that requests it. Retry the independent sampled/upload path so
+                // that this irrelevant operation cannot poison native sampling selection.
+                validate_transfer_src = false;
+                if (image_resource.image) {
+                    dld.vkDestroyImage(raw_device, image_resource.image, nullptr);
+                    image_resource.image = VK_NULL_HANDLE;
+                }
+                image_ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                image_create_result =
+                    dld.vkCreateImage(raw_device, &image_ci, nullptr, &image_resource.image);
+            }
+            vk::Check(image_create_result);
             const VkMemoryRequirements image_requirements =
                 logical.GetImageMemoryRequirements(image_resource.image);
             const auto image_memory_type =
@@ -1078,25 +1110,27 @@ void Device::RunXclipseBcnNativeValidationProbes() {
                                               *pipeline_layout, 0, descriptor_set, {});
             command_buffer.Dispatch(1, 1, 1);
 
-            const VkImageMemoryBarrier to_transfer_src{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .pNext = nullptr,
-                .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
-                .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-                .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = image_resource.image,
-                .subresourceRange = range,
-            };
-            command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                                           to_transfer_src);
-            copy.bufferOffset = TransferReadbackOffset;
-            command_buffer.CopyImageToBuffer(image_resource.image,
-                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                             probe_buffer.buffer, copy);
+            if (validate_transfer_src) {
+                const VkImageMemoryBarrier to_transfer_src{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                    .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                    .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = image_resource.image,
+                    .subresourceRange = range,
+                };
+                command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                               to_transfer_src);
+                copy.bufferOffset = TransferReadbackOffset;
+                command_buffer.CopyImageToBuffer(image_resource.image,
+                                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                 probe_buffer.buffer, copy);
+            }
 
             const VkMemoryBarrier host_read_barrier{
                 .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -1144,25 +1178,728 @@ void Device::RunXclipseBcnNativeValidationProbes() {
                 sample[0] == 255U && sample[1] == 0U &&
                 sample[2] == 0U && sample[3] == 255U;
             const bool transfer_ok =
+                !validate_transfer_src ||
                 std::equal(block.begin(), block.begin() + block_bytes,
                            mapped + TransferReadbackOffset);
-            const bool valid = sample_ok && transfer_ok;
-            if (valid) {
+            if (sample_ok) {
                 format_caps.image_create = CapabilityState::Validated;
                 format_caps.sampled = CapabilityState::Validated;
                 format_caps.linear_filter = CapabilityState::Validated;
-                format_caps.transfer_src = CapabilityState::Validated;
                 format_caps.transfer_dst = CapabilityState::Validated;
+                if (validate_transfer_src && transfer_ok) {
+                    format_caps.transfer_src = CapabilityState::Validated;
+                }
             }
             LOG_INFO(Render_Vulkan,
-                     "XCLIPSE PROBE BC format={} native_sample_transfer={} "
-                     "sample_ok={} transfer_ok={}",
-                     format, valid ? "validated" : "failed", sample_ok, transfer_ok);
+                     "XCLIPSE PROBE BC format={} native_sample_usage={} "
+                     "sample_ok={} transfer_src_requested={} transfer_ok={}",
+                     format, sample_ok ? "validated" : "failed", sample_ok,
+                     validate_transfer_src, transfer_ok);
         } catch (const vk::Exception& exception) {
             LOG_WARNING(Render_Vulkan,
                         "XCLIPSE PROBE BC format={} exception: {}",
                         format, exception.what());
         }
+    }
+}
+
+void Device::RunXclipseDescriptorBufferValidationProbe() {
+    auto& caps = device_policy.capabilities;
+    auto& xclipse = device_policy.xclipse;
+    xclipse.descriptor_buffer_validated = false;
+
+    if (caps.descriptor_buffer == CapabilityState::Unsupported ||
+        !extensions.buffer_device_address ||
+        !features.descriptor_buffer.descriptorBuffer) {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE descriptor_buffer skipped: extension/feature/device-address unavailable");
+        return;
+    }
+
+    const VkPhysicalDeviceDescriptorBufferPropertiesEXT& props = properties.descriptor_buffer;
+    const VkDeviceSize descriptor_size = props.storageBufferDescriptorSize;
+    const VkDeviceSize alignment =
+        std::max<VkDeviceSize>(props.descriptorBufferOffsetAlignment, 1);
+    if (descriptor_size == 0) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor_buffer failed: invalid descriptor limits");
+        return;
+    }
+
+    constexpr u32 ProbeInvocations = 64;
+    constexpr VkDeviceSize OutputBytes = sizeof(u32) * ProbeInvocations * 2;
+    const VkDeviceSize descriptor_capacity = Common::AlignUp(4096ULL, alignment);
+    const VkDevice raw_device = *logical;
+
+    const VkPhysicalDeviceMemoryProperties memory_properties =
+        physical.GetMemoryProperties().memoryProperties;
+
+    const auto find_host_memory = [&](u32 bits) -> std::optional<u32> {
+        for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            if ((bits & (1U << index)) == 0) {
+                continue;
+            }
+            const auto flags = memory_properties.memoryTypes[index].propertyFlags;
+            if ((flags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    };
+
+    struct BufferResource {
+        const vk::DeviceDispatch& dld;
+        VkDevice device{};
+        VkBuffer buffer{};
+        VkDeviceMemory memory{};
+        void* mapped{};
+
+        ~BufferResource() {
+            if (mapped && memory) {
+                dld.vkUnmapMemory(device, memory);
+            }
+            if (buffer) {
+                dld.vkDestroyBuffer(device, buffer, nullptr);
+            }
+            if (memory) {
+                dld.vkFreeMemory(device, memory, nullptr);
+            }
+        }
+    };
+
+    const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage,
+                                 BufferResource& resource) -> bool {
+        const VkBufferCreateInfo buffer_ci{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .size = size,
+            .usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = nullptr,
+        };
+        vk::Check(
+            dld.vkCreateBuffer(raw_device, &buffer_ci, nullptr, &resource.buffer));
+
+        const VkMemoryRequirements requirements =
+            logical.GetBufferMemoryRequirements(resource.buffer);
+        const auto memory_type = find_host_memory(requirements.memoryTypeBits);
+        if (!memory_type) {
+            return false;
+        }
+
+        const VkMemoryAllocateFlagsInfo allocate_flags{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+            .pNext = nullptr,
+            .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+        };
+        const VkMemoryAllocateInfo allocate_info{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = &allocate_flags,
+            .allocationSize = requirements.size,
+            .memoryTypeIndex = *memory_type,
+        };
+        vk::Check(dld.vkAllocateMemory(raw_device, &allocate_info, nullptr, &resource.memory));
+        vk::Check(dld.vkBindBufferMemory(raw_device, resource.buffer, resource.memory, 0));
+        vk::Check(dld.vkMapMemory(raw_device, resource.memory, 0, size, 0, &resource.mapped));
+        return true;
+    };
+
+    try {
+        BufferResource output_buffer{dld, raw_device};
+        BufferResource descriptor_buffer{dld, raw_device};
+
+        if (!make_buffer(OutputBytes,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         output_buffer) ||
+            !make_buffer(descriptor_capacity,
+                         VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+                         descriptor_buffer)) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer skipped: no usable host-visible memory");
+            return;
+        }
+
+        const VkDescriptorSetLayoutBinding binding{
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            .pImmutableSamplers = nullptr,
+        };
+        const auto descriptor_layout = logical.CreateDescriptorSetLayout({
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT,
+            .bindingCount = 1,
+            .pBindings = &binding,
+        });
+        const VkDescriptorSetLayout raw_layout = *descriptor_layout;
+        const VkDeviceSize set_size = logical.GetDescriptorSetLayoutSizeEXT(raw_layout);
+        const VkDeviceSize binding_offset =
+            logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 0);
+        if (set_size == 0 || binding_offset + descriptor_size > descriptor_capacity) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer failed: invalid layout size={} offset={} capacity={}",
+                        set_size, binding_offset, descriptor_capacity);
+            return;
+        }
+
+        const VkDeviceAddress output_address =
+            logical.GetBufferDeviceAddress(output_buffer.buffer);
+        const VkDeviceAddress descriptor_address =
+            logical.GetBufferDeviceAddress(descriptor_buffer.buffer);
+        if (output_address == 0 || descriptor_address == 0) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer failed: zero device address");
+            return;
+        }
+
+        const VkDescriptorAddressInfoEXT address_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT,
+            .pNext = nullptr,
+            .address = output_address,
+            .range = OutputBytes,
+            .format = VK_FORMAT_UNDEFINED,
+        };
+        const VkDescriptorGetInfoEXT get_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+            .pNext = nullptr,
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .data{.pStorageBuffer = &address_info},
+        };
+        logical.GetDescriptorEXT(get_info, descriptor_size,
+                                 static_cast<u8*>(descriptor_buffer.mapped) + binding_offset);
+
+        const auto pipeline_layout = logical.CreatePipelineLayout({
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .setLayoutCount = 1,
+            .pSetLayouts = &raw_layout,
+            .pushConstantRangeCount = 0,
+            .pPushConstantRanges = nullptr,
+        });
+        const auto shader = logical.CreateShaderModule({
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .codeSize = sizeof(XCLIPSE_SUBGROUP_PROBE_COMP_SPV),
+            .pCode = XCLIPSE_SUBGROUP_PROBE_COMP_SPV,
+        });
+        const auto pipeline = logical.CreateComputePipeline({
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .stage{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                .module = *shader,
+                .pName = "main",
+                .pSpecializationInfo = nullptr,
+            },
+            .layout = *pipeline_layout,
+            .basePipelineHandle = VK_NULL_HANDLE,
+            .basePipelineIndex = -1,
+        });
+        const auto command_pool = logical.CreateCommandPool({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+            .queueFamilyIndex = graphics_family,
+        });
+        auto command_buffers = command_pool.Allocate(1);
+        vk::CommandBuffer command_buffer{command_buffers[0], dld};
+
+        command_buffer.Begin({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = nullptr,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            .pInheritanceInfo = nullptr,
+        });
+        command_buffer.FillBuffer(output_buffer.buffer, 0, OutputBytes, 0);
+        const VkMemoryBarrier clear_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        };
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       clear_barrier);
+
+        const VkDescriptorBufferBindingInfoEXT binding_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT,
+            .pNext = nullptr,
+            .address = descriptor_address,
+            .usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+        };
+        command_buffer.BindDescriptorBuffersEXT(binding_info);
+
+        const u32 buffer_index = 0;
+        const VkDeviceSize set_offset = 0;
+        command_buffer.SetDescriptorBufferOffsetsEXT(
+            VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0, buffer_index, set_offset);
+        command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
+        command_buffer.Dispatch(1, 1, 1);
+
+        const VkMemoryBarrier host_barrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        };
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       VK_PIPELINE_STAGE_HOST_BIT, 0, host_barrier);
+        command_buffer.End();
+
+        const auto fence = logical.CreateFence({
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+        });
+        const VkCommandBuffer raw_command = *command_buffer;
+        const VkSubmitInfo submit_info{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphores = nullptr,
+            .pWaitDstStageMask = nullptr,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &raw_command,
+            .signalSemaphoreCount = 0,
+            .pSignalSemaphores = nullptr,
+        };
+        const VkResult submit_result = graphics_queue.Submit(submit_info, *fence);
+        constexpr u64 ProbeTimeoutNs = 1'000'000'000ULL;
+        const VkResult wait_result =
+            submit_result == VK_SUCCESS ? fence.Wait(ProbeTimeoutNs) : submit_result;
+        if (submit_result != VK_SUCCESS || wait_result != VK_SUCCESS) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer submit={} wait={}",
+                        submit_result, wait_result);
+            return;
+        }
+
+        const auto* output = static_cast<const u32*>(output_buffer.mapped);
+        bool valid = false;
+        for (u32 invocation = 0; invocation < ProbeInvocations; ++invocation) {
+            const u32 subgroup_size = output[invocation * 2];
+            const u32 lane = output[invocation * 2 + 1];
+            if (subgroup_size != 0 && lane < subgroup_size) {
+                valid = true;
+                break;
+            }
+        }
+        xclipse.descriptor_buffer_validated = valid;
+        caps.descriptor_buffer = valid ? CapabilityState::Validated : CapabilityState::Advertised;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE descriptor_buffer result={} descriptor_size={} set_size={} binding_offset={}",
+                 valid ? "validated" : "failed", descriptor_size, set_size, binding_offset);
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor_buffer exception: {}", exception.what());
+    }
+}
+
+
+void Device::RunXclipseDescriptorBufferImageValidationProbe() {
+    auto& xclipse = device_policy.xclipse;
+    xclipse.descriptor_buffer_image_validated = false;
+
+    if (!xclipse.descriptor_buffer_validated ||
+        device_policy.capabilities.descriptor_buffer == CapabilityState::Unsupported ||
+        !extensions.buffer_device_address ||
+        !features.descriptor_buffer.descriptorBuffer) {
+        return;
+    }
+
+    const auto& dld = GetDispatchLoader();
+    const VkDevice raw_device = *logical;
+    const VkPhysicalDeviceMemoryProperties memory_properties =
+        physical.GetMemoryProperties().memoryProperties;
+    const auto find_host_memory = [&](u32 bits) -> std::optional<u32> {
+        constexpr VkMemoryPropertyFlags required =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            if ((bits & (1U << index)) == 0) {
+                continue;
+            }
+            if ((memory_properties.memoryTypes[index].propertyFlags & required) == required) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    };
+    const auto find_device_local_memory = [&](u32 bits) -> std::optional<u32> {
+        for (u32 index = 0; index < memory_properties.memoryTypeCount; ++index) {
+            if ((bits & (1U << index)) == 0) {
+                continue;
+            }
+            if ((memory_properties.memoryTypes[index].propertyFlags &
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    };
+
+    struct BufferResource {
+        const vk::DeviceDispatch& dld;
+        VkDevice device{};
+        VkBuffer buffer{};
+        VkDeviceMemory memory{};
+        void* mapped{};
+        ~BufferResource() {
+            if (mapped && memory) {
+                dld.vkUnmapMemory(device, memory);
+            }
+            if (buffer) {
+                dld.vkDestroyBuffer(device, buffer, nullptr);
+            }
+            if (memory) {
+                dld.vkFreeMemory(device, memory, nullptr);
+            }
+        }
+    };
+    struct ImageResource {
+        const vk::DeviceDispatch& dld;
+        VkDevice device{};
+        VkImage image{};
+        VkDeviceMemory memory{};
+        VkImageView view{};
+        ~ImageResource() {
+            if (view) {
+                dld.vkDestroyImageView(device, view, nullptr);
+            }
+            if (image) {
+                dld.vkDestroyImage(device, image, nullptr);
+            }
+            if (memory) {
+                dld.vkFreeMemory(device, memory, nullptr);
+            }
+        }
+    };
+
+    constexpr VkDeviceSize OutputBytes = 4;
+    constexpr VkDeviceSize DescriptorBytes = 4096;
+    constexpr float Expected = 0.75f;
+
+    const auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage,
+                                 BufferResource& resource) -> bool {
+        const VkBufferCreateInfo ci{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        if (dld.vkCreateBuffer(raw_device, &ci, nullptr, &resource.buffer) != VK_SUCCESS) {
+            return false;
+        }
+        const VkBufferMemoryRequirementsInfo2 req_info{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
+            .pNext = nullptr,
+            .buffer = resource.buffer,
+        };
+        VkMemoryRequirements2 req2{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+            .pNext = nullptr,
+            .memoryRequirements = {},
+        };
+        dld.vkGetBufferMemoryRequirements2(raw_device, &req_info, &req2);
+        const VkMemoryRequirements req = req2.memoryRequirements;
+        const auto type = find_host_memory(req.memoryTypeBits);
+        if (!type) {
+            return false;
+        }
+        const VkMemoryAllocateFlagsInfo flags{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+            .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+        };
+        const VkMemoryAllocateInfo ai{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = &flags,
+            .allocationSize = req.size,
+            .memoryTypeIndex = *type,
+        };
+        if (dld.vkAllocateMemory(raw_device, &ai, nullptr, &resource.memory) != VK_SUCCESS ||
+            dld.vkBindBufferMemory(raw_device, resource.buffer, resource.memory, 0) != VK_SUCCESS ||
+            dld.vkMapMemory(raw_device, resource.memory, 0, size, 0, &resource.mapped) != VK_SUCCESS) {
+            return false;
+        }
+        return true;
+    };
+
+    try {
+        BufferResource source{dld, raw_device};
+        BufferResource output{dld, raw_device};
+        BufferResource descriptor{dld, raw_device};
+        if (!make_buffer(4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, source) ||
+            !make_buffer(OutputBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, output) ||
+            !make_buffer(DescriptorBytes, VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+                          descriptor)) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer_image skipped: host memory unavailable");
+            return;
+        }
+        *static_cast<u32*>(source.mapped) = std::bit_cast<u32>(Expected);
+        *static_cast<u32*>(output.mapped) = 0;
+
+        const VkImageCreateInfo image_ci{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .format = VK_FORMAT_R32_SFLOAT,
+            .extent = {1, 1, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        ImageResource image{dld, raw_device};
+        if (dld.vkCreateImage(raw_device, &image_ci, nullptr, &image.image) != VK_SUCCESS) {
+            return;
+        }
+        VkMemoryRequirements image_req{};
+        dld.vkGetImageMemoryRequirements(raw_device, image.image, &image_req);
+        const auto image_type = find_device_local_memory(image_req.memoryTypeBits);
+        if (!image_type) {
+            return;
+        }
+        const VkMemoryAllocateInfo image_ai{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = image_req.size,
+            .memoryTypeIndex = *image_type,
+        };
+        if (dld.vkAllocateMemory(raw_device, &image_ai, nullptr, &image.memory) != VK_SUCCESS ||
+            dld.vkBindImageMemory(raw_device, image.image, image.memory, 0) != VK_SUCCESS) {
+            return;
+        }
+        const VkImageViewCreateInfo view_ci{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = VK_FORMAT_R32_SFLOAT,
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .levelCount = 1,
+                .layerCount = 1,
+            },
+        };
+        if (dld.vkCreateImageView(raw_device, &view_ci, nullptr, &image.view) != VK_SUCCESS) {
+            return;
+        }
+
+        const VkSamplerCreateInfo sampler_ci{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_NEAREST,
+            .minFilter = VK_FILTER_NEAREST,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            .maxLod = 0.0f,
+        };
+        const auto sampler = logical.CreateSampler(sampler_ci);
+
+        constexpr std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
+            {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+            {
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            },
+        }};
+        const auto layout = logical.CreateDescriptorSetLayout({
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT,
+            .bindingCount = static_cast<u32>(bindings.size()),
+            .pBindings = bindings.data(),
+        });
+        const VkDescriptorSetLayout raw_layout = *layout;
+        const VkDeviceSize set_size = logical.GetDescriptorSetLayoutSizeEXT(raw_layout);
+        const VkDeviceSize image_offset =
+            logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 0);
+        const VkDeviceSize output_offset =
+            logical.GetDescriptorSetLayoutBindingOffsetEXT(raw_layout, 1);
+        const auto& props = properties.descriptor_buffer;
+        if (set_size == 0 ||
+            image_offset + props.combinedImageSamplerDescriptorSize > DescriptorBytes ||
+            output_offset + props.storageBufferDescriptorSize > DescriptorBytes) {
+            return;
+        }
+
+        const VkDescriptorImageInfo image_info{
+            .sampler = *sampler,
+            .imageView = image.view,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        };
+        const VkDescriptorGetInfoEXT image_get{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .data{.pCombinedImageSampler = &image_info},
+        };
+        logical.GetDescriptorEXT(image_get, props.combinedImageSamplerDescriptorSize,
+                                 static_cast<u8*>(descriptor.mapped) + image_offset);
+
+        const VkDeviceAddress output_address = logical.GetBufferDeviceAddress(output.buffer);
+        const VkDeviceAddress descriptor_address =
+            logical.GetBufferDeviceAddress(descriptor.buffer);
+        if (output_address == 0 || descriptor_address == 0) {
+            return;
+        }
+        const VkDescriptorAddressInfoEXT output_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT,
+            .address = output_address,
+            .range = OutputBytes,
+        };
+        const VkDescriptorGetInfoEXT output_get{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .data{.pStorageBuffer = &output_info},
+        };
+        logical.GetDescriptorEXT(output_get, props.storageBufferDescriptorSize,
+                                 static_cast<u8*>(descriptor.mapped) + output_offset);
+
+        const auto pipeline_layout = logical.CreatePipelineLayout({
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 1,
+            .pSetLayouts = &raw_layout,
+        });
+        const auto shader = logical.CreateShaderModule({
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = sizeof(XCLIPSE_R32_SAMPLE_PROBE_COMP_SPV),
+            .pCode = XCLIPSE_R32_SAMPLE_PROBE_COMP_SPV,
+        });
+        const auto pipeline = logical.CreateComputePipeline({
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                .module = *shader,
+                .pName = "main",
+            },
+            .layout = *pipeline_layout,
+        });
+        const auto command_pool = logical.CreateCommandPool({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+            .queueFamilyIndex = graphics_family,
+        });
+        auto command_buffers = command_pool.Allocate(1);
+        vk::CommandBuffer command_buffer{command_buffers[0], dld};
+        command_buffer.Begin({
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        });
+
+        const VkImageSubresourceRange range{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1,
+            .layerCount = 1,
+        };
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                       VkImageMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                           .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .image = image.image,
+                                           .subresourceRange = range,
+                                       });
+        command_buffer.CopyBufferToImage(
+            source.buffer, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VkBufferImageCopy{
+                .imageSubresource = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .layerCount = 1,
+                },
+                .imageExtent = {1, 1, 1},
+            });
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       VkImageMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                                           .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                           .image = image.image,
+                                           .subresourceRange = range,
+                                       });
+        command_buffer.FillBuffer(output.buffer, 0, OutputBytes, 0);
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                       VkMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                           .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                                       });
+        const VkDescriptorBufferBindingInfoEXT descriptor_binding{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT,
+            .address = descriptor_address,
+            .usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT,
+        };
+        command_buffer.BindDescriptorBuffersEXT(descriptor_binding);
+        const u32 buffer_index = 0;
+        const VkDeviceSize offset = 0;
+        command_buffer.SetDescriptorBufferOffsetsEXT(
+            VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout, 0, buffer_index, offset);
+        command_buffer.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
+        command_buffer.Dispatch(1, 1, 1);
+        command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       VK_PIPELINE_STAGE_HOST_BIT, 0,
+                                       VkMemoryBarrier{
+                                           .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                           .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+                                       });
+        command_buffer.End();
+
+        const auto fence = logical.CreateFence({
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        });
+        const VkCommandBuffer raw_command = *command_buffer;
+        const VkSubmitInfo submit{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &raw_command,
+        };
+        const VkResult submit_result = graphics_queue.Submit(submit, *fence);
+        const VkResult wait_result =
+            submit_result == VK_SUCCESS ? fence.Wait(1'000'000'000ULL) : submit_result;
+        if (submit_result != VK_SUCCESS || wait_result != VK_SUCCESS) {
+            LOG_WARNING(Render_Vulkan,
+                        "XCLIPSE PROBE descriptor_buffer_image submit={} wait={}",
+                        submit_result, wait_result);
+            return;
+        }
+
+        const bool valid = std::bit_cast<float>(*static_cast<u32*>(output.mapped)) == Expected;
+        xclipse.descriptor_buffer_image_validated = valid;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE descriptor_buffer_image result={} image_descriptor_size={} "
+                 "storage_descriptor_size={} image_offset={} output_offset={}",
+                 valid ? "validated" : "failed",
+                 props.combinedImageSamplerDescriptorSize, props.storageBufferDescriptorSize,
+                 image_offset, output_offset);
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor_buffer_image exception: {}", exception.what());
     }
 }
 
@@ -1321,7 +2058,8 @@ void Device::RunXclipseSubgroupValidationProbes() {
 
     const auto run_probe =
         [&](const u32* code, std::size_t code_size, u32 wave_size,
-            auto&& validate_output) -> bool {
+            auto&& validate_output, u64* elapsed_ns = nullptr) -> bool {
+        const auto probe_start = std::chrono::steady_clock::now();
         const auto shader = logical.CreateShaderModule({
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .pNext = nullptr,
@@ -1421,6 +2159,12 @@ void Device::RunXclipseSubgroupValidationProbes() {
                         submit_result, wait_result);
             return false;
         }
+        if (elapsed_ns != nullptr) {
+            *elapsed_ns = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - probe_start)
+                    .count());
+        }
         return validate_output(output);
     };
 
@@ -1444,30 +2188,28 @@ void Device::RunXclipseSubgroupValidationProbes() {
         return valid;
     };
 
-    const auto run_wave = [&](u32 wave_size) {
+    const auto run_wave = [&](u32 wave_size, u64& elapsed_ns) {
+        elapsed_ns = 0;
         if (wave_size < caps.min_subgroup_size || wave_size > caps.max_subgroup_size ||
             (ProbeInvocations % wave_size) != 0) {
             return false;
         }
         const bool valid = run_probe(XCLIPSE_SUBGROUP_PROBE_COMP_SPV,
                                      sizeof(XCLIPSE_SUBGROUP_PROBE_COMP_SPV), wave_size,
-                                     [&](const u32*) { return validate_wave(wave_size); });
-        LOG_INFO(Render_Vulkan, "XCLIPSE PROBE Wave{} result={}", wave_size,
-                 valid ? "validated" : "failed");
+                                     [&](const u32*) { return validate_wave(wave_size); },
+                                     &elapsed_ns);
+        LOG_INFO(Render_Vulkan, "XCLIPSE PROBE Wave{} result={} elapsed_ns={}", wave_size,
+                 valid ? "validated" : "failed", elapsed_ns);
         return valid;
     };
 
-    xclipse.wave32_validated = run_wave(32);
-    xclipse.wave64_validated = run_wave(64);
+    xclipse.wave32_validated = run_wave(32, xclipse.wave32_probe_ns);
+    xclipse.wave64_validated = run_wave(64, xclipse.wave64_probe_ns);
     xclipse.allowed_wave_mask = (xclipse.wave32_validated ? 0x1U : 0U) |
                                 (xclipse.wave64_validated ? 0x2U : 0U);
 
-    if (xclipse.wave32_validated != xclipse.wave64_validated) {
-        xclipse.preferred_compute_wave = xclipse.wave32_validated ? 32U : 64U;
-    } else {
-        // Both valid still requires benchmark evidence before preferring one.
-        xclipse.preferred_compute_wave = 0;
-    }
+    xclipse.preferred_compute_wave =
+        SelectXclipseComputeWave(xclipse.wave32_validated, xclipse.wave64_validated);
     if (xclipse.allowed_wave_mask != 0) {
         caps.required_subgroup_size = CapabilityState::Validated;
     }
@@ -1586,6 +2328,8 @@ void Device::RunXclipseValidationProbes() {
                                            Settings::values.xclipse_sync_policy.GetValue());
         UpdateXclipseBcnDecodePolicy(device_policy,
                                      Settings::values.xclipse_gpu_bcn_decode.GetValue());
+        UpdateXclipseBptcDecodePolicy(device_policy,
+                                      Settings::values.xclipse_gpu_bptc_decode.GetValue());
         update_subgroup_size_policy();
         UpdateXclipseBcnProfile();
         device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
@@ -1611,8 +2355,8 @@ void Device::RunXclipseValidationProbes() {
             .arrayLayers = 1,
             .samples = VK_SAMPLE_COUNT_1_BIT,
             .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            // Validate the image-creation baseline independently from optional readback.
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = nullptr,
@@ -1634,6 +2378,37 @@ void Device::RunXclipseValidationProbes() {
         RunXclipseBcnNativeValidationProbes();
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE BC native validation exception: {}",
+                    exception.what());
+    }
+
+    try {
+        device_policy.xclipse.rgtc_gpu_decode_validated =
+            RunXclipseRgtcDecodeValidationProbe(*this);
+    } catch (const vk::Exception& exception) {
+        device_policy.xclipse.rgtc_gpu_decode_validated = false;
+        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE RGTC decode validation exception: {}",
+                    exception.what());
+    }
+
+    device_policy.xclipse.bc6_gpu_decode_validated = false;
+    device_policy.xclipse.bc7_gpu_decode_validated = false;
+    if (device_policy.xclipse.bc6_gpu_decode_capable ||
+        device_policy.xclipse.bc7_gpu_decode_capable) {
+        try {
+            const XclipseBptcDecodeValidation validation{
+                RunXclipseBptcDecodeValidationProbe(*this)};
+            device_policy.xclipse.bc6_gpu_decode_validated = validation.bc6;
+            device_policy.xclipse.bc7_gpu_decode_validated = validation.bc7;
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE BPTC decode validation exception: {}",
+                        exception.what());
+        }
+    }
+
+    try {
+        RunXclipseDepthComparisonProbes(*this, device_policy.optimization_probes);
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE depth comparison exception: {}",
                     exception.what());
     }
 
@@ -1759,16 +2534,42 @@ void Device::RunXclipseValidationProbes() {
     }
 
     try {
+        RunXclipseDescriptorBufferValidationProbe();
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE descriptor buffer validation exception: {}",
+                    exception.what());
+    }
+
+    try {
+        RunXclipseDescriptorBufferImageValidationProbe();
+    } catch (const vk::Exception& exception) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE PROBE descriptor buffer image validation exception: {}",
+                    exception.what());
+    }
+
+    try {
         RunXclipseSubgroupValidationProbes();
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE subgroup validation exception: {}",
                     exception.what());
     }
 
+    if (Settings::values.xclipse_validation_probes.GetValue()) {
+        try {
+            RunXclipseOptimizationProbeSuite(*this, device_policy.optimization_probes);
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE optimization probe suite exception: {}",
+                        exception.what());
+        }
+    }
+
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
     UpdateXclipseBcnDecodePolicy(device_policy,
                                  Settings::values.xclipse_gpu_bcn_decode.GetValue());
+    UpdateXclipseBptcDecodePolicy(device_policy,
+                                   Settings::values.xclipse_gpu_bptc_decode.GetValue());
     update_subgroup_size_policy();
     UpdateXclipseBcnProfile();
     device_policy.policy_hash = ComputeVulkanPolicyHash(device_policy);
@@ -1788,6 +2589,7 @@ void Device::LogDevicePolicy() const {
     const auto& identity = device_policy.identity;
     const auto& caps = device_policy.capabilities;
     const auto& xclipse = device_policy.xclipse;
+    const auto& probes = device_policy.optimization_probes;
     const auto bcn_state = [&caps](std::initializer_list<BcnFormat> formats) -> std::string_view {
         const bool runtime_native =
             std::ranges::all_of(formats, [&caps](BcnFormat format) {
@@ -1818,11 +2620,35 @@ void Device::LogDevicePolicy() const {
              xclipse.model, identity.soc_model.empty() ? "unknown" : identity.soc_model,
              identity.driver_name, identity.driver_id, identity.device_id, identity.driver_version,
              pipeline_uuid, device_policy.policy_hash);
+    if (extensions.memory_budget) {
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+        budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+        const auto memory = physical.GetMemoryProperties(&budget);
+        for (const size_t heap : valid_device_local_heap_memory) {
+            const auto& properties = memory.memoryProperties.memoryHeaps[heap];
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE MEMORY HEAP index={} local={} size_mib={} budget_mib={} usage_mib={}",
+                     heap,
+                     (properties.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 ? 1 : 0,
+                     properties.size / (1024ULL * 1024ULL),
+                     budget.heapBudget[heap] / (1024ULL * 1024ULL),
+                     budget.heapUsage[heap] / (1024ULL * 1024ULL));
+        }
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE MEMORY ACCOUNTING device_access_mib={} device_local_budget_mib={} "
+                 "device_local_usage_mib={}",
+                 device_access_memory / (1024ULL * 1024ULL),
+                 GetDeviceMemoryBudget() / (1024ULL * 1024ULL),
+                 GetDeviceMemoryUsage() / (1024ULL * 1024ULL));
+    }
+
     LOG_INFO(Render_Vulkan,
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
-             "sync2={} timeline={} descriptor_buffer={} sparse={} sync_policy={} "
-             "rgtc_gpu_decode={} subgroup32_policy={}",
+             "sync2={} timeline={} descriptor_buffer={} descriptor_image={} sparse={} sync_policy={} "
+             "rgtc_gpu_decode={} bptc_gpu_decode={} bc6_gpu_decode={} bc7_gpu_decode={} "
+             "bc6_capable={} bc7_capable={} bc6_validated={} bc7_validated={} "
+             "subgroup32_policy={} wave32_probe_ns={} wave64_probe_ns={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
                         BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
              bcn_state({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB}),
@@ -1835,14 +2661,32 @@ void Device::LogDevicePolicy() const {
              xclipse.wave64_validated ? "validated" : "unvalidated",
              xclipse.allowed_wave_mask, xclipse.preferred_compute_wave,
              CapabilityStateName(caps.synchronization2), CapabilityStateName(caps.timeline),
-             CapabilityStateName(caps.descriptor_buffer), CapabilityStateName(caps.sparse_binding),
+             CapabilityStateName(caps.descriptor_buffer),
+             xclipse.descriptor_buffer_image_validated ? "validated" : "unvalidated",
+             CapabilityStateName(caps.sparse_binding),
              device_policy.use_xclipse_sync_policy ? "validated-enabled" : "conservative-fallback",
              device_policy.use_xclipse_bcn_gpu_decode
                  ? "validated-enabled"
                  : (xclipse.rgtc_gpu_decode_validated ? "validated-disabled"
                                                       : "conservative-fallback"),
+             device_policy.use_xclipse_bptc_gpu_decode
+                 ? "validated-enabled"
+                 : (xclipse.bptc_gpu_decode_capable ? "validation-fallback"
+                                                     : "unsupported"),
+             device_policy.use_xclipse_bc6_gpu_decode ? "validated-enabled"
+                                                      : (xclipse.bc6_gpu_decode_capable
+                                                             ? "validation-fallback"
+                                                             : "unsupported"),
+             device_policy.use_xclipse_bc7_gpu_decode ? "validated-enabled"
+                                                      : (xclipse.bc7_gpu_decode_capable
+                                                             ? "validation-fallback"
+                                                             : "unsupported"),
+             xclipse.bc6_gpu_decode_capable, xclipse.bc7_gpu_decode_capable,
+             xclipse.bc6_gpu_decode_validated ? "validated" : "fallback",
+             xclipse.bc7_gpu_decode_validated ? "validated" : "fallback",
              device_policy.use_xclipse_subgroup_size_control ? "validated-enabled"
-                                                              : "conservative-fallback");
+                                                              : "conservative-fallback",
+             xclipse.wave32_probe_ns, xclipse.wave64_probe_ns);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SUBGROUP required_size={} required_stages=0x{:x} ballot={} shuffle={} "
              "arithmetic={} quad={}",
@@ -1852,6 +2696,67 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(caps.subgroup_shuffle),
              CapabilityStateName(caps.subgroup_arithmetic),
              CapabilityStateName(caps.subgroup_quad));
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE DREF r32_sample={} r32_dref={} r32_compare_non_dref={} "
+             "r32_compare_dref={} d32_dref={} mutable_r32_d32={} "
+             "cases={} failures={}",
+             CapabilityStateName(probes.r32_sampled_image),
+             CapabilityStateName(probes.r32_dref_sample),
+             CapabilityStateName(probes.r32_compare_non_dref),
+             CapabilityStateName(probes.r32_compare_dref),
+             CapabilityStateName(probes.d32_compare_dref),
+             CapabilityStateName(probes.mutable_r32_d32_view), probes.depth_compare_probe_cases,
+             probes.depth_compare_probe_failures);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE OPT queues={} gfx_queues={} dedicated_compute={} dedicated_transfer={} "
+             "memory_types={} device_local_types={} host_coherent_types={} host_cached_types={} "
+             "device_local_heap={} host_visible_heap={} timestamp={} valid_bits={} period_ps={} "
+             "empty_submit_ns={} copy64k_ns={} copy1m_ns={} copy4m_ns={} image_transfer={} "
+             "storage_image_create={} noncoherent_atom={} buffer_image_granularity={} "
+             "copy_offset_alignment={} copy_row_alignment={}",
+             probes.queue_family_count, probes.graphics_queue_count,
+             probes.dedicated_compute_queue_count, probes.dedicated_transfer_queue_count,
+             probes.memory_type_count, probes.device_local_memory_type_count,
+             probes.host_visible_coherent_memory_type_count,
+             probes.host_visible_cached_memory_type_count, probes.device_local_heap_bytes,
+             probes.host_visible_heap_bytes, CapabilityStateName(probes.timestamp_queries),
+             probes.timestamp_valid_bits, probes.timestamp_period_ps, probes.empty_submit_ns,
+             probes.copy_64k_ns, probes.copy_1m_ns, probes.copy_4m_ns,
+             CapabilityStateName(probes.image_transfer),
+             CapabilityStateName(probes.storage_image_create), probes.non_coherent_atom_size,
+             probes.buffer_image_granularity, probes.optimal_buffer_copy_offset_alignment,
+             probes.optimal_buffer_copy_row_pitch_alignment);
+    // Advertised cached masks are distinct from execution-probe results.
+    // Legacy masks do not establish FeatureFlags2 depth-comparison support.
+    constexpr std::array diagnostic_formats{
+        std::pair{VK_FORMAT_R32_SFLOAT, "R32_SFLOAT"},
+        std::pair{VK_FORMAT_D16_UNORM, "D16_UNORM"},
+        std::pair{VK_FORMAT_D24_UNORM_S8_UINT, "D24_UNORM_S8_UINT"},
+        std::pair{VK_FORMAT_D32_SFLOAT, "D32_SFLOAT"},
+        std::pair{VK_FORMAT_D32_SFLOAT_S8_UINT, "D32_SFLOAT_S8_UINT"}};
+    for (const auto& [format, name] : diagnostic_formats) {
+        const auto it = format_properties.find(format);
+        if (it != format_properties.end()) {
+            const auto& features = it->second;
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE FORMAT format={} vk_format={} legacy_optimal_features=0x{:x} "
+                     "legacy_linear_features=0x{:x} legacy_buffer_features=0x{:x} "
+                     "optimal_sampled={} optimal_linear_filter={}",
+                     name, static_cast<u32>(format), features.optimalTilingFeatures,
+                     features.linearTilingFeatures, features.bufferFeatures,
+                     (features.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0,
+                     (features.optimalTilingFeatures &
+                      VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0);
+        }
+    }
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE OPT LIMITS max_allocations={} max_compute_invocations={} max_image_2d={} "
+             "empty_submit_capability={} buffer_transfer_capability={} timestamp_timing_validated={} "
+             "descriptor_buffer_validated={} descriptor_image_validated={}",
+             probes.max_memory_allocation_count, probes.max_compute_workgroup_invocations,
+             probes.max_image_dimension_2d, CapabilityStateName(probes.empty_queue_submit),
+             CapabilityStateName(probes.buffer_transfer), probes.timestamp_timing_validated,
+             xclipse.descriptor_buffer_validated, xclipse.descriptor_buffer_image_validated);
 }
 
 void Device::LogXclipseTelemetry() const {
@@ -1863,29 +2768,110 @@ void Device::LogXclipseTelemetry() const {
         t.queue_submits != 0 ? static_cast<double>(t.commands_submitted) /
                                   static_cast<double>(t.queue_submits)
                             : 0.0;
-    const double average_compile_ms =
-        t.pipeline_creates != 0
-            ? static_cast<double>(t.pipeline_compile_ns_total) /
-                  static_cast<double>(t.pipeline_creates) / 1'000'000.0
-            : 0.0;
+    const auto ns_to_ms = [](u64 ns) { return static_cast<double>(ns) / 1'000'000.0; };
+    const auto average_ms = [&ns_to_ms](const XclipseLatencySnapshot& latency) {
+        return latency.count != 0 ? ns_to_ms(latency.total_ns) / static_cast<double>(latency.count)
+                                  : 0.0;
+    };
+    const auto& create = t.vulkan_pipeline_create_latency;
+    const auto& build = t.pipeline_build_latency;
+    const auto& queue = t.pipeline_queue_residence_latency;
+    const auto& blocking = t.pipeline_blocking_latency;
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE PIPELINE creates={} graphics={} compute={} cache_hits={} cache_misses={} "
-             "failures={} policy_violations={} compile_avg_ms={:.3f} compile_max_ms={:.3f}",
+             "XCLIPSE PIPELINE creates={} graphics={} compute={} runtime_map_hits={} "
+             "runtime_map_misses={} failures={} policy_violations={}",
              t.pipeline_creates, t.graphics_pipeline_creates, t.compute_pipeline_creates,
-             t.pipeline_cache_hits, t.pipeline_cache_misses, t.pipeline_failures,
-             t.pipeline_policy_violations, average_compile_ms,
-             static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
+             t.runtime_pipeline_map_hits, t.runtime_pipeline_map_misses, t.pipeline_failures,
+             t.pipeline_policy_violations);
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE SYNC submits={} commands_per_submit={:.2f} sync2_submits={} legacy_submits={} "
+             "XCLIPSE PIPELINE LATENCY vk_create_count={} avg_ms={:.3f} p50_ms={:.3f} "
+             "p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f} "
+             "build_count={} build_avg_ms={:.3f} queue_count={} queue_avg_ms={:.3f} "
+             "foreground_block_count={} foreground_block_total_ms={:.3f} "
+             "foreground_block_p50_ms={:.3f} foreground_block_p90_ms={:.3f} "
+             "foreground_block_p95_ms={:.3f} foreground_block_p99_ms={:.3f} "
+             "foreground_block_max_ms={:.3f}",
+             create.count, average_ms(create), ns_to_ms(create.PercentileUpperBoundNs(50)),
+             ns_to_ms(create.PercentileUpperBoundNs(90)),
+             ns_to_ms(create.PercentileUpperBoundNs(95)),
+             ns_to_ms(create.PercentileUpperBoundNs(99)), ns_to_ms(create.max_ns),
+             build.count, average_ms(build), queue.count, average_ms(queue), blocking.count,
+             ns_to_ms(blocking.total_ns), ns_to_ms(blocking.PercentileUpperBoundNs(50)),
+             ns_to_ms(blocking.PercentileUpperBoundNs(90)),
+             ns_to_ms(blocking.PercentileUpperBoundNs(95)),
+             ns_to_ms(blocking.PercentileUpperBoundNs(99)), ns_to_ms(blocking.max_ns));
+    const auto log_latency = [&ns_to_ms, &average_ms](
+                                 const char* name, const XclipseLatencySnapshot& latency) {
+        if (latency.count == 0) {
+            return;
+        }
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PIPELINE STAGE name={} count={} avg_ms={:.3f} p50_ms={:.3f} "
+                 "p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f}",
+                 name, latency.count, average_ms(latency),
+                 ns_to_ms(latency.PercentileUpperBoundNs(50)),
+                 ns_to_ms(latency.PercentileUpperBoundNs(90)),
+                 ns_to_ms(latency.PercentileUpperBoundNs(95)),
+                 ns_to_ms(latency.PercentileUpperBoundNs(99)), ns_to_ms(latency.max_ns));
+    };
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE PIPELINE CACHE disk_lookup_hits={} disk_lookup_misses={} parsed={} "
+             "rejected={} reconstructed={} reconstruction_failures={} driver_hits={} "
+             "driver_misses={} driver_restored_bytes={}",
+             t.disk_shader_cache_lookup_hits, t.disk_shader_cache_lookup_misses,
+             t.disk_pipeline_entries_parsed, t.disk_pipeline_entries_rejected,
+             t.disk_pipeline_entries_reconstructed, t.disk_pipeline_reconstruction_failures,
+             t.driver_pipeline_cache_hits, t.driver_pipeline_cache_misses,
+             t.driver_pipeline_cache_restored_bytes);
+    log_latency("key-generation", t.pipeline_key_generation_latency);
+    log_latency("disk-cache-lookup", t.disk_shader_cache_lookup_latency);
+    log_latency("disk-cache-load", t.disk_shader_cache_load_latency);
+    log_latency("disk-deserialize", t.disk_shader_deserialize_latency);
+    log_latency("shader-decode", t.shader_decode_latency);
+    log_latency("ir-optimization", t.shader_ir_optimization_latency);
+    log_latency("spirv-generation", t.spirv_generation_latency);
+    log_latency("shader-module-create", t.shader_module_creation_latency);
+    log_latency("driver-cache-load", t.driver_pipeline_cache_load_latency);
+
+    const auto& staging_realloc = t.staging_pressure_reallocation_latency;
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE STAGING CHURN reallocations={} reallocated_bytes={} total_ms={:.3f} "
+             "p50_ms={:.3f} p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f}",
+             t.staging_pressure_reallocations, t.staging_pressure_reallocated_bytes,
+             ns_to_ms(staging_realloc.total_ns),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(50)),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(90)),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(95)),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(99)),
+             ns_to_ms(staging_realloc.max_ns));
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE SYNC submits={} commands_per_submit={:.2f} upload_submits={} "
+             "non_upload_submits={} dispatch_deferrals={} sync2_submits={} legacy_submits={} "
              "host_waits={} timeline_waits={} wait_unknown={} buffer_cache_waits={} "
              "fence_waits={} descriptor_waits={} staging_pressure_waits={} scheduler_finishes={} "
              "all_commands_barriers={} "
              "transfer_consumer_barriers={} compute_consumer_barriers={}",
-             t.queue_submits, commands_per_submit, t.sync2_submits, t.legacy_submits, t.host_waits,
+             t.queue_submits, commands_per_submit, t.upload_submits, t.non_upload_submits,
+             t.dispatch_deferrals, t.sync2_submits, t.legacy_submits, t.host_waits,
              t.timeline_waits, t.wait_unknown, t.wait_buffer_cache, t.wait_fence,
              t.wait_descriptor_buffer, t.wait_staging_pressure, t.scheduler_finishes,
              t.all_commands_barriers,
              t.transfer_consumer_barriers, t.compute_consumer_barriers);
+    for (std::size_t index = 0; index < t.wait_latency.size(); ++index) {
+        const auto& wait = t.wait_latency[index];
+        if (wait.count == 0) {
+            continue;
+        }
+        const auto source = static_cast<XclipseWaitSource>(index);
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE WAIT reason={} count={} total_ms={:.3f} p50_ms={:.3f} "
+                 "p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f}",
+                 XclipseWaitSourceName(source), wait.count, ns_to_ms(wait.total_ns),
+                 ns_to_ms(wait.PercentileUpperBoundNs(50)),
+                 ns_to_ms(wait.PercentileUpperBoundNs(90)),
+                 ns_to_ms(wait.PercentileUpperBoundNs(95)),
+                 ns_to_ms(wait.PercentileUpperBoundNs(99)), ns_to_ms(wait.max_ns));
+    }
     const double descriptor_buffer_reuse_rate =
         t.descriptor_buffer_uses != 0
             ? static_cast<double>(t.descriptor_buffer_reuses) /
@@ -1901,15 +2887,59 @@ void Device::LogXclipseTelemetry() const {
              t.descriptor_bytes, t.descriptor_buffer_wraps, t.descriptor_frame_wait_requests,
              t.descriptor_stalls);
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={}",
-             t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks);
+             "XCLIPSE DREF shader_bindings={} native_bindings={} software_bindings={} "
+             "unresolved_bindings={} compare_drops={} emulated_drops={} unemulated_drops={} "
+             "r32_bindings={} d32_bindings={} dynamic_unknown_bindings={}",
+             t.dref_shader_bindings, t.dref_native_bindings, t.dref_software_bindings,
+             t.dref_unresolved_bindings, t.dref_compare_drops, t.dref_emulated_drops,
+             t.dref_unemulated_drops, t.dref_r32_bindings, t.dref_d32_bindings,
+             t.dref_dynamic_unknown_bindings);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} cpu_fallbacks={} "
+             "bptc_bc6_dispatches={} bptc_bc7_dispatches={} bptc_compressed_bytes={}",
+             t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks,
+             t.bptc_bc6_dispatches, t.bptc_bc7_dispatches, t.bptc_gpu_decode_bytes);
+    for (std::size_t format_index = 0; format_index < XCLIPSE_BCN_FORMAT_COUNT;
+         ++format_index) {
+        const auto format = static_cast<XclipseBcnFormat>(format_index);
+        const u64 native = t.bcn_native_images[format_index];
+        const u64 gpu = t.bcn_gpu_decode_dispatches_by_format[format_index];
+        const u64 cpu = t.bcn_cpu_fallbacks[format_index];
+        if (native == 0 && gpu == 0 && cpu == 0) {
+            continue;
+        }
+        LOG_INFO(Render_Vulkan, "XCLIPSE BCN FORMAT format={} native_images={} gpu_dispatches={} "
+                                "cpu_fallbacks={}",
+                 XclipseBcnFormatName(format), native, gpu, cpu);
+        for (std::size_t reason_index = 0;
+             reason_index < XCLIPSE_BCN_FALLBACK_REASON_COUNT; ++reason_index) {
+            const u64 count = t.bcn_fallback_reasons[format_index][reason_index];
+            if (count == 0) {
+                continue;
+            }
+            LOG_INFO(Render_Vulkan, "XCLIPSE BCN FALLBACK format={} reason={} count={}",
+                     XclipseBcnFormatName(format),
+                     XclipseBcnFallbackReasonName(
+                         static_cast<XclipseBcnFallbackReason>(reason_index)),
+                     count);
+        }
+    }
     LOG_INFO(Render_Vulkan,
              "XCLIPSE RENDER color_shader_blits={} depth_native_blits={} "
              "depth_shader_blits={} native_resolves={} native_image_copies={} "
-             "reinterpret_copies={}",
+             "reinterpret_copies={} renderpass_undefined_initial_layouts={} "
+             "renderpass_dontcare_stores={}",
              t.color_shader_blits, t.depth_stencil_native_blits,
              t.depth_stencil_shader_blits, t.native_resolves, t.native_image_copies,
-             t.reinterpret_copies);
+             t.reinterpret_copies, t.renderpass_undefined_initial_layouts,
+             t.renderpass_dontcare_stores);
+    const auto correctness = Common::CorrectnessTelemetry::Get().Snapshot();
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE CORRECTNESS host_memory_bounds={} scheduler_context_guard_failures={} "
+             "unmapped_gpu_reads={} unmapped_gpu_writes={}",
+             correctness.host_memory_bounds_violations,
+             correctness.scheduler_context_guard_failures, correctness.unmapped_gpu_reads,
+             correctness.unmapped_gpu_writes);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
@@ -1936,8 +2966,11 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     const bool is_qualcomm = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
     const bool is_turnip = driver_id == VK_DRIVER_ID_MESA_TURNIP;
 
-    if (!is_suitable)
-        LOG_WARNING(Render_Vulkan, "Unsuitable driver - continuing anyways");
+    if (!is_suitable) {
+        LOG_ERROR(Render_Vulkan,
+                  "Required Vulkan capabilities are unavailable; refusing incompatible device creation");
+        throw vk::Exception(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
 
     if (is_nvidia) {
         nvidia_arch = GetNvidiaArchitecture(physical, supported_extensions);
@@ -2190,6 +3223,15 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         descriptor_indexing.runtimeDescriptorArray = false;
     }
 
+    // Recompute cached dynamic-state decisions after the constructor's EDS-level masks.
+    RemoveUnsuitableExtensions();
+
+    // Buffer device address is core in 1.2; absence from the enabled extension-name list
+    // must not disagree with the queried/enabled core feature or the VMA allocation flags.
+    extensions.buffer_device_address = CanUseBufferDeviceAddress(
+        instance_version, loaded_extensions.contains(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME),
+        features.buffer_device_address.bufferDeviceAddress);
+
     // VK_EXT_descriptor_buffer requires VK_KHR_buffer_device_address
     if (extensions.descriptor_buffer && !features.buffer_device_address.bufferDeviceAddress) {
         LOG_WARNING(Render_Vulkan, "Descriptor buffer needs buffer device address, disabling.");
@@ -2201,12 +3243,25 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
                                VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
     }
 
+    // Workarounds change the renderer's copy of the base features. Enable that exact
+    // filtered copy, not the original unfiltered query results.
+    features2.features = features.features;
+    if (IsXclipse()) {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE ENABLEMENT bda={} descriptor_buffer={} eds3_blend={} "
+                 "dynamic_alpha_to_one={} rectangular_lines={} smooth_lines={} "
+                 "shader_float64={} sampler_minmax={}",
+                 IsBufferDeviceAddressSupported(), IsExtDescriptorBufferSupported(),
+                 IsExtExtendedDynamicState3BlendingSupported(),
+                 SupportsDynamicState3AlphaToOneEnable(), SupportsRectangularLines(),
+                 SupportsSmoothLines(), features.features.shaderFloat64 != VK_FALSE,
+                 IsExtSamplerFilterMinmaxSupported());
+    }
+
     logical = vk::Device::Create(physical, queue_cis, ExtensionListForVulkan(loaded_extensions), first_next, dld);
 
     graphics_queue = logical.GetQueue(graphics_family);
     present_queue = logical.GetQueue(present_family);
-
-    RunXclipseValidationProbes();
 
     VmaVulkanFunctions functions{};
     functions.vkGetInstanceProcAddr = dld.vkGetInstanceProcAddr;
@@ -2236,6 +3291,9 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     };
 
     vk::Check(vmaCreateAllocator(&allocator_info, &allocator));
+
+    // Validation probes may allocate device-local resources. Run them only after VMA is live.
+    RunXclipseValidationProbes();
 
     LogDevicePolicy();
 
@@ -2445,7 +3503,8 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
     return (supported_usage & wanted_usage) == wanted_usage;
 }
 
-bool Device::IsOptimalBcnSupported(VkFormat format) const {
+bool Device::IsOptimalBcnSupported(VkFormat format, bool require_transfer_src,
+                                   bool require_transfer_dst) const {
     if (!device_policy.xclipse.detected) {
         return features.features.textureCompressionBC;
     }
@@ -2455,7 +3514,9 @@ bool Device::IsOptimalBcnSupported(VkFormat format) const {
         return false;
     }
     const std::size_t index = static_cast<std::size_t>(std::distance(BCN_FORMATS.begin(), it));
-    return SupportsXclipseRuntimeNativeBcnPath(format, device_policy.capabilities.bcn[index]);
+    return SupportsXclipseRuntimeNativeBcnPath(
+        format, device_policy.capabilities.bcn[index], require_transfer_src,
+        require_transfer_dst);
 }
 
 std::string Device::GetDriverName() const {
@@ -2497,10 +3558,6 @@ bool Device::MustEmulateBGR565() const {
 bool Device::GetSuitability(bool requires_swapchain) {
     // Assume we will be suitable.
     bool suitable = true;
-
-    // Configure properties.
-    VkPhysicalDeviceVulkan12Features features_1_2{};
-    VkPhysicalDeviceVulkan13Features features_1_3{};
 
     // Configure properties.
     properties.properties = physical.GetProperties();
@@ -2566,11 +3623,14 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
 // Some extensions are mandatory. Check those.
 #define CHECK_EXTENSION(extension_name)                                                            \
-    if (!loaded_extensions.contains(extension_name)) {                                             \
-            LOG_ERROR(Render_Vulkan, "Missing required extension {}", extension_name);                 \
-            suitable = false;                                                                          \
+    if (!loaded_extensions.contains(extension_name) &&                                               \
+        !(instance_version >= VK_API_VERSION_1_2 &&                                                  \
+          (std::strcmp(extension_name, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) == 0 ||              \
+           std::strcmp(extension_name, VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) == 0 || \
+           std::strcmp(extension_name, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME) == 0))) {       \
+        LOG_ERROR(Render_Vulkan, "Missing required extension {}", extension_name);                  \
+        suitable = false;                                                                           \
     }
-
 #define LOG_EXTENSION(extension_name)                                                              \
     if (!loaded_extensions.contains(extension_name)) {                                             \
             LOG_INFO(Render_Vulkan, "Device doesn't support extension {}", extension_name);            \
@@ -2595,16 +3655,6 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
     // Set next pointer.
     void** next = &features2.pNext;
-
-    // Vulkan 1.2 and 1.3 features
-    if (instance_version >= VK_API_VERSION_1_2) {
-        features_1_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-        features_1_3.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-
-        features_1_2.pNext = &features_1_3;
-
-        *next = &features_1_2;
-    }
 
 // Test all features we know about. If the feature is not available in core at our
 // current API version, and was not enabled by an extension, skip testing the feature.
@@ -2641,36 +3691,6 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
     // Base Vulkan 1.0 features are always valid regardless of instance version.
     features.features = features2.features;
-
-// Some features are mandatory. Check those.
-#define CHECK_FEATURE(feature, name)                                                               \
-    if (!features.feature.name) {                                                                  \
-        if (IsMoltenVK() && (strcmp(#name, "geometryShader") == 0 ||                               \
-                            strcmp(#name, "logicOp") == 0 ||                                       \
-                            strcmp(#name, "shaderCullDistance") == 0 ||                            \
-                            strcmp(#name, "wideLines") == 0)) {                                    \
-            LOG_INFO(Render_Vulkan, "MoltenVK missing feature {} - using fallback", #name);       \
-        } else {                                                                                    \
-            LOG_ERROR(Render_Vulkan, "Missing required feature {}", #name);                        \
-            suitable = false;                                                                       \
-        }                                                                                           \
-    }
-
-#define LOG_FEATURE(feature, name)                                                                 \
-    if (!features.feature.name) {                                                                  \
-            LOG_INFO(Render_Vulkan, "Device doesn't support feature {}", #name);                       \
-    }
-
-// Optional features are enabled silently without any logging
-#define OPTIONAL_FEATURE(feature, name) (void)features.feature.name;
-
-    FOR_EACH_VK_OPTIONAL_FEATURE(OPTIONAL_FEATURE);
-    FOR_EACH_VK_RECOMMENDED_FEATURE(LOG_FEATURE);
-    FOR_EACH_VK_MANDATORY_FEATURE(CHECK_FEATURE);
-
-#undef OPTIONAL_FEATURE
-#undef LOG_FEATURE
-#undef CHECK_FEATURE
 
     // Generate linked list of properties.
     properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
@@ -2734,8 +3754,36 @@ bool Device::GetSuitability(bool requires_swapchain) {
     // Store base properties
     properties.properties = properties2.properties;
 
-    // Unload extensions if feature support is insufficient.
-    RemoveUnsuitableExtensions();
+    // Driver-specific required-feature exemptions need the queried driver identity.
+// Some features are mandatory. Check those.
+#define CHECK_FEATURE(feature, name)                                                               \
+    if (!features.feature.name) {                                                                  \
+        if (IsMoltenVK() && (strcmp(#name, "geometryShader") == 0 ||                               \
+                            strcmp(#name, "logicOp") == 0 ||                                       \
+                            strcmp(#name, "shaderCullDistance") == 0 ||                            \
+                            strcmp(#name, "wideLines") == 0)) {                                    \
+            LOG_INFO(Render_Vulkan, "MoltenVK missing feature {} - using fallback", #name);       \
+        } else {                                                                                    \
+            LOG_ERROR(Render_Vulkan, "Missing required feature {}", #name);                        \
+            suitable = false;                                                                       \
+        }                                                                                           \
+    }
+
+#define LOG_FEATURE(feature, name)                                                                 \
+    if (!features.feature.name) {                                                                  \
+            LOG_INFO(Render_Vulkan, "Device doesn't support feature {}", #name);                       \
+    }
+
+// Optional features are enabled silently without any logging
+#define OPTIONAL_FEATURE(feature, name) (void)features.feature.name;
+
+    FOR_EACH_VK_OPTIONAL_FEATURE(OPTIONAL_FEATURE);
+    FOR_EACH_VK_RECOMMENDED_FEATURE(LOG_FEATURE);
+    FOR_EACH_VK_MANDATORY_FEATURE(CHECK_FEATURE);
+
+#undef OPTIONAL_FEATURE
+#undef LOG_FEATURE
+#undef CHECK_FEATURE
 
     // Check limits.
     struct Limit {
@@ -2801,6 +3849,9 @@ bool Device::GetSuitability(bool requires_swapchain) {
         features.extended_dynamic_state3.extendedDynamicState3LogicOpEnable = false;
     }
 
+    // Derive renderer support only after applying driver and user feature masks.
+    RemoveUnsuitableExtensions();
+
     // Return whether we were suitable.
     return suitable;
 }
@@ -2859,14 +3910,8 @@ void Device::RemoveUnsuitableExtensions() {
                                        VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
 
     // VK_EXT_extended_dynamic_state3
-    const bool supports_color_blend_enable =
-        features.extended_dynamic_state3.extendedDynamicState3ColorBlendEnable;
-    const bool supports_color_blend_equation =
-        features.extended_dynamic_state3.extendedDynamicState3ColorBlendEquation;
-    const bool supports_color_write_mask =
-        features.extended_dynamic_state3.extendedDynamicState3ColorWriteMask;
-    dynamic_state3_blending = supports_color_blend_enable && supports_color_blend_equation &&
-                              supports_color_write_mask;
+    dynamic_state3_blending = CanUseDynamicBlendState(
+        extensions.extended_dynamic_state3, features.extended_dynamic_state3);
 
     const bool supports_depth_clamp_enable =
         features.extended_dynamic_state3.extendedDynamicState3DepthClampEnable;
@@ -2883,9 +3928,10 @@ void Device::RemoveUnsuitableExtensions() {
         extensions.line_rasterization && features.line_rasterization.stippledRectangularLines;
     const bool supports_alpha_to_coverage =
         features.extended_dynamic_state3.extendedDynamicState3AlphaToCoverageEnable;
-    const bool supports_alpha_to_one =
-        features.extended_dynamic_state3.extendedDynamicState3AlphaToOneEnable &&
-        features.features.alphaToOne;
+    const bool supports_alpha_to_one = CanUseDynamicAlphaToOne(
+        extensions.extended_dynamic_state3,
+        features.extended_dynamic_state3.extendedDynamicState3AlphaToOneEnable,
+        features.features.alphaToOne);
 
     dynamic_state3_depth_clamp_enable = supports_depth_clamp_enable;
     dynamic_state3_logic_op_enable = supports_logic_op_enable;
@@ -3103,7 +4149,10 @@ u64 Device::GetDeviceMemoryUsage() const {
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
     physical.GetMemoryProperties(&budget);
     u64 result{};
-    for (const size_t heap : valid_heap_memory) {
+    const auto& heaps = device_policy.xclipse.detected && !valid_device_local_heap_memory.empty()
+                            ? valid_device_local_heap_memory
+                            : valid_heap_memory;
+    for (const size_t heap : heaps) {
         result += budget.heapUsage[heap];
     }
     return result;
@@ -3117,7 +4166,10 @@ u64 Device::GetDeviceMemoryBudget() const {
     budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
     physical.GetMemoryProperties(&budget);
     u64 result{};
-    for (const size_t heap : valid_heap_memory) {
+    const auto& heaps = device_policy.xclipse.detected && !valid_device_local_heap_memory.empty()
+                            ? valid_device_local_heap_memory
+                            : valid_heap_memory;
+    for (const size_t heap : heaps) {
         result += budget.heapBudget[heap];
     }
     return result;
@@ -3142,6 +4194,7 @@ void Device::CollectPhysicalMemoryInfo() {
         }
         valid_heap_memory.push_back(element);
         if (is_heap_local) {
+            valid_device_local_heap_memory.push_back(element);
             local_memory += mem_properties.memoryHeaps[element].size;
         }
         if (extensions.memory_budget) {
@@ -3152,9 +4205,27 @@ void Device::CollectPhysicalMemoryInfo() {
         device_access_memory += mem_properties.memoryHeaps[element].size;
     }
     if (is_integrated) {
-        const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
-        const u64 memory_size = Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive ? 6_GiB : 4_GiB;
-        device_access_memory = static_cast<u64>(std::max<s64>(std::min<s64>(available_memory - 8_GiB, memory_size), std::min<s64>(local_memory, memory_size)));
+        const u64 memory_size =
+            Settings::values.vram_usage_mode.GetValue() == Settings::VramUsageMode::Aggressive
+                ? 6_GiB
+                : 4_GiB;
+        if (device_policy.xclipse.detected && extensions.memory_budget &&
+            !valid_device_local_heap_memory.empty()) {
+            // Samsung's Xclipse Android driver exposes a much smaller Vulkan device-local
+            // budget than the physical unified-memory heap. Never replace that advertised
+            // budget with the physical heap size; the former is the actual GPU allocation
+            // ceiling VMA can safely enforce.
+            u64 xclipse_budget = 0;
+            for (const size_t heap : valid_device_local_heap_memory) {
+                xclipse_budget += budget.heapBudget[heap];
+            }
+            device_access_memory = (std::min)(xclipse_budget, memory_size);
+        } else {
+            const s64 available_memory = static_cast<s64>(device_access_memory - device_initial_usage);
+            device_access_memory = static_cast<u64>((std::max<s64>(
+                std::min<s64>(available_memory - 8_GiB, memory_size),
+                std::min<s64>(local_memory, memory_size))));
+        }
     } else {
         const u64 reserve_memory = std::min<u64>(device_access_memory / 8, 1_GiB);
         device_access_memory -= reserve_memory;

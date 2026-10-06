@@ -8,6 +8,7 @@
 #include <limits>
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -79,7 +80,7 @@ XclipseImageDiagnosticBudget xclipse_image_diagnostic_budget;
 
 [[nodiscard]] bool ShouldLogXclipseImageDiagnostic(
     const Device& device, XclipseImageDiagnosticCategory category) {
-    if (!device.IsXclipse() || !device.GetXclipseTelemetry().Enabled()) {
+    if (!device.XclipseDetailedDiagnosticsEnabled()) {
         return false;
     }
     return xclipse_image_diagnostic_budget.TryConsume(category);
@@ -148,10 +149,32 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     }
 }
 
+[[nodiscard]] bool RequiresBcnTransferSource(const Device& device,
+                                             const ImageInfo& info) noexcept {
+    if (!device.IsXclipse()) {
+        return true;
+    }
+    if (!VideoCore::Surface::IsPixelFormatBCn(info.format)) {
+        return true;
+    }
+    // Native BC images are immutable sampled resources in the common TIC path. Keep source
+    // support for linear/sparse/MSAA images and whenever active resolution scaling or an explicit
+    // download already makes a readback/copy part of the image's runtime use.
+    if (info.type != ImageType::e2D || info.num_samples != 1 || info.is_sparse ||
+        info.forced_flushed || info.dma_downloaded) {
+        return true;
+    }
+    return Settings::values.resolution_info.active &&
+           (info.rescaleable || info.downscaleable);
+}
+
 [[nodiscard]] VkImageUsageFlags ImageUsageFlags(const MaxwellToVK::FormatInfo& info,
-                                                PixelFormat format, bool allow_storage = true) {
-    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                              VK_IMAGE_USAGE_SAMPLED_BIT;
+                                                PixelFormat format, bool allow_storage = true,
+                                                bool require_transfer_src = true) {
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (require_transfer_src) {
+        usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
     if (info.attachable) {
         switch (VideoCore::Surface::GetFormatType(format)) {
         case VideoCore::Surface::SurfaceType::ColorTexture:
@@ -173,6 +196,15 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     return usage;
 }
 
+[[nodiscard]] bool IsNativeBcnVkFormat(VkFormat format) noexcept {
+    for (size_t index = 0; index < VideoCore::Surface::MaxPixelFormat; ++index) {
+        if (MaxwellToVK::NativeBcnFormat(static_cast<PixelFormat>(index)) == format) {
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] bool WillUseAcceleratedAstcDecode(const Device& device, const ImageInfo& info) {
     if (!IsPixelFormatASTC(info.format) || device.IsOptimalAstcSupported()) {
         return false;
@@ -182,7 +214,9 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     }
     return Settings::values.astc_recompression.GetValue() ==
               Settings::AstcRecompression::Uncompressed &&
-          info.size.depth == 1;
+          info.size.depth == 1 &&
+          device.IsFormatSupported(VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+                                   VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
 }
 
 std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
@@ -198,6 +232,16 @@ std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
     default:
         return std::nullopt;
     }
+}
+
+[[nodiscard]] bool NeedsBcnDecoder(const Device& device,
+                                   std::initializer_list<PixelFormat> formats) noexcept {
+    return std::ranges::any_of(formats, [&device](const PixelFormat format) {
+        // Requiring transfer-source support here is conservative: it keeps the decoder available
+        // for images whose later lifetime requires readback, while avoiding construction when
+        // every format can remain native for all supported image operations.
+        return !MaxwellToVK::IsBcnNative(device, format, true, true);
+    });
 }
 
 VkFormat BcnDecodeStorageFormat(PixelFormat format) {
@@ -223,26 +267,59 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
     }
 }
 
+[[nodiscard]] XclipseBcnFormat BcnTelemetryFormat(PixelFormat format) noexcept {
+    switch (format) {
+    case PixelFormat::BC1_RGBA_UNORM:
+    case PixelFormat::BC1_RGBA_SRGB:
+        return XclipseBcnFormat::BC1;
+    case PixelFormat::BC2_UNORM:
+    case PixelFormat::BC2_SRGB:
+        return XclipseBcnFormat::BC2;
+    case PixelFormat::BC3_UNORM:
+    case PixelFormat::BC3_SRGB:
+        return XclipseBcnFormat::BC3;
+    case PixelFormat::BC4_UNORM:
+    case PixelFormat::BC4_SNORM:
+        return XclipseBcnFormat::BC4;
+    case PixelFormat::BC5_UNORM:
+    case PixelFormat::BC5_SNORM:
+        return XclipseBcnFormat::BC5;
+    case PixelFormat::BC6H_UFLOAT:
+    case PixelFormat::BC6H_SFLOAT:
+        return XclipseBcnFormat::BC6H;
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
+        return XclipseBcnFormat::BC7;
+    default:
+        return XclipseBcnFormat::Count;
+    }
+}
+
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
-    if (!device.UseXclipseBcnGpuDecode() || device.HasBrokenCompute() ||
-        !IsPixelFormatBCn(info.format) || MaxwellToVK::IsBcnNative(device, info.format)) {
+    const bool require_transfer_src = RequiresBcnTransferSource(device, info);
+    if (device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
+        MaxwellToVK::IsBcnNative(device, info.format, require_transfer_src, true)) {
         return false;
     }
 
-    switch (info.format) {
-    case PixelFormat::BC4_UNORM:
-    case PixelFormat::BC4_SNORM:
-    case PixelFormat::BC5_UNORM:
-    case PixelFormat::BC5_SNORM:
-        // The RGTC decoder has CPU-reference coverage. Keep the more complex BPTC
-        // BC6H/BC7 path on Eden's proven CPU fallback until an on-device decoder
-        // self-test validates Samsung's shader/image path end-to-end.
-        break;
-    case PixelFormat::BC6H_UFLOAT:
-    case PixelFormat::BC6H_SFLOAT:
-    case PixelFormat::BC7_UNORM:
-    case PixelFormat::BC7_SRGB:
-    default:
+    const bool validated_decode = [&] {
+        switch (info.format) {
+        case PixelFormat::BC4_UNORM:
+        case PixelFormat::BC4_SNORM:
+        case PixelFormat::BC5_UNORM:
+        case PixelFormat::BC5_SNORM:
+            return device.UseXclipseBcnGpuDecode();
+        case PixelFormat::BC6H_UFLOAT:
+        case PixelFormat::BC6H_SFLOAT:
+            return device.UseXclipseBc6GpuDecode();
+        case PixelFormat::BC7_UNORM:
+        case PixelFormat::BC7_SRGB:
+            return device.UseXclipseBc7GpuDecode();
+        default:
+            return false;
+        }
+    }();
+    if (!validated_decode) {
         return false;
     }
 
@@ -260,10 +337,78 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
                                     FormatType::Optimal);
 }
 
+[[nodiscard]] XclipseBcnFallbackReason ClassifyBcnCpuFallback(
+    TextureCacheRuntime& runtime, const ImageInfo& info) {
+    const auto format = BcnTelemetryFormat(info.format);
+    const auto& device = runtime.device;
+    if (device.HasBrokenCompute()) {
+        return XclipseBcnFallbackReason::BrokenCompute;
+    }
+
+    switch (format) {
+    case XclipseBcnFormat::BC1:
+    case XclipseBcnFormat::BC2:
+    case XclipseBcnFormat::BC3:
+        return XclipseBcnFallbackReason::UnsupportedGpuPath;
+    case XclipseBcnFormat::BC4:
+    case XclipseBcnFormat::BC5:
+        if (!Settings::values.xclipse_gpu_bcn_decode.GetValue()) {
+            return XclipseBcnFallbackReason::RuntimeDisabled;
+        }
+        if (!device.UseXclipseBcnGpuDecode()) {
+            return XclipseBcnFallbackReason::ValidationUnavailable;
+        }
+        if (!runtime.BcnDecoderPassFor(info.format)) {
+            return XclipseBcnFallbackReason::DecoderUnavailable;
+        }
+        break;
+    case XclipseBcnFormat::BC6H:
+        if (!Settings::values.xclipse_gpu_bptc_decode.GetValue()) {
+            return XclipseBcnFallbackReason::RuntimeDisabled;
+        }
+        if (!device.UseXclipseBc6GpuDecode()) {
+            return XclipseBcnFallbackReason::ValidationUnavailable;
+        }
+        if (!runtime.BptcDecoderPassFor(info.format)) {
+            return XclipseBcnFallbackReason::DecoderUnavailable;
+        }
+        break;
+    case XclipseBcnFormat::BC7:
+        if (!Settings::values.xclipse_gpu_bptc_decode.GetValue()) {
+            return XclipseBcnFallbackReason::RuntimeDisabled;
+        }
+        if (!device.UseXclipseBc7GpuDecode()) {
+            return XclipseBcnFallbackReason::ValidationUnavailable;
+        }
+        if (!runtime.BptcDecoderPassFor(info.format)) {
+            return XclipseBcnFallbackReason::DecoderUnavailable;
+        }
+        break;
+    case XclipseBcnFormat::Count:
+        return XclipseBcnFallbackReason::Other;
+    }
+
+    if (info.type != ImageType::e2D || info.size.depth != 1 || info.num_samples != 1) {
+        return XclipseBcnFallbackReason::UnsupportedImageShape;
+    }
+    if (info.format == PixelFormat::BC7_SRGB && !device.IsKhrImageFormatListSupported()) {
+        return XclipseBcnFallbackReason::FormatSpecificRestriction;
+    }
+    const VkFormat storage_format = BcnDecodeStorageFormat(info.format);
+    if (storage_format == VK_FORMAT_UNDEFINED ||
+        !device.IsFormatSupported(storage_format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
+                                  FormatType::Optimal)) {
+        return XclipseBcnFallbackReason::StorageFormatUnsupported;
+    }
+    return XclipseBcnFallbackReason::Other;
+}
+
 [[nodiscard]] VkImageCreateInfo MakeImageCreateInfo(const Device& device, const ImageInfo& info,
                                                     std::optional<VkFormat> format_override = {}) {
+    const bool require_transfer_src = RequiresBcnTransferSource(device, info);
     auto format_info =
-        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, info.format);
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, info.format,
+                                   require_transfer_src, true);
     if (format_override) {
         format_info.format = *format_override;
         format_info.attachable = false;
@@ -295,7 +440,7 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
         .arrayLayers = static_cast<u32>(info.resources.layers),
         .samples = ConvertSampleCount(info.num_samples),
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = ImageUsageFlags(format_info, info.format, allow_storage),
+        .usage = ImageUsageFlags(format_info, info.format, allow_storage, require_transfer_src),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
@@ -322,6 +467,20 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
         return vk::Image{};
     }
     VkImageCreateInfo image_ci = MakeImageCreateInfo(device, info, format_override);
+    boost::container::small_vector<VkFormat, 16> filtered_view_formats;
+    if (device.IsXclipse() && IsPixelFormatBCn(info.format)) {
+        const bool base_is_native_bcn =
+            IsNativeBcnVkFormat(image_ci.format) &&
+            image_ci.format == MaxwellToVK::NativeBcnFormat(info.format);
+        filtered_view_formats.reserve(view_formats.size());
+        for (const VkFormat view_format : view_formats) {
+            if (IsNativeBcnVkFormat(view_format) == base_is_native_bcn) {
+                filtered_view_formats.push_back(view_format);
+            }
+        }
+        view_formats = std::span<const VkFormat>{filtered_view_formats.data(),
+                                                 filtered_view_formats.size()};
+    }
     const VkImageFormatListCreateInfo image_format_list = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
         .pNext = nullptr,
@@ -1057,36 +1216,68 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
     : device{device_}, scheduler{scheduler_}, memory_allocator{memory_allocator_},
       staging_buffer_pool{staging_buffer_pool_}, blit_image_helper{blit_image_helper_},
       render_pass_cache{render_pass_cache_}, resolution{Settings::values.resolution_info} {
-    if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu) {
+    if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu &&
+        Settings::values.astc_recompression.GetValue() == Settings::AstcRecompression::Uncompressed &&
+        !device.IsOptimalAstcSupported()) {
         astc_decoder_pass.emplace(device, scheduler, descriptor_pool, staging_buffer_pool,
                                   compute_pass_descriptor_queue, memory_allocator);
     }
-    if (device.UseXclipseBcnGpuDecode() && !device.HasBrokenCompute()) {
-        constexpr std::array formats{
+    if (!device.HasBrokenCompute()) {
+        constexpr std::array rgtc_formats{
             PixelFormat::BC4_UNORM,
             PixelFormat::BC4_SNORM,
             PixelFormat::BC5_UNORM,
             PixelFormat::BC5_SNORM,
         };
-        for (const PixelFormat format : formats) {
-            const auto index = BcnDecoderIndex(format);
-            ASSERT(index.has_value());
-            try {
-                bcn_decoder_passes[*index].emplace(device, scheduler, descriptor_pool,
-                                                   compute_pass_descriptor_queue, format);
-            } catch (const vk::Exception& exception) {
-                LOG_WARNING(Render_Vulkan,
-                            "XCLIPSE BC GPU decoder format={} unavailable, retaining CPU fallback: {}",
-                            static_cast<u32>(format), exception.what());
-                bcn_decoder_passes[*index].reset();
+        if (device.UseXclipseBcnGpuDecode() &&
+            NeedsBcnDecoder(device, {PixelFormat::BC4_UNORM, PixelFormat::BC4_SNORM,
+                                     PixelFormat::BC5_UNORM, PixelFormat::BC5_SNORM})) {
+            for (const PixelFormat format : rgtc_formats) {
+                const auto index = BcnDecoderIndex(format);
+                ASSERT(index.has_value());
+                try {
+                    bcn_decoder_passes[*index].emplace(device, scheduler, descriptor_pool,
+                                                       compute_pass_descriptor_queue, format);
+                } catch (const vk::Exception& exception) {
+                    LOG_WARNING(
+                        Render_Vulkan,
+                        "XCLIPSE BC GPU decoder format={} unavailable, retaining CPU fallback: {}",
+                        static_cast<u32>(format), exception.what());
+                    bcn_decoder_passes[*index].reset();
+                }
             }
         }
-        // BC6H/BC7 remain on the CPU conversion path. The shader implementation is
-        // retained for future validation work, but must not be selected merely because
-        // Samsung advertises the destination storage formats.
+
+        if (device.UseXclipseBc6GpuDecode() &&
+            NeedsBcnDecoder(device, {PixelFormat::BC6H_UFLOAT, PixelFormat::BC6H_SFLOAT})) {
+            try {
+                bptc_bc6_decoder_pass.emplace(device, scheduler, descriptor_pool,
+                                              compute_pass_descriptor_queue,
+                                              BPTCDecoderPass::Kind::BC6H);
+            } catch (const vk::Exception& exception) {
+                bptc_bc6_decoder_pass.reset();
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE BC6H GPU decoder unavailable; retaining CPU fallback: {}",
+                            exception.what());
+            }
+        }
+        if (device.UseXclipseBc7GpuDecode() &&
+            NeedsBcnDecoder(device, {PixelFormat::BC7_UNORM, PixelFormat::BC7_SRGB})) {
+            try {
+                bptc_bc7_decoder_pass.emplace(device, scheduler, descriptor_pool,
+                                              compute_pass_descriptor_queue,
+                                              BPTCDecoderPass::Kind::BC7);
+            } catch (const vk::Exception& exception) {
+                bptc_bc7_decoder_pass.reset();
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE BC7 GPU decoder unavailable; retaining CPU fallback: {}",
+                            exception.what());
+            }
+        }
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE BCN policy: validated BC4/BC5 GPU decode enabled; "
-                 "BC6H/BC7 remain on CPU fallback pending on-device validation");
+                 "XCLIPSE BCN policy: rgtc_gpu={} bc6_gpu={} bc7_gpu={}",
+                 device.UseXclipseBcnGpuDecode(), device.UseXclipseBc6GpuDecode(),
+                 device.UseXclipseBc7GpuDecode());
     }
     if (!device.IsKhrImageFormatListSupported()) {
         return;
@@ -1098,9 +1289,21 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
         }
         for (size_t index_b = 0; index_b < VideoCore::Surface::MaxPixelFormat; index_b++) {
             const auto view_format = static_cast<PixelFormat>(index_b);
+            const bool usage_aware_bcn_view = device.IsXclipse() && IsPixelFormatBCn(view_format);
             if (VideoCore::Surface::IsViewCompatible(image_format, view_format, false, true)) {
+                // Do not add an emulated BC view format to a mutable image-format list. A native
+                // sampled-only BC image may intentionally omit transfer-source usage, while a
+                // converted BC image is backed by R8/RG8/RGBA and cannot legally expose a BC view.
+                if (usage_aware_bcn_view &&
+                    !MaxwellToVK::IsBcnNative(device, view_format, false, true)) {
+                    continue;
+                }
                 const auto view_info =
-                    MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, view_format);
+                    MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, view_format,
+                                               usage_aware_bcn_view ? false : true, true);
+                if (usage_aware_bcn_view && view_info.host_substitution) {
+                    continue;
+                }
                 view_formats[index_a].push_back(view_info.format);
             }
         }
@@ -1431,6 +1634,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                        0, {}, {}, post_barriers);
     });
+    dst.RecordProvenanceWrite(XclipseImageWriter::Reinterpret);
 }
 
 void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& src,
@@ -1448,6 +1652,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColor(dst_framebuffer, src, dst_region, src_region, filter,
                                     operation);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     ASSERT(src.format == dst.format);
@@ -1459,6 +1664,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         }
         device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
         blit_image_helper.ResolveDepthStencil(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
@@ -1481,6 +1687,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
             UNIMPLEMENTED_IF(is_src_msaa || is_dst_msaa);
             blit_image_helper.BlitDepthStencil(dst_framebuffer, src, dst_region, src_region,
                                                filter, operation);
+            dst.RecordImageWrite(XclipseImageWriter::Blit);
             return;
         }
     }
@@ -1491,11 +1698,13 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
     if (is_msaa_to_msaa && aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT) {
         device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColorMSAA(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (is_msaa_to_msaa) {
         device.GetXclipseTelemetry().RecordDepthStencilBlit(false);
         blit_image_helper.BlitDepthStencilMSAA(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (aspect_mask == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
@@ -1507,6 +1716,7 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         // Scaled MSAA resolve uses the shader path, not vkCmdResolveImage.
         device.GetXclipseTelemetry().RecordColorShaderBlit();
         blit_image_helper.BlitColorMSAA(dst_framebuffer, src, dst_region, src_region);
+        dst.RecordImageWrite(XclipseImageWriter::Blit);
         return;
     }
     if (is_resolve) {
@@ -1599,51 +1809,64 @@ void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                        0, write_barrier);
     });
+    dst.RecordImageWrite(XclipseImageWriter::Blit);
 }
 
 void TextureCacheRuntime::ConvertImage(Framebuffer* dst, ImageView& dst_view, ImageView& src_view) {
     if (!dst->RenderPass()) {
         return;
     }
+    const auto converted = [&dst_view](auto&& operation) {
+        operation();
+        dst_view.RecordImageWrite(XclipseImageWriter::Convert);
+    };
 
     switch (dst_view.format) {
     case PixelFormat::R16_UNORM:
         if (src_view.format == PixelFormat::D16_UNORM) {
-            return blit_image_helper.ConvertD16ToR16(dst, src_view);
+            converted([&] { blit_image_helper.ConvertD16ToR16(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::A8B8G8R8_SRGB:
     case PixelFormat::B8G8R8A8_SRGB:
     case PixelFormat::B8G8R8A8_UNORM:
         if (src_view.format == PixelFormat::D32_FLOAT) {
-            return blit_image_helper.ConvertD32FToABGR8(dst, src_view);
+            converted([&] { blit_image_helper.ConvertD32FToABGR8(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::A8B8G8R8_UNORM:
         if (src_view.format == PixelFormat::S8_UINT_D24_UNORM) {
-            return blit_image_helper.ConvertD24S8ToABGR8(dst, src_view);
+            converted([&] { blit_image_helper.ConvertD24S8ToABGR8(dst, src_view); });
+            return;
         }
         if (src_view.format == PixelFormat::D24_UNORM_S8_UINT) {
-            return blit_image_helper.ConvertS8D24ToABGR8(dst, src_view);
+            converted([&] { blit_image_helper.ConvertS8D24ToABGR8(dst, src_view); });
+            return;
         }
         if (src_view.format == PixelFormat::D32_FLOAT) {
-            return blit_image_helper.ConvertD32FToABGR8(dst, src_view);
+            converted([&] { blit_image_helper.ConvertD32FToABGR8(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::R32_FLOAT:
         if (src_view.format == PixelFormat::D32_FLOAT) {
-            return blit_image_helper.ConvertD32ToR32(dst, src_view);
+            converted([&] { blit_image_helper.ConvertD32ToR32(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::D16_UNORM:
         if (src_view.format == PixelFormat::R16_UNORM) {
-            return blit_image_helper.ConvertR16ToD16(dst, src_view);
+            converted([&] { blit_image_helper.ConvertR16ToD16(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::S8_UINT_D24_UNORM:
         if (src_view.format == PixelFormat::A8B8G8R8_UNORM ||
             src_view.format == PixelFormat::B8G8R8A8_UNORM) {
-            return blit_image_helper.ConvertABGR8ToD24S8(dst, src_view);
+            converted([&] { blit_image_helper.ConvertABGR8ToD24S8(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::D32_FLOAT:
@@ -1651,10 +1874,12 @@ void TextureCacheRuntime::ConvertImage(Framebuffer* dst, ImageView& dst_view, Im
             src_view.format == PixelFormat::B8G8R8A8_UNORM ||
             src_view.format == PixelFormat::A8B8G8R8_SRGB ||
             src_view.format == PixelFormat::B8G8R8A8_SRGB) {
-            return blit_image_helper.ConvertABGR8ToD32F(dst, src_view);
+            converted([&] { blit_image_helper.ConvertABGR8ToD32F(dst, src_view); });
+            return;
         }
         if (src_view.format == PixelFormat::R32_FLOAT) {
-            return blit_image_helper.ConvertR32ToD32(dst, src_view);
+            converted([&] { blit_image_helper.ConvertR32ToD32(dst, src_view); });
+            return;
         }
         break;
     case PixelFormat::D24_UNORM_S8_UINT:
@@ -1662,7 +1887,8 @@ void TextureCacheRuntime::ConvertImage(Framebuffer* dst, ImageView& dst_view, Im
             src_view.format == PixelFormat::B8G8R8A8_UNORM ||
             src_view.format == PixelFormat::A8B8G8R8_SRGB ||
             src_view.format == PixelFormat::B8G8R8A8_SRGB) {
-            return blit_image_helper.ConvertABGR8ToD24S8(dst, src_view);
+            converted([&] { blit_image_helper.ConvertABGR8ToD24S8(dst, src_view); });
+            return;
         }
         break;
     default:
@@ -1678,9 +1904,12 @@ void TextureCacheRuntime::ConvertImage(Framebuffer* dst, ImageView& dst_view, Im
             .end = {static_cast<s32>(dst->RenderArea().width),
                     static_cast<s32>(dst->RenderArea().height)},
         };
-        return blit_image_helper.BlitColor(dst, src_view, region, region,
+        converted([&] {
+            blit_image_helper.BlitColor(dst, src_view, region, region,
                                         Tegra::Engines::Fermi2D::Filter::Point,
                                         Tegra::Engines::Fermi2D::Operation::SrcCopy);
+        });
+        return;
     }
 
     LOG_DEBUG(Render_Vulkan, "Unimplemented texture conversion from {} to {} format type", src_view.format, dst_view.format);
@@ -1906,6 +2135,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0, nullptr, nullptr, post_barriers);
     });
+    dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
 }
 
 void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
@@ -2035,6 +2265,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
                                        post_consumer_stages, 0, nullptr, nullptr,
                                        post_barriers);
             });
+            dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
             return;
         }
     }
@@ -2045,6 +2276,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
         blit_image_helper.CopyMSAADepth(render_pass_cache, dst.Handle(), dst.info.format,
                                         src.Handle(), src.info.format, num_samples, copies,
                                         copies_stencil, msaa_to_non_msaa);
+        dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
         return;
     }
     if ((dst_aspect_mask & VK_IMAGE_ASPECT_COLOR_BIT) == 0) {
@@ -2053,6 +2285,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
     }
     blit_image_helper.CopyMSAA(render_pass_cache, dst.Handle(), dst.info.format, src.Handle(),
                                src.info.format, num_samples, copies, msaa_to_non_msaa);
+    dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
 }
 
 u64 TextureCacheRuntime::GetDeviceLocalMemory() const {
@@ -2162,19 +2395,23 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
         flags |= VideoCommon::ImageFlagBits::Converted;
         flags |= VideoCommon::ImageFlagBits::CostlyLoad;
     }
-    if (IsPixelFormatBCn(info.format) &&
-        !MaxwellToVK::IsBcnNative(runtime->device, info.format)) {
-        const bool wants_gpu_bcn =
-            runtime->device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
-            BcnDecoderIndex(info.format).has_value();
-        if ((runtime->BcnDecoderPassFor(info.format) || runtime->BptcDecoderPassFor(info.format)) &&
-            WillUseAcceleratedBcnDecode(runtime->device, info)) {
-            flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
-        } else if (wants_gpu_bcn) {
-            runtime->device.GetXclipseTelemetry().RecordBcnGpuDecodeFallback();
+    if (IsPixelFormatBCn(info.format)) {
+        const bool require_transfer_src = RequiresBcnTransferSource(runtime->device, info);
+        const auto telemetry_format = BcnTelemetryFormat(info.format);
+        if (MaxwellToVK::IsBcnNative(runtime->device, info.format, require_transfer_src, true)) {
+            runtime->device.GetXclipseTelemetry().RecordBcnNativePath(telemetry_format);
+        } else {
+            if ((runtime->BcnDecoderPassFor(info.format) ||
+                 runtime->BptcDecoderPassFor(info.format)) &&
+                WillUseAcceleratedBcnDecode(runtime->device, info)) {
+                flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
+            } else {
+                runtime->device.GetXclipseTelemetry().RecordBcnCpuFallback(
+                    telemetry_format, ClassifyBcnCpuFallback(*runtime, info));
+            }
+            flags |= VideoCommon::ImageFlagBits::Converted;
+            flags |= VideoCommon::ImageFlagBits::CostlyLoad;
         }
-        flags |= VideoCommon::ImageFlagBits::Converted;
-        flags |= VideoCommon::ImageFlagBits::CostlyLoad;
     }
     if (runtime->device.HasDebuggingToolAttached()) {
         original_image.SetObjectNameEXT(VideoCommon::Name(*this).c_str());
@@ -2211,6 +2448,20 @@ Image::~Image() {
             runtime->EraseResolveShadow(*scaled_image);
         }
     }
+}
+
+void Image::RecordProvenanceWrite(XclipseImageWriter writer) noexcept {
+    xclipse_provenance.contents_defined = true;
+    xclipse_provenance.gpu_write_pending = false;
+    xclipse_provenance.last_writer = writer;
+    xclipse_provenance.last_writer_tick = scheduler ? scheduler->CurrentTick() : 0;
+}
+
+void Image::RecordProvenanceTransition(VkImageLayout old_layout,
+                                       VkImageLayout new_layout) noexcept {
+    xclipse_provenance.saw_undefined_transition |= old_layout == VK_IMAGE_LAYOUT_UNDEFINED;
+    xclipse_provenance.last_layout = static_cast<u32>(new_layout);
+    xclipse_provenance.last_transition_tick = scheduler ? scheduler->CurrentTick() : 0;
 }
 
 void Image::AllocateComputeUnswizzleBuffer(u32 max_slices) {
@@ -2339,6 +2590,7 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
                                                 {image_copies.data(), image_copies.size()}, false);
         }
         initialized = true;
+        RecordProvenanceWrite(XclipseImageWriter::Upload);
         runtime->ReleaseMsaaScratchImage(temp_vk_image);
 
         if (is_rescaled) {
@@ -2389,6 +2641,7 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
         CopyBufferToImage(cmdbuf, src_buffer, vk_image, vk_aspect_mask, was_initialized,
                           image_is_3d, VideoCommon::FixSmallVectorADL(vk_copies));
     });
+    RecordProvenanceWrite(XclipseImageWriter::Upload);
 
     if (is_rescaled) {
         ScaleUp();
@@ -2867,7 +3120,10 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
             SanitizeDepthStencilSwizzle(swizzle, device->SupportsDepthStencilSwizzleOne());
         }
     }
-    auto format_info = MaxwellToVK::SurfaceFormat(*device, FormatType::Optimal, true, format);
+    const bool require_transfer_src =
+        (image.UsageFlags() & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    auto format_info = MaxwellToVK::SurfaceFormat(*device, FormatType::Optimal, true, format,
+                                                  require_transfer_src, true);
     if (device->ApiVersion() >= VK_API_VERSION_1_3) {
         const VkFormatProperties3 properties3 =
             device->GetPhysical().GetFormatProperties3(format_info.format);
@@ -2896,7 +3152,8 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
     };
     has_identity_swizzle = swizzle[0] == SwizzleSource::R && swizzle[1] == SwizzleSource::G &&
                            swizzle[2] == SwizzleSource::B && swizzle[3] == SwizzleSource::A;
-    const VkImageUsageFlags requested_view_usage = ImageUsageFlags(format_info, format);
+    const VkImageUsageFlags requested_view_usage =
+        ImageUsageFlags(format_info, format, true, require_transfer_src);
     const VkImageUsageFlags image_usage = image.UsageFlags();
     const VkImageUsageFlags clamped_view_usage = requested_view_usage & image_usage;
     const VkImageViewUsageCreateInfo image_view_usage{
@@ -2993,6 +3250,20 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::NullImageV
 }
 
 ImageView::~ImageView() = default;
+
+const Image* ImageView::SourceImage() const noexcept {
+    return slot_images ? &(*slot_images)[image_id] : nullptr;
+}
+
+Image* ImageView::SourceImage() noexcept {
+    return slot_images ? &const_cast<SlotVector<Image>&>(*slot_images)[image_id] : nullptr;
+}
+
+void ImageView::RecordImageWrite(XclipseImageWriter writer) noexcept {
+    if (Image* image = SourceImage()) {
+        image->RecordProvenanceWrite(writer);
+    }
+}
 
 VkImageView ImageView::DepthView() {
     if (!image_handle) {
@@ -3200,18 +3471,19 @@ Sampler::Sampler(TextureCacheRuntime& runtime, const Tegra::Texture::TSCEntry& t
     Emplace(VariantKey{});
 }
 
-Sampler::VariantKey Sampler::MakeKey(const ImageView& image_view, bool is_depth) const noexcept {
+Sampler::VariantKey Sampler::MakeKey(const ImageView& image_view,
+                                     Shader::DrefExecutionMode dref_mode) const noexcept {
     VariantKey key{};
     key.reduce_anisotropy = has_added_anisotropy && !image_view.SupportsAnisotropy();
     key.force_nearest =
         has_linear_filtering &&
         (IsPixelFormatInteger(image_view.format) || !image_view.SupportsLinearFilter());
-    // Vulkan forbids a comparison-enabled sampler with a view whose format lacks
-    // depth-comparison sampling support, even when the shader performs an ordinary
-    // non-Dref sample. Genuine Dref descriptors already pass is_depth=true, so removing
-    // the is_depth gate only sanitizes the previously-illegal non-Dref pairing.
+    // Software DREF deliberately consumes a raw sample, while native DREF requires a
+    // comparison-capable view. Ordinary samples retain the existing legality sanitization.
     key.drop_depth_comparison =
-        has_depth_comparison && !image_view.SupportsDepthComparison();
+        has_depth_comparison &&
+        (dref_mode == Shader::DrefExecutionMode::SoftwareDref ||
+         !image_view.SupportsDepthComparison());
     key.drop_reduction = has_minmax_reduction && !image_view.SupportsMinmaxFilter();
     key.drop_custom_border = has_custom_border_colors && image_view.RequiresBorderColorFormat();
     key.srgb_border = has_srgb_border_color && IsPixelFormatSRGB(image_view.format);
@@ -3302,9 +3574,38 @@ VkSampler Sampler::Emplace(VariantKey key) {
     return *variants.back().sampler;
 }
 
-VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
+VkSampler Sampler::HandleFor(const ImageView& image_view,
+                             Shader::DrefExecutionMode dref_mode,
                              VkImageView descriptor_view) {
-    VariantKey key = MakeKey(image_view, is_depth);
+    const bool guest_dref{Shader::IsDref(dref_mode)};
+    const bool software_dref{Shader::IsSoftwareDref(dref_mode)};
+    const bool dynamic_unknown = dref_mode == Shader::DrefExecutionMode::RuntimeValidatedDref;
+    const bool native_dref = dref_mode == Shader::DrefExecutionMode::NativeDref || dynamic_unknown;
+    const XclipseDrefFormat dref_format = image_view.format == PixelFormat::R32_FLOAT
+                                               ? XclipseDrefFormat::R32
+                                           : image_view.format == PixelFormat::D32_FLOAT
+                                               ? XclipseDrefFormat::D32
+                                               : XclipseDrefFormat::Other;
+    if (native_dref &&
+        (!has_depth_comparison || !image_view.SupportsDepthComparison())) {
+        device_ptr->GetXclipseTelemetry().RecordDrefBinding(
+            XclipseDrefPath::Unresolved, dref_format,
+            has_depth_comparison && !image_view.SupportsDepthComparison(), dynamic_unknown);
+        if (device_ptr->XclipseDrefDiagnosticsEnabled() &&
+            xclipse_image_diagnostic_budget.TryConsume(
+                XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
+            LOG_ERROR(Render_Vulkan,
+                      "XCLIPSE DREF fail-closed [diag=depth-compare] image_id={} gpu={:#x} "
+                      "guest_fmt={} mode={} compare_requested={} depth_compare_feature={} "
+                      "compare_op={}",
+                      image_view.image_id.Value(), image_view.GpuAddr(),
+                      static_cast<u32>(image_view.format), static_cast<u32>(dref_mode),
+                      has_depth_comparison, image_view.SupportsDepthComparison(),
+                      static_cast<u32>(base_ci.compareOp));
+        }
+        return VK_NULL_HANDLE;
+    }
+    VariantKey key = MakeKey(image_view, dref_mode);
     if (variants.size() >= MAX_VARIANTS) {
         key.srgb_border = false;
         key.swizzle = {};
@@ -3313,8 +3614,12 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
     const VkSampler existing = Find(key);
     const bool create_variant = existing == VK_NULL_HANDLE;
     const VkSampler sampler_handle = create_variant ? Emplace(key) : existing;
-    if (key.drop_depth_comparison && device_ptr->IsXclipse() &&
-        device_ptr->GetXclipseTelemetry().Enabled() &&
+    if (guest_dref) {
+        device_ptr->GetXclipseTelemetry().RecordDrefBinding(
+            software_dref ? XclipseDrefPath::Software : XclipseDrefPath::Native,
+            dref_format, key.drop_depth_comparison, dynamic_unknown);
+    }
+    if (key.drop_depth_comparison && device_ptr->XclipseDrefDiagnosticsEnabled() &&
         xclipse_image_diagnostic_budget.HasRemaining(
             XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
         if (!depth_compare_diagnostic_bindings) {
@@ -3323,8 +3628,8 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
         }
         if (depth_compare_diagnostic_bindings->TryRemember(
                 VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle)) &&
-            ShouldLogXclipseImageDiagnostic(
-                *device_ptr, XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
+            xclipse_image_diagnostic_budget.TryConsume(
+                XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
             const VkFormat backing_vk_format =
                 MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, true,
                                            image_view.format)
@@ -3340,7 +3645,7 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
                      image_view.image_id.Value(), image_view.GpuAddr(),
                      VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle),
                      static_cast<u32>(image_view.format),
-                     static_cast<u32>(backing_vk_format), is_depth,
+                     static_cast<u32>(backing_vk_format), guest_dref,
                      has_depth_comparison, image_view.SupportsDepthComparison(),
                      key.drop_depth_comparison, effective_compare_enable,
                      static_cast<u32>(base_ci.compareOp));
@@ -3402,7 +3707,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
     u32 width = (std::numeric_limits<u32>::max)();
     u32 height = (std::numeric_limits<u32>::max)();
     for (size_t index = 0; index < NUM_RT; ++index) {
-        const ImageView* const color_buffer = color_buffers[index];
+        ImageView* const color_buffer = color_buffers[index];
         if (!color_buffer) {
             renderpass_key.color_formats[index] = PixelFormat::Invalid;
             continue;
@@ -3415,6 +3720,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
         renderpass_key.color_formats[index] = color_buffer->format;
         num_layers = (std::max)(num_layers, color_buffer->range.extent.layers);
         images[num_images] = color_buffer->ImageHandle();
+        image_views[num_images] = color_buffer;
         image_ranges[num_images] = MakeSubresourceRange(color_buffer);
         rt_map[index] = num_images;
         samples = color_buffer->Samples();
@@ -3432,6 +3738,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
         renderpass_key.depth_format = depth_buffer->format;
         num_layers = (std::max)(num_layers, depth_buffer->range.extent.layers);
         images[num_images] = depth_buffer->ImageHandle();
+        image_views[num_images] = depth_buffer;
         const VkImageSubresourceRange subresource_range = MakeSubresourceRange(depth_buffer);
         image_ranges[num_images] = subresource_range;
         samples = depth_buffer->Samples();
@@ -3516,6 +3823,31 @@ void Framebuffer::MarkResolveShadowsUpToDate() const {
     }
 }
 
+void Framebuffer::RecordProvenanceWrite(XclipseImageWriter writer) const noexcept {
+    for (u32 index = 0; index < num_images; ++index) {
+        if (image_views[index]) {
+            image_views[index]->RecordImageWrite(writer);
+        }
+    }
+}
+
+void Framebuffer::RecordProvenanceWrite(u32 color_mask, bool depth_stencil) const noexcept {
+    for (u32 slot = 0; slot < NUM_RT; ++slot) {
+        if ((color_mask & (1u << slot)) == 0 ||
+            render_pass_key.color_formats[slot] == PixelFormat::Invalid) {
+            continue;
+        }
+        const size_t image_index = rt_map[slot];
+        if (image_index < num_images && image_views[image_index]) {
+            image_views[image_index]->RecordImageWrite(XclipseImageWriter::GpuModification);
+        }
+    }
+    if (depth_stencil && render_pass_key.depth_format != PixelFormat::Invalid &&
+        num_color_buffers < num_images && image_views[num_color_buffers]) {
+        image_views[num_color_buffers]->RecordImageWrite(XclipseImageWriter::GpuModification);
+    }
+}
+
 VkRenderPass Framebuffer::RenderPassVariant(u32 color_clear_mask, bool depth_stencil_clear,
                                             u32 color_discard_mask,
                                             bool depth_stencil_discard) const {
@@ -3552,17 +3884,23 @@ void TextureCacheRuntime::AccelerateImageUpload(
     u32 z_start, u32 z_count) {
 
     if (IsPixelFormatASTC(image.info.format)) {
-        return astc_decoder_pass->Assemble(image, map, swizzles);
+        astc_decoder_pass->Assemble(image, map, swizzles);
+        image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
+        return;
     }
 
     if (BCDecoderPass* pass = BcnDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
-        return pass->Assemble(image, map, swizzles);
+        pass->Assemble(image, map, swizzles);
+        image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
+        return;
     }
 
     if (BPTCDecoderPass* pass = BptcDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
-        return pass->Assemble(image, map, swizzles);
+        pass->Assemble(image, map, swizzles);
+        image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
+        return;
     }
 
     if (!Settings::values.gpu_unswizzle_enabled.GetValue() || !bl3d_unswizzle_pass) {
@@ -3582,6 +3920,7 @@ void TextureCacheRuntime::AccelerateImageUpload(
 
 void TextureCacheRuntime::TransitionImageLayout(Image& image) {
     if (!image.ExchangeInitialization()) {
+        image.RecordProvenanceTransition(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         VkImageMemoryBarrier barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,

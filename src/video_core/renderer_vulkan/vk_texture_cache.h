@@ -286,6 +286,12 @@ public:
     /// once it ends.
     void MarkResolveShadowsUpToDate() const;
 
+    /// Records an authoritative GPU writer after its command has been assembled.
+    void RecordProvenanceWrite(XclipseImageWriter writer) const noexcept;
+
+    /// Records only the render-target slots affected by a clear operation.
+    void RecordProvenanceWrite(u32 color_mask, bool depth_stencil) const noexcept;
+
 private:
     static constexpr size_t NUM_MEMOIZED_RENDER_PASS_VARIANTS = 8;
 
@@ -297,6 +303,7 @@ private:
     u32 num_images = 0;
     std::array<VkImage, 9> images{};
     std::array<VkImageSubresourceRange, 9> image_ranges{};
+    std::array<ImageView*, 9> image_views{};
     std::array<size_t, NUM_RT> rt_map{};
     bool has_depth{};
     bool has_stencil{};
@@ -361,6 +368,23 @@ public:
         return std::exchange(initialized, true);
     }
 
+    void RecordProvenanceWrite(XclipseImageWriter writer) noexcept;
+    void RecordGpuModification() noexcept {
+        // Texture-cache preparation happens before the GPU command is known to be
+        // authoritative. Keep this separate from RecordProvenanceWrite so an
+        // aborted draw cannot make an undefined image look initialized.
+        xclipse_provenance.gpu_write_pending = true;
+    }
+    void RecordProvenanceTransition(VkImageLayout old_layout, VkImageLayout new_layout) noexcept;
+
+    [[nodiscard]] const XclipseImageProvenance& Provenance() const noexcept {
+        return xclipse_provenance;
+    }
+
+    [[nodiscard]] bool IsInitialized() const noexcept {
+        return initialized;
+    }
+
     VkImageView StorageImageView(s32 level) noexcept;
 
     bool IsRescaled() const noexcept;
@@ -397,6 +421,7 @@ private:
     std::vector<vk::ImageView> storage_image_views;
     VkImageAspectFlags aspect_mask = 0;
     bool initialized = false;
+    XclipseImageProvenance xclipse_provenance{};
 
     std::optional<Framebuffer> scale_framebuffer;
     std::optional<Framebuffer> normal_framebuffer;
@@ -480,6 +505,10 @@ public:
         return buffer_size;
     }
 
+    [[nodiscard]] const Image* SourceImage() const noexcept;
+    [[nodiscard]] Image* SourceImage() noexcept;
+    void RecordImageWrite(XclipseImageWriter writer) noexcept;
+
 private:
     struct StorageViews {
         std::array<vk::ImageView, Shader::NUM_TEXTURE_TYPES> signeds;
@@ -543,7 +572,16 @@ public:
         return *variants.front().sampler;
     }
 
-    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth,
+    [[nodiscard]] bool CompareEnabled() const noexcept {
+        return base_ci.compareEnable != VK_FALSE;
+    }
+
+    [[nodiscard]] VkCompareOp CompareOp() const noexcept {
+        return base_ci.compareOp;
+    }
+
+    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view,
+                                      Shader::DrefExecutionMode dref_mode,
                                       VkImageView descriptor_view);
 
 private:
@@ -570,7 +608,8 @@ private:
 
     static constexpr size_t MAX_VARIANTS = 32;
 
-    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth) const noexcept;
+    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view,
+                                     Shader::DrefExecutionMode dref_mode) const noexcept;
     [[nodiscard]] VkSampler Find(const VariantKey& key) const noexcept;
     VkSampler Emplace(VariantKey key);
 

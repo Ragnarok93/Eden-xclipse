@@ -118,6 +118,7 @@ TEST_CASE("Xclipse pipeline policy validates the requested subgroup size exactly
              static_cast<u32>(Vulkan::PipelinePolicyIssue::RequiredSubgroupUnvalidated)) != 0);
 
     policy.xclipse.wave32_validated = true;
+    policy.xclipse.preferred_compute_wave = 32;
     Vulkan::UpdateXclipseSubgroupSizePolicy(policy, true);
     const auto validated_report = Vulkan::InspectGraphicsPipeline(policy, pipeline_ci);
     REQUIRE(validated_report.Clean());
@@ -133,4 +134,112 @@ TEST_CASE("Xclipse pipeline policy validates the requested subgroup size exactly
         Vulkan::InspectGraphicsPipeline(policy, unsupported_stage_pipeline);
     REQUIRE((static_cast<u32>(unsupported_stage_report.issues) &
              static_cast<u32>(Vulkan::PipelinePolicyIssue::RequiredSubgroupUnvalidated)) != 0);
+}
+
+
+
+TEST_CASE("Xclipse BPTC policy requires per-format execution validation",
+          "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.xclipse.bc6_gpu_decode_capable = true;
+    policy.xclipse.bc7_gpu_decode_capable = true;
+    policy.xclipse.bptc_gpu_decode_capable = true;
+
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+    REQUIRE_FALSE(policy.use_xclipse_bc6_gpu_decode);
+    REQUIRE_FALSE(policy.use_xclipse_bc7_gpu_decode);
+
+    policy.xclipse.bc6_gpu_decode_validated = true;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE(policy.use_xclipse_bptc_gpu_decode);
+    REQUIRE(policy.use_xclipse_bc6_gpu_decode);
+    REQUIRE_FALSE(policy.use_xclipse_bc7_gpu_decode);
+    const auto bc6_policy_hash = Vulkan::ComputeVulkanPolicyHash(policy);
+
+    policy.xclipse.bc6_gpu_decode_validated = false;
+    policy.xclipse.bc7_gpu_decode_validated = true;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE(policy.use_xclipse_bptc_gpu_decode);
+    REQUIRE_FALSE(policy.use_xclipse_bc6_gpu_decode);
+    REQUIRE(policy.use_xclipse_bc7_gpu_decode);
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) != bc6_policy_hash);
+
+    // Lack of one decoded destination's storage capability must not suppress the other format.
+    policy.xclipse.bc6_gpu_decode_capable = false;
+    policy.xclipse.bc6_gpu_decode_validated = true;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bc6_gpu_decode);
+    REQUIRE(policy.use_xclipse_bc7_gpu_decode);
+
+    policy.xclipse.bc7_gpu_decode_capable = false;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, false);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+    REQUIRE_FALSE(policy.use_xclipse_bc6_gpu_decode);
+    REQUIRE_FALSE(policy.use_xclipse_bc7_gpu_decode);
+
+    policy.xclipse.bptc_gpu_decode_capable = false;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+}
+
+TEST_CASE("Xclipse policy hash is stable across diagnostic timing changes", "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy baseline{};
+    baseline.identity.device_name = "Xclipse 940";
+    baseline.identity.driver_name = "Samsung";
+    baseline.identity.soc_model = "Exynos 2400";
+    baseline.identity.vendor_id = 0x144d;
+    baseline.identity.device_id = 0x0001;
+    baseline.identity.driver_id = 0x0002;
+    baseline.identity.driver_version = 0x00030004;
+    baseline.xclipse.detected = true;
+    baseline.xclipse.generation = 1;
+    baseline.xclipse.model = 940;
+    baseline.xclipse.wave32_validated = true;
+    baseline.xclipse.wave64_validated = true;
+    baseline.xclipse.allowed_wave_mask = 0x3;
+    baseline.xclipse.preferred_compute_wave = 32;
+    baseline.xclipse.descriptor_buffer_validated = true;
+    baseline.xclipse.synchronization2_validated = true;
+    baseline.optimization_probes.timestamp_queries = Vulkan::CapabilityState::Validated;
+    baseline.optimization_probes.buffer_transfer = Vulkan::CapabilityState::Validated;
+    baseline.optimization_probes.empty_submit_ns = 100;
+    baseline.optimization_probes.copy_64k_ns = 200;
+    baseline.optimization_probes.copy_1m_ns = 300;
+    baseline.optimization_probes.copy_4m_ns = 400;
+
+    const auto baseline_hash = Vulkan::ComputeVulkanPolicyHash(baseline);
+
+    auto timing_changed = baseline;
+    timing_changed.xclipse.wave32_probe_ns = 999'999;
+    timing_changed.xclipse.wave64_probe_ns = 888'888;
+    timing_changed.optimization_probes.empty_submit_ns = 10'000;
+    timing_changed.optimization_probes.copy_64k_ns = 20'000;
+    timing_changed.optimization_probes.copy_1m_ns = 30'000;
+    timing_changed.optimization_probes.copy_4m_ns = 40'000;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(timing_changed) == baseline_hash);
+
+    auto capability_changed = baseline;
+    capability_changed.capabilities.timeline = Vulkan::CapabilityState::Validated;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(capability_changed) != baseline_hash);
+
+    auto policy_changed = baseline;
+    policy_changed.use_xclipse_sync_policy = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy_changed) != baseline_hash);
+
+    auto descriptor_image_changed = baseline;
+    descriptor_image_changed.xclipse.descriptor_buffer_image_validated = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(descriptor_image_changed) != baseline_hash);
+
+    auto bc6_decode_changed = baseline;
+    bc6_decode_changed.xclipse.bc6_gpu_decode_validated = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(bc6_decode_changed) != baseline_hash);
+
+    auto bc7_decode_changed = baseline;
+    bc7_decode_changed.xclipse.bc7_gpu_decode_validated = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(bc7_decode_changed) != baseline_hash);
 }

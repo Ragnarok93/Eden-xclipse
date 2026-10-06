@@ -154,14 +154,34 @@ void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy,
                                      policy.xclipse.synchronization2_validated;
 }
 
+bool CanUseXclipseR32DrefEmulation(const VulkanDevicePolicy& policy) noexcept {
+    const auto& probes = policy.optimization_probes;
+    return policy.xclipse.detected &&
+           probes.r32_sampled_image == CapabilityState::Validated &&
+           probes.r32_dref_sample == CapabilityState::Validated;
+}
+
 void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
     policy.use_xclipse_bcn_gpu_decode =
         policy.xclipse.detected && setting_enabled && policy.xclipse.rgtc_gpu_decode_validated;
 }
 
+void UpdateXclipseBptcDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
+    const bool enabled = policy.xclipse.detected && setting_enabled;
+    policy.use_xclipse_bc6_gpu_decode = enabled && policy.xclipse.bc6_gpu_decode_capable &&
+                                        policy.xclipse.bc6_gpu_decode_validated;
+    policy.use_xclipse_bc7_gpu_decode = enabled && policy.xclipse.bc7_gpu_decode_capable &&
+                                        policy.xclipse.bc7_gpu_decode_validated;
+    policy.use_xclipse_bptc_gpu_decode = policy.use_xclipse_bc6_gpu_decode ||
+                                         policy.use_xclipse_bc7_gpu_decode;
+}
+
 void UpdateXclipseSubgroupSizePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
+    const std::uint32_t preferred = policy.xclipse.preferred_compute_wave;
     policy.use_xclipse_subgroup_size_control =
-        policy.xclipse.detected && setting_enabled && policy.xclipse.wave32_validated;
+        policy.xclipse.detected && setting_enabled &&
+        (preferred == 32U || preferred == 64U) &&
+        IsXclipseSubgroupSizeValidated(policy, preferred);
 }
 
 bool IsXclipseSubgroupSizeValidated(const VulkanDevicePolicy& policy,
@@ -192,7 +212,11 @@ bool CanRequireXclipseSubgroupSize(const VulkanDevicePolicy& policy,
 
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
-    hash.Add("eden-xclipse-policy-v3");
+    // v13 includes usage-aware native compressed-texture capability selection in addition to
+    // DREF execution semantics and execution-validated compressed-decode policy.
+    // Query-only sparse strictness and descriptor capture/replay sizes stay out of identity until
+    // an execution path actually consumes them.
+    hash.Add("eden-xclipse-policy-v13");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
@@ -209,6 +233,7 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(caps.synchronization2);
     hash.AddIntegral(caps.descriptor_buffer);
     hash.AddIntegral(caps.sparse_binding);
+    hash.AddIntegral(caps.alpha_to_one);
     hash.AddIntegral(caps.subgroup_ballot);
     hash.AddIntegral(caps.subgroup_shuffle);
     hash.AddIntegral(caps.subgroup_arithmetic);
@@ -242,11 +267,54 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.bc6_native);
     hash.AddIntegral(xclipse.bc7_native);
     hash.AddIntegral(xclipse.descriptor_buffer_validated);
+    hash.AddIntegral(xclipse.descriptor_buffer_image_validated);
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
+    hash.AddIntegral(xclipse.bc6_gpu_decode_capable);
+    hash.AddIntegral(xclipse.bc7_gpu_decode_capable);
+    hash.AddIntegral(xclipse.bptc_gpu_decode_capable);
+    hash.AddIntegral(xclipse.bc6_gpu_decode_validated);
+    hash.AddIntegral(xclipse.bc7_gpu_decode_validated);
+
+    const auto& probes = policy.optimization_probes;
+    hash.AddIntegral(probes.timestamp_queries);
+    hash.AddIntegral(probes.empty_queue_submit);
+    hash.AddIntegral(probes.buffer_transfer);
+    hash.AddIntegral(probes.image_transfer);
+    hash.AddIntegral(probes.storage_image_create);
+    hash.AddIntegral(probes.r32_sampled_image);
+    hash.AddIntegral(probes.r32_dref_sample);
+    hash.AddIntegral(probes.r32_compare_non_dref);
+    hash.AddIntegral(probes.r32_compare_dref);
+    hash.AddIntegral(probes.d32_compare_dref);
+    hash.AddIntegral(probes.mutable_r32_d32_view);
+    hash.AddIntegral(probes.queue_family_count);
+    hash.AddIntegral(probes.graphics_queue_count);
+    hash.AddIntegral(probes.dedicated_compute_queue_count);
+    hash.AddIntegral(probes.dedicated_transfer_queue_count);
+    hash.AddIntegral(probes.timestamp_valid_bits);
+    hash.AddIntegral(probes.timestamp_period_ps);
+    hash.AddIntegral(probes.memory_type_count);
+    hash.AddIntegral(probes.device_local_memory_type_count);
+    hash.AddIntegral(probes.host_visible_coherent_memory_type_count);
+    hash.AddIntegral(probes.host_visible_cached_memory_type_count);
+    hash.AddIntegral(probes.device_local_heap_bytes);
+    hash.AddIntegral(probes.host_visible_heap_bytes);
+    hash.AddIntegral(probes.max_memory_allocation_count);
+    hash.AddIntegral(probes.max_compute_workgroup_invocations);
+    hash.AddIntegral(probes.max_image_dimension_2d);
+    hash.AddIntegral(probes.non_coherent_atom_size);
+    hash.AddIntegral(probes.buffer_image_granularity);
+    hash.AddIntegral(probes.optimal_buffer_copy_offset_alignment);
+    hash.AddIntegral(probes.optimal_buffer_copy_row_pitch_alignment);
+    // Timing results are diagnostic only and intentionally excluded from the policy identity.
+
     hash.AddIntegral(policy.use_xclipse_sync_policy);
     hash.AddIntegral(policy.use_xclipse_bcn_gpu_decode);
+    hash.AddIntegral(policy.use_xclipse_bptc_gpu_decode);
+    hash.AddIntegral(policy.use_xclipse_bc6_gpu_decode);
+    hash.AddIntegral(policy.use_xclipse_bc7_gpu_decode);
     hash.AddIntegral(policy.use_xclipse_subgroup_size_control);
 
     return hash.Value();

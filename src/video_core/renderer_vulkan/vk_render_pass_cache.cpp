@@ -61,6 +61,8 @@ using VideoCore::Surface::SurfaceType;
                 .storeOp = store_op,
                 .stencilLoadOp = has_stencil ? load_op : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                 .stencilStoreOp = has_stencil ? store_op : VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                // CLEAR/DONT_CARE do not require preserving the previous contents. Let the
+                // implementation use an undefined initial layout to avoid an unnecessary load.
                 .initialLayout = VK_IMAGE_LAYOUT_GENERAL,
                 .finalLayout = VK_IMAGE_LAYOUT_GENERAL,
             };
@@ -161,6 +163,9 @@ VkRenderPass RenderPassCache::Get(const RenderPassKey& key) {
                                                      : VK_ATTACHMENT_STORE_OP_STORE;
             descriptions.push_back(
                 AttachmentDescription(*device, format, key.samples, load_op, store_op));
+            device->GetXclipseTelemetry().RecordRenderPassAttachment(
+                load_op != VK_ATTACHMENT_LOAD_OP_LOAD,
+                store_op == VK_ATTACHMENT_STORE_OP_DONT_CARE);
             num_attachments = static_cast<u32>(index + 1);
             ++num_colors;
         }
@@ -180,6 +185,9 @@ VkRenderPass RenderPassCache::Get(const RenderPassKey& key) {
                                                        : VK_ATTACHMENT_STORE_OP_STORE;
         descriptions.push_back(AttachmentDescription(*device, key.depth_format, key.samples,
                                                      depth_load_op, depth_store_op));
+        device->GetXclipseTelemetry().RecordRenderPassAttachment(
+            depth_load_op != VK_ATTACHMENT_LOAD_OP_LOAD,
+            depth_store_op == VK_ATTACHMENT_STORE_OP_DONT_CARE);
     }
     std::array<VkAttachmentReference, 8> resolve_references{};
     const bool do_resolve_color =

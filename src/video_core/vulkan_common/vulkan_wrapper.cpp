@@ -254,6 +254,11 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
         Proc(dld.vkWaitSemaphores, dld, "vkWaitSemaphoresKHR", device);
     }
 
+    // Buffer device address is core in 1.2 and available through KHR on older devices.
+    if (!dld.vkGetBufferDeviceAddress) {
+        Proc(dld.vkGetBufferDeviceAddress, dld, "vkGetBufferDeviceAddressKHR", device);
+    }
+
     // Support for host query reset is mandatory in Vulkan 1.2
     if (!dld.vkResetQueryPool) {
         Proc(dld.vkResetQueryPool, dld, "vkResetQueryPoolEXT", device);
@@ -1137,3 +1142,4 @@ std::string GetDriverName(VkPhysicalDeviceDriverProperties driver) {
 }
 
 } // namespace Vulkan::vk
+

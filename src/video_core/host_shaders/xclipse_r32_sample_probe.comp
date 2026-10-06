@@ -1,0 +1,13 @@
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D probe_texture;
+layout(binding = 1, std430) buffer ProbeOutput {
+    uint data[];
+} output_buffer;
+
+void main() {
+    const float value = textureLod(probe_texture, vec2(0.5), 0.0).r;
+    output_buffer.data[0] = floatBitsToUint(value);
+}

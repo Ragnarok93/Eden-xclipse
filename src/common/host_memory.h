@@ -21,6 +21,20 @@ enum class MemoryPermission : u32 {
 };
 DECLARE_ENUM_FLAG_OPERATORS(MemoryPermission)
 
+struct HostMemoryRange {
+    size_t offset{};
+    size_t length{};
+};
+
+[[nodiscard]] constexpr std::optional<HostMemoryRange> IntersectHostMemoryVirtualRange(
+    size_t virtual_offset, size_t length, size_t virtual_size) noexcept {
+    if (length == 0 || virtual_offset >= virtual_size) {
+        return std::nullopt;
+    }
+    const size_t available = virtual_size - virtual_offset;
+    return HostMemoryRange{virtual_offset, length < available ? length : available};
+}
+
 /**
  * A low level linear memory buffer, which supports multiple mappings
  * Its purpose is to rebuild a given sparse memory layout, including mirrors.
@@ -54,6 +68,12 @@ public:
 
     void ClearBackingRegion(size_t physical_offset, size_t length, u32 fill_value);
 
+    /**
+     * Reclaims resident file-backed guest memory pages without changing their contents.
+     * Returns true when the platform accepted the reclaim request.
+     */
+    [[nodiscard]] bool TryReclaimBackingPages();
+
     [[nodiscard]] u8* BackingBasePointer() noexcept {
         return backing_base;
     }
@@ -66,6 +86,10 @@ public:
     }
     [[nodiscard]] const u8* VirtualBasePointer() const noexcept {
         return virtual_base;
+    }
+
+    [[nodiscard]] size_t VirtualSize() const noexcept {
+        return virtual_size;
     }
 
     bool IsInVirtualRange(void* address) const noexcept {

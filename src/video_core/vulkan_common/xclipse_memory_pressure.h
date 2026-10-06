@@ -59,11 +59,11 @@ enum class XclipseTextureGcPressure : u8 {
     constexpr u64 MiB = 1024ULL * 1024ULL;
     switch (pressure) {
     case MemoryPressureClass::Elevated:
-        return 384ULL * MiB;
+        return 256ULL * MiB;
     case MemoryPressureClass::High:
-        return 192ULL * MiB;
+        return 128ULL * MiB;
     case MemoryPressureClass::Critical:
-        return 96ULL * MiB;
+        return 64ULL * MiB;
     case MemoryPressureClass::Normal:
     default:
         return 0;
@@ -205,7 +205,7 @@ class XclipseMemoryPressureController {
 public:
     XclipseMemoryPressureController() = default;
 
-    /// Samples Xclipse pressure at most once per second. Consumers may use the sampled state only
+    /// Samples Xclipse pressure at most twice per second. Consumers may use the sampled state only
     /// through conservative, independently disableable policy such as TextureGcPressureFor().
     [[nodiscard]] XclipseMemoryPressureSnapshot Tick(const Device& device, bool enabled);
 

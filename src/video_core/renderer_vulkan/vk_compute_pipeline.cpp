@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstddef>
 #include <algorithm>
 #include <chrono>
 #include <vector>
@@ -80,7 +81,11 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
         }
     }
 
-    auto func{[this, shader_notify, pipeline_statistics] {
+    const auto queued_at = std::chrono::steady_clock::now();
+    auto func{[this, shader_notify, pipeline_statistics, queued_at] {
+        const auto worker_start = std::chrono::steady_clock::now();
+        device.GetXclipseTelemetry().RecordPipelineQueueResidence(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(worker_start - queued_at).count()));
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
             .pNext = nullptr,
@@ -165,7 +170,10 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
 
 bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
-                                BufferCache& buffer_cache, TextureCache& texture_cache) {
+                                BufferCache& buffer_cache, TextureCache& texture_cache,
+                                boost::container::small_vector<VideoCommon::ImageViewId, 64>&
+                                    written_image_views) {
+    written_image_views.clear();
     guest_descriptor_queue.Acquire(scheduler, num_descriptor_entries, uses_descriptor_buffer);
 
     buffer_cache.SetComputeUniformBufferState(info.constant_buffer_mask, &uniform_buffer_sizes);
@@ -230,10 +238,20 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             samplers.push_back(sampler);
         }
     }
+    const size_t storage_image_view_start = views.size();
     for (const auto& desc : info.image_descriptors) {
         add_image(desc, desc.is_written);
     }
     texture_cache.FillImageViews(std::span(views.data(), views.size()), true);
+    size_t storage_image_view = storage_image_view_start;
+    for (const auto& desc : info.image_descriptors) {
+        for (u32 index = 0; index < desc.count; ++index) {
+            if (desc.is_written) {
+                written_image_views.push_back(views[storage_image_view].id);
+            }
+            ++storage_image_view;
+        }
+    }
 
     buffer_cache.UnbindComputeTextureBuffers();
     size_t index{};
@@ -270,14 +288,36 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     RescalingPushConstant rescaling;
     const VideoCommon::SamplerId* samplers_it{samplers.data()};
     const VideoCommon::ImageViewInOut* views_it{views.data()};
-    PushImageDescriptors(texture_cache, guest_descriptor_queue, info, rescaling, samplers_it,
-                         views_it);
+    const DrefDiagnosticContext dref_context{
+        .pipeline_hash = shader_hash,
+        .shader_hash = shader_hash,
+        .stage = static_cast<u32>(Shader::Stage::Compute),
+    };
+    if (!PushImageDescriptors(device, texture_cache, guest_descriptor_queue, info, rescaling,
+                              samplers_it, views_it, dref_context)) {
+        return false;
+    }
+
+    // A completed asynchronous build with no pipeline is a hard failure. Do not leave writable
+    // image provenance pending or record a dispatch that the scheduler will skip.
+    if (is_built.load(std::memory_order::relaxed) && !pipeline) {
+        return false;
+    }
 
     if (!is_built.load(std::memory_order::relaxed)) {
         // Wait for the pipeline to be built
         scheduler.Record([this](vk::CommandBuffer) {
             std::unique_lock lock{build_mutex};
-            build_condvar.wait(lock, [this] { return is_built.load(std::memory_order::relaxed); });
+            if (!is_built.load(std::memory_order::relaxed)) {
+                const auto wait_start = std::chrono::steady_clock::now();
+                build_condvar.wait(
+                    lock, [this] { return is_built.load(std::memory_order::relaxed); });
+                const auto wait_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - wait_start)
+                        .count());
+                device.GetXclipseTelemetry().RecordPipelineBlockingWait(wait_ns);
+            }
         });
     }
 
@@ -309,7 +349,8 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     const bool is_rescaling = !info.texture_descriptors.empty() || !info.image_descriptors.empty();
     scheduler.Record([this, descriptor_data, is_rescaling, descriptor_buffer_offset,
                       descriptor_buffer_chunk, bind_descriptor_buffer,
-                      rescaling_data = rescaling.Data()](vk::CommandBuffer cmdbuf) {
+                      rescaling_data = rescaling.Data(),
+                      dref_compare_ops = rescaling.DrefCompareOps()](vk::CommandBuffer cmdbuf) {
         if (bind_descriptor_buffer) {
             const VkDescriptorBufferBindingInfoEXT binding_info{
                 descriptor_buffer_ring.BindingInfo(descriptor_buffer_chunk)};
@@ -327,6 +368,9 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                  RESCALING_LAYOUT_WORDS_OFFSET, sizeof(rescaling_data),
                                  rescaling_data.data());
         }
+        cmdbuf.PushConstants(*pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT,
+                             offsetof(Shader::Backend::SPIRV::RescalingLayout, dref_compare_ops),
+                             sizeof(dref_compare_ops), dref_compare_ops.data());
         if (uses_descriptor_buffer) {
             const u32 buffer_index{};
             cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,

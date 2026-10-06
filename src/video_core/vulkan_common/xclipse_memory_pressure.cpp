@@ -35,13 +35,13 @@ MemoryPressureClass BudgetPressure(u32 used_percent) noexcept {
 }
 
 MemoryPressureClass RamPressure(u32 available_percent) noexcept {
-    if (available_percent <= 5) {
+    if (available_percent <= 8) {
         return MemoryPressureClass::Critical;
     }
-    if (available_percent <= 10) {
+    if (available_percent <= 12) {
         return MemoryPressureClass::High;
     }
-    if (available_percent <= 18) {
+    if (available_percent <= 20) {
         return MemoryPressureClass::Elevated;
     }
     return MemoryPressureClass::Normal;
@@ -235,8 +235,19 @@ MemoryPressureClass XclipseMemoryPressureController::Classify(
     if (sample.gtt_used_percent) {
         pressure = MaxPressure(pressure, GttPressure(*sample.gtt_used_percent));
     }
-    // RSS is intentionally diagnostic-only until on-device data establishes a safe, device-class
-    // threshold. Android LMK policy is system-pressure dependent, not a fixed per-process number.
+
+    // On shared-memory Android devices, Eden's resident+swapped footprint competes directly with
+    // the rest of the system. When the system is already under pressure, a large Eden footprint
+    // must advance the pressure class instead of remaining diagnostic-only.
+    if (sample.process_rss_swap_percent && sample.ram_available_percent) {
+        const u32 process_percent = *sample.process_rss_swap_percent;
+        const u32 available_percent = *sample.ram_available_percent;
+        if (process_percent >= 35 && available_percent <= 20) {
+            pressure = MaxPressure(pressure, MemoryPressureClass::High);
+        } else if (process_percent >= 25 && available_percent <= 20) {
+            pressure = MaxPressure(pressure, MemoryPressureClass::Elevated);
+        }
+    }
     return MaxPressure(pressure, PsiPressure(sample));
 }
 
@@ -354,7 +365,7 @@ XclipseMemoryPressureSnapshot XclipseMemoryPressureController::Tick(
 
     const auto now = std::chrono::steady_clock::now();
     if (last_poll.time_since_epoch().count() != 0 &&
-        now - last_poll < std::chrono::seconds(1)) {
+        now - last_poll < std::chrono::milliseconds(500)) {
         last_snapshot.sampled = false;
         last_snapshot.changed = false;
         return last_snapshot;

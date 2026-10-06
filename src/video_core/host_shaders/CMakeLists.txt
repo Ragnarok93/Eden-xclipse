@@ -87,6 +87,8 @@ set(SHADER_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/vulkan_turbo_mode.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/vulkan_uint8.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_bcn_sample_probe.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_r32_sample_probe.comp
+    ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_r32_dref_probe.comp
     ${CMAKE_CURRENT_SOURCE_DIR}/xclipse_subgroup_probe.comp
 
     # Snapdragon Game Super Resolution
