@@ -362,6 +362,9 @@ public:
     }
 
     void RecordProvenanceWrite(XclipseImageWriter writer) noexcept;
+    void RecordGpuModification() noexcept {
+        RecordProvenanceWrite(XclipseImageWriter::GpuModification);
+    }
     void RecordProvenanceTransition(VkImageLayout old_layout, VkImageLayout new_layout) noexcept;
 
     [[nodiscard]] const XclipseImageProvenance& Provenance() const noexcept {
