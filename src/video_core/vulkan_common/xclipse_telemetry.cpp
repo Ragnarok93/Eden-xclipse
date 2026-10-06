@@ -114,6 +114,90 @@ void XclipseTelemetry::RecordPipelineBlockingWait(u64 wait_ns) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordPipelineKeyGeneration(u64 duration_ns) noexcept {
+    if (Enabled()) {
+        pipeline_key_generation_latency.Record(duration_ns);
+    }
+}
+
+void XclipseTelemetry::RecordDiskShaderCacheLookup(bool hit, u64 duration_ns) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (hit ? disk_shader_cache_lookup_hits : disk_shader_cache_lookup_misses)
+        .fetch_add(1, std::memory_order_relaxed);
+    disk_shader_cache_lookup_latency.Record(duration_ns);
+}
+
+void XclipseTelemetry::RecordDiskShaderCacheLoad(u64 duration_ns) noexcept {
+    if (Enabled()) {
+        disk_shader_cache_load_latency.Record(duration_ns);
+    }
+}
+
+void XclipseTelemetry::RecordDiskShaderDeserialize(u64 duration_ns) noexcept {
+    if (Enabled()) {
+        disk_shader_deserialize_latency.Record(duration_ns);
+    }
+}
+
+void XclipseTelemetry::RecordDiskPipelineParsed() noexcept {
+    if (Enabled()) {
+        disk_pipeline_entries_parsed.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDiskPipelineRejected() noexcept {
+    if (Enabled()) {
+        disk_pipeline_entries_rejected.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void XclipseTelemetry::RecordDiskPipelineReconstruction(bool success) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (success ? disk_pipeline_entries_reconstructed : disk_pipeline_reconstruction_failures)
+        .fetch_add(1, std::memory_order_relaxed);
+}
+
+void XclipseTelemetry::RecordShaderTranslation(u64 decode_ns, u64 optimization_ns) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    if (decode_ns != 0) {
+        shader_decode_latency.Record(decode_ns);
+    }
+    if (optimization_ns != 0) {
+        shader_ir_optimization_latency.Record(optimization_ns);
+    }
+}
+
+void XclipseTelemetry::RecordSpirvGeneration(u64 duration_ns) noexcept {
+    if (Enabled()) {
+        spirv_generation_latency.Record(duration_ns);
+    }
+}
+
+void XclipseTelemetry::RecordShaderModuleCreation(u64 duration_ns) noexcept {
+    if (Enabled()) {
+        shader_module_creation_latency.Record(duration_ns);
+    }
+}
+
+void XclipseTelemetry::RecordDriverPipelineCacheLoad(bool hit, u64 restored_bytes,
+                                                     u64 duration_ns) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    (hit ? driver_pipeline_cache_hits : driver_pipeline_cache_misses)
+        .fetch_add(1, std::memory_order_relaxed);
+    if (hit) {
+        driver_pipeline_cache_restored_bytes.fetch_add(restored_bytes, std::memory_order_relaxed);
+    }
+    driver_pipeline_cache_load_latency.Record(duration_ns);
+}
+
 void XclipseTelemetry::RecordStagingPressureReallocation(u64 bytes, u64 elapsed_ns) noexcept {
     if (!Enabled()) {
         return;
@@ -385,6 +469,33 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .pipeline_build_latency = pipeline_build_latency.Snapshot(),
         .pipeline_queue_residence_latency = pipeline_queue_residence_latency.Snapshot(),
         .pipeline_blocking_latency = pipeline_blocking_latency.Snapshot(),
+        .disk_shader_cache_lookup_hits =
+            disk_shader_cache_lookup_hits.load(std::memory_order_relaxed),
+        .disk_shader_cache_lookup_misses =
+            disk_shader_cache_lookup_misses.load(std::memory_order_relaxed),
+        .disk_pipeline_entries_parsed =
+            disk_pipeline_entries_parsed.load(std::memory_order_relaxed),
+        .disk_pipeline_entries_rejected =
+            disk_pipeline_entries_rejected.load(std::memory_order_relaxed),
+        .disk_pipeline_entries_reconstructed =
+            disk_pipeline_entries_reconstructed.load(std::memory_order_relaxed),
+        .disk_pipeline_reconstruction_failures =
+            disk_pipeline_reconstruction_failures.load(std::memory_order_relaxed),
+        .driver_pipeline_cache_hits =
+            driver_pipeline_cache_hits.load(std::memory_order_relaxed),
+        .driver_pipeline_cache_misses =
+            driver_pipeline_cache_misses.load(std::memory_order_relaxed),
+        .driver_pipeline_cache_restored_bytes =
+            driver_pipeline_cache_restored_bytes.load(std::memory_order_relaxed),
+        .pipeline_key_generation_latency = pipeline_key_generation_latency.Snapshot(),
+        .disk_shader_cache_lookup_latency = disk_shader_cache_lookup_latency.Snapshot(),
+        .disk_shader_cache_load_latency = disk_shader_cache_load_latency.Snapshot(),
+        .disk_shader_deserialize_latency = disk_shader_deserialize_latency.Snapshot(),
+        .shader_decode_latency = shader_decode_latency.Snapshot(),
+        .shader_ir_optimization_latency = shader_ir_optimization_latency.Snapshot(),
+        .spirv_generation_latency = spirv_generation_latency.Snapshot(),
+        .shader_module_creation_latency = shader_module_creation_latency.Snapshot(),
+        .driver_pipeline_cache_load_latency = driver_pipeline_cache_load_latency.Snapshot(),
         .staging_pressure_reallocations =
             staging_pressure_reallocations.load(std::memory_order_relaxed),
         .staging_pressure_reallocated_bytes =

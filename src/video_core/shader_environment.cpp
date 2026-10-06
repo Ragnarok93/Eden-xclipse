@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -459,6 +460,7 @@ u32 ComputeEnvironment::ReadViewportTransformState() {
 }
 
 void FileEnvironment::Deserialize(std::ifstream& file) {
+    const auto deserialize_start = std::chrono::steady_clock::now();
     u64 code_size{};
     u64 num_texture_types{};
     u64 num_texture_pixel_formats{};
@@ -520,6 +522,10 @@ void FileEnvironment::Deserialize(std::ifstream& file) {
         }
     }
     is_proprietary_driver = texture_bound == 2;
+    deserialize_duration_ns = static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - deserialize_start)
+            .count());
 }
 
 void FileEnvironment::Dump(u64 pipeline_hash, u64 shader_hash) {
