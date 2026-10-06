@@ -98,6 +98,19 @@ public:
     bool UsesExtendedDynamicState() const noexcept {
         return key.state.extended_dynamic_state != 0;
     }
+
+    [[nodiscard]] bool HasDrefDescriptors() const noexcept {
+        return std::ranges::any_of(stage_infos, [](const Shader::Info& info) {
+            return std::ranges::any_of(info.texture_descriptors, [](const auto& desc) {
+                return Shader::IsDref(desc.dref_mode);
+            });
+        });
+    }
+
+    [[nodiscard]] u64 DiagnosticHash() const noexcept {
+        return key.Hash();
+    }
+
     GraphicsPipeline& operator=(GraphicsPipeline&&) noexcept = delete;
     GraphicsPipeline(GraphicsPipeline&&) noexcept = delete;
 
