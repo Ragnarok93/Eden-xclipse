@@ -47,6 +47,7 @@ public:
     void Initialize(KernelCore& kernel, KThread* main_thread, KThread* idle_thread, s32 core_id);
     void Activate(KernelCore& kernel);
     void OnThreadStart(KernelCore& kernel);
+    void LockCurrentThreadContext(KThread* thread);
     void Unload(KernelCore& kernel, KThread* thread);
     void Reload(KernelCore& kernel, KThread* thread);
 

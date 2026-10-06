@@ -197,6 +197,8 @@ void CpuManager::RunThread(std::stop_token token, std::size_t core) {
     auto* thread = scheduler.GetSchedulerCurrentThread();
     Kernel::SetCurrentThread(kernel, thread);
 
+    // Initial fiber entry bypasses ScheduleImplFiber, so establish the same context ownership.
+    scheduler.LockCurrentThreadContext(thread);
     Common::Fiber::YieldTo(data.host_context, *thread->GetHostContext());
 }
 

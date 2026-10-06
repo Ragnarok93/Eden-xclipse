@@ -227,6 +227,11 @@ void KScheduler::OnThreadStart(KernelCore& kernel) {
     GetCurrentThread(kernel).EnableDispatch(kernel);
 }
 
+void KScheduler::LockCurrentThreadContext(KThread* thread) {
+    ASSERT(thread == m_current_thread.load());
+    thread->m_context_guard.lock();
+}
+
 u64 KScheduler::UpdateHighestPriorityThread(KernelCore& kernel, KThread* highest_thread) {
     if (KThread* prev_highest_thread = m_state.highest_priority_thread;
         prev_highest_thread != highest_thread) [[likely]] {
