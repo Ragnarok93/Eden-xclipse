@@ -39,6 +39,7 @@
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_arithmetic_comp_spv.h"
 #include "video_core/host_shaders/xclipse_subgroup_op_probe_quad_comp_spv.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vulkan_feature_policy.h"
 #include "video_core/vulkan_common/xclipse_optimization_probes.h"
 #include "video_core/vulkan_common/xclipse_depth_comparison_probes.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
@@ -2787,8 +2788,11 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     const bool is_qualcomm = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
     const bool is_turnip = driver_id == VK_DRIVER_ID_MESA_TURNIP;
 
-    if (!is_suitable)
-        LOG_WARNING(Render_Vulkan, "Unsuitable driver - continuing anyways");
+    if (!is_suitable) {
+        LOG_ERROR(Render_Vulkan,
+                  "Required Vulkan capabilities are unavailable; refusing incompatible device creation");
+        throw vk::Exception(VK_ERROR_FEATURE_NOT_PRESENT);
+    }
 
     if (is_nvidia) {
         nvidia_arch = GetNvidiaArchitecture(physical, supported_extensions);
@@ -3041,6 +3045,15 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         descriptor_indexing.runtimeDescriptorArray = false;
     }
 
+    // Recompute cached dynamic-state decisions after the constructor's EDS-level masks.
+    RemoveUnsuitableExtensions();
+
+    // Buffer device address is core in 1.2; absence from the enabled extension-name list
+    // must not disagree with the queried/enabled core feature or the VMA allocation flags.
+    extensions.buffer_device_address = CanUseBufferDeviceAddress(
+        instance_version, loaded_extensions.contains(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME),
+        features.buffer_device_address.bufferDeviceAddress);
+
     // VK_EXT_descriptor_buffer requires VK_KHR_buffer_device_address
     if (extensions.descriptor_buffer && !features.buffer_device_address.bufferDeviceAddress) {
         LOG_WARNING(Render_Vulkan, "Descriptor buffer needs buffer device address, disabling.");
@@ -3050,6 +3063,21 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     if (!extensions.descriptor_buffer) {
         RemoveExtensionFeature(extensions.buffer_device_address, features.buffer_device_address,
                                VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    }
+
+    // Workarounds change the renderer's copy of the base features. Enable that exact
+    // filtered copy, not the original unfiltered query results.
+    features2.features = features.features;
+    if (IsXclipse()) {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE ENABLEMENT bda={} descriptor_buffer={} eds3_blend={} "
+                 "dynamic_alpha_to_one={} rectangular_lines={} smooth_lines={} "
+                 "shader_float64={} sampler_minmax={}",
+                 IsBufferDeviceAddressSupported(), IsExtDescriptorBufferSupported(),
+                 IsExtExtendedDynamicState3BlendingSupported(),
+                 SupportsDynamicState3AlphaToOneEnable(), SupportsRectangularLines(),
+                 SupportsSmoothLines(), features.features.shaderFloat64 != VK_FALSE,
+                 IsExtSamplerFilterMinmaxSupported());
     }
 
     logical = vk::Device::Create(physical, queue_cis, ExtensionListForVulkan(loaded_extensions), first_next, dld);
@@ -3483,36 +3511,6 @@ bool Device::GetSuitability(bool requires_swapchain) {
     // Base Vulkan 1.0 features are always valid regardless of instance version.
     features.features = features2.features;
 
-// Some features are mandatory. Check those.
-#define CHECK_FEATURE(feature, name)                                                               \
-    if (!features.feature.name) {                                                                  \
-        if (IsMoltenVK() && (strcmp(#name, "geometryShader") == 0 ||                               \
-                            strcmp(#name, "logicOp") == 0 ||                                       \
-                            strcmp(#name, "shaderCullDistance") == 0 ||                            \
-                            strcmp(#name, "wideLines") == 0)) {                                    \
-            LOG_INFO(Render_Vulkan, "MoltenVK missing feature {} - using fallback", #name);       \
-        } else {                                                                                    \
-            LOG_ERROR(Render_Vulkan, "Missing required feature {}", #name);                        \
-            suitable = false;                                                                       \
-        }                                                                                           \
-    }
-
-#define LOG_FEATURE(feature, name)                                                                 \
-    if (!features.feature.name) {                                                                  \
-            LOG_INFO(Render_Vulkan, "Device doesn't support feature {}", #name);                       \
-    }
-
-// Optional features are enabled silently without any logging
-#define OPTIONAL_FEATURE(feature, name) (void)features.feature.name;
-
-    FOR_EACH_VK_OPTIONAL_FEATURE(OPTIONAL_FEATURE);
-    FOR_EACH_VK_RECOMMENDED_FEATURE(LOG_FEATURE);
-    FOR_EACH_VK_MANDATORY_FEATURE(CHECK_FEATURE);
-
-#undef OPTIONAL_FEATURE
-#undef LOG_FEATURE
-#undef CHECK_FEATURE
-
     // Generate linked list of properties.
     properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 
@@ -3575,8 +3573,36 @@ bool Device::GetSuitability(bool requires_swapchain) {
     // Store base properties
     properties.properties = properties2.properties;
 
-    // Unload extensions if feature support is insufficient.
-    RemoveUnsuitableExtensions();
+    // Driver-specific required-feature exemptions need the queried driver identity.
+// Some features are mandatory. Check those.
+#define CHECK_FEATURE(feature, name)                                                               \
+    if (!features.feature.name) {                                                                  \
+        if (IsMoltenVK() && (strcmp(#name, "geometryShader") == 0 ||                               \
+                            strcmp(#name, "logicOp") == 0 ||                                       \
+                            strcmp(#name, "shaderCullDistance") == 0 ||                            \
+                            strcmp(#name, "wideLines") == 0)) {                                    \
+            LOG_INFO(Render_Vulkan, "MoltenVK missing feature {} - using fallback", #name);       \
+        } else {                                                                                    \
+            LOG_ERROR(Render_Vulkan, "Missing required feature {}", #name);                        \
+            suitable = false;                                                                       \
+        }                                                                                           \
+    }
+
+#define LOG_FEATURE(feature, name)                                                                 \
+    if (!features.feature.name) {                                                                  \
+            LOG_INFO(Render_Vulkan, "Device doesn't support feature {}", #name);                       \
+    }
+
+// Optional features are enabled silently without any logging
+#define OPTIONAL_FEATURE(feature, name) (void)features.feature.name;
+
+    FOR_EACH_VK_OPTIONAL_FEATURE(OPTIONAL_FEATURE);
+    FOR_EACH_VK_RECOMMENDED_FEATURE(LOG_FEATURE);
+    FOR_EACH_VK_MANDATORY_FEATURE(CHECK_FEATURE);
+
+#undef OPTIONAL_FEATURE
+#undef LOG_FEATURE
+#undef CHECK_FEATURE
 
     // Check limits.
     struct Limit {
@@ -3642,6 +3668,9 @@ bool Device::GetSuitability(bool requires_swapchain) {
         features.extended_dynamic_state3.extendedDynamicState3LogicOpEnable = false;
     }
 
+    // Derive renderer support only after applying driver and user feature masks.
+    RemoveUnsuitableExtensions();
+
     // Return whether we were suitable.
     return suitable;
 }
@@ -3700,14 +3729,8 @@ void Device::RemoveUnsuitableExtensions() {
                                        VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME);
 
     // VK_EXT_extended_dynamic_state3
-    const bool supports_color_blend_enable =
-        features.extended_dynamic_state3.extendedDynamicState3ColorBlendEnable;
-    const bool supports_color_blend_equation =
-        features.extended_dynamic_state3.extendedDynamicState3ColorBlendEquation;
-    const bool supports_color_write_mask =
-        features.extended_dynamic_state3.extendedDynamicState3ColorWriteMask;
-    dynamic_state3_blending = supports_color_blend_enable && supports_color_blend_equation &&
-                              supports_color_write_mask;
+    dynamic_state3_blending = CanUseDynamicBlendState(
+        extensions.extended_dynamic_state3, features.extended_dynamic_state3);
 
     const bool supports_depth_clamp_enable =
         features.extended_dynamic_state3.extendedDynamicState3DepthClampEnable;
@@ -4175,4 +4198,3 @@ void Device::ShutdownGPULogging() {
 }
 
 } // namespace Vulkan
-

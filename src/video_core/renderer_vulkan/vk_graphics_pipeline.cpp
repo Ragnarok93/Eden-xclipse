@@ -23,6 +23,7 @@
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_pipeline_policy.h"
+#include "video_core/vulkan_common/vulkan_feature_policy.h"
 #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -860,9 +861,8 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
     VkPipelineRasterizationLineStateCreateInfoEXT line_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT,
         .pNext = nullptr,
-        .lineRasterizationMode = key.state.smooth_lines != 0 && smooth_lines_supported
-                                     ? VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT
-                                     : VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT,
+        .lineRasterizationMode = SelectLineRasterizationMode(
+            key.state.smooth_lines != 0, device.SupportsRectangularLines(), smooth_lines_supported),
         .stippledLineEnable =
             (dynamic.line_stipple_enable && stippled_lines_supported) ? VK_TRUE : VK_FALSE,
         .lineStippleFactor = key.state.line_stipple_factor,
@@ -1155,3 +1155,4 @@ void GraphicsPipeline::Validate() {
 }
 
 } // namespace Vulkan
+

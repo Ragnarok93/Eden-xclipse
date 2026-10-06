@@ -135,6 +135,7 @@ jobs:
             "${EDEN_SOURCE_DIR}/src/video_core/vulkan_common/vulkan_device_profile.cpp"
             "${EDEN_SOURCE_DIR}/src/video_core/renderer_vulkan/vk_pipeline_policy.cpp"
             "${EDEN_SOURCE_DIR}/src/tests/video_core/vulkan_device_profile.cpp"
+            "${EDEN_SOURCE_DIR}/src/tests/video_core/vulkan_feature_policy.cpp"
             "${EDEN_SOURCE_DIR}/src/tests/video_core/xclipse_pipeline_policy.cpp")
           target_compile_features(policy_tests PRIVATE cxx_std_20)
           target_include_directories(policy_tests PRIVATE "${EDEN_SOURCE_DIR}/src" ${Vulkan_INCLUDE_DIRS})
@@ -156,3 +157,4 @@ jobs:
           path: ${{ runner.temp }}/xclipse-policy/build/Testing/Temporary/
           if-no-files-found: ignore
           retention-days: 14
+

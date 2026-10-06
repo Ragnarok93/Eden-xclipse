@@ -200,8 +200,8 @@ bool CanRequireXclipseSubgroupSize(const VulkanDevicePolicy& policy,
 
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
-    // v8 restores base-feature discovery and uses deterministic subgroup selection.
-    hash.Add("eden-xclipse-policy-v8");
+    // v9 uses post-workaround feature masks and recognizes core buffer device address.
+    hash.Add("eden-xclipse-policy-v9");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
