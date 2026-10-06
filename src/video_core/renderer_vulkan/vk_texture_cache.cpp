@@ -2162,6 +2162,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
                                        post_consumer_stages, 0, nullptr, nullptr,
                                        post_barriers);
             });
+            dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
             return;
         }
     }
@@ -2172,6 +2173,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
         blit_image_helper.CopyMSAADepth(render_pass_cache, dst.Handle(), dst.info.format,
                                         src.Handle(), src.info.format, num_samples, copies,
                                         copies_stencil, msaa_to_non_msaa);
+        dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
         return;
     }
     if ((dst_aspect_mask & VK_IMAGE_ASPECT_COLOR_BIT) == 0) {
@@ -2180,6 +2182,7 @@ void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
     }
     blit_image_helper.CopyMSAA(render_pass_cache, dst.Handle(), dst.info.format, src.Handle(),
                                src.info.format, num_samples, copies, msaa_to_non_msaa);
+    dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
 }
 
 u64 TextureCacheRuntime::GetDeviceLocalMemory() const {
