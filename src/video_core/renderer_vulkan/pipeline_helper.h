@@ -12,6 +12,7 @@
 #include <boost/container/small_vector.hpp>
 
 #include "common/common_types.h"
+#include "common/logging.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/shader_info.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -356,15 +357,23 @@ public:
     std::array<f32, 4> words{};
 };
 
+struct DrefDiagnosticContext {
+    u64 pipeline_hash{};
+    u64 shader_hash{};
+    u32 stage{};
+};
+
 [[nodiscard]] inline bool PushImageDescriptors(TextureCache& texture_cache,
                                  GuestDescriptorQueue& guest_descriptor_queue,
                                  const Shader::Info& info, RescalingPushConstant& rescaling,
                                  const VideoCommon::SamplerId*& samplers,
-                                 const VideoCommon::ImageViewInOut*& views) {
+                                 const VideoCommon::ImageViewInOut*& views,
+                                 DrefDiagnosticContext diagnostic_context = {}) {
     const u32 num_texture_buffers = Shader::NumDescriptors(info.texture_buffer_descriptors);
     const u32 num_image_buffers = Shader::NumDescriptors(info.image_buffer_descriptors);
     views += num_texture_buffers;
     views += num_image_buffers;
+    u32 descriptor_index{};
     for (const auto& desc : info.texture_descriptors) {
         bool is_rescaled{};
         for (u32 index = 0; index < desc.count; ++index) {
@@ -380,6 +389,57 @@ public:
             if (desc.dref_mode == Shader::DrefExecutionMode::SoftwareDref) {
                 rescaling.SetDrefCompareOp(static_cast<u32>(sampler.CompareOp()));
             }
+            const bool is_dref{Shader::IsDref(desc.dref_mode)};
+            const Device& device{texture_cache.runtime.device};
+            const Image* const source_image{image_view.SourceImage()};
+            const XclipseImageProvenance provenance =
+                source_image ? source_image->Provenance() : XclipseImageProvenance{};
+            if (is_dref && device.XclipseDrefDiagnosticsEnabled() &&
+                xclipse_dref_binding_diagnostic_budget.TryConsume(
+                    XclipseImageDiagnosticCategory::DrefBinding)) {
+                LOG_INFO(Render_Vulkan,
+                         "XCLIPSE DREF binding [diag=dref-binding] frame={} pipeline={:016x} "
+                         "shader={:016x} stage={} descriptor={} element={} dynamic={} mode={} "
+                         "image_id={} gpu={:#x} guest_fmt={} view_type={} "
+                         "mip={} levels={} layer={} layers={} aspect=0x{:x} "
+                         "compare_requested={} compare_op={} depth_compare_feature={} "
+                         "contents_defined={} initialized={} last_writer={} writer_tick={} "
+                         "last_layout={} transition_tick={} saw_undefined_transition={}",
+                         device.GetXclipseTelemetry().FrameCount(),
+                         diagnostic_context.pipeline_hash, diagnostic_context.shader_hash,
+                         diagnostic_context.stage, descriptor_index, index, desc.count > 1,
+                         static_cast<u32>(desc.dref_mode), image_view.image_id.Value(),
+                         image_view.GpuAddr(), static_cast<u32>(image_view.format),
+                         static_cast<u32>(image_view.type), image_view.range.base.level,
+                         image_view.range.extent.levels, image_view.range.base.layer,
+                         image_view.range.extent.layers,
+                         source_image ? static_cast<u32>(source_image->AspectMask()) : 0u,
+                         sampler.CompareEnabled(), static_cast<u32>(sampler.CompareOp()),
+                         image_view.SupportsDepthComparison(), provenance.contents_defined,
+                         source_image ? source_image->IsInitialized() : false,
+                         XclipseImageWriterName(provenance.last_writer),
+                         provenance.last_writer_tick, provenance.last_layout,
+                         provenance.last_transition_tick, provenance.saw_undefined_transition);
+            }
+            if (is_dref && source_image && !provenance.contents_defined &&
+                device.XclipseDrefDiagnosticsEnabled() &&
+                xclipse_dref_binding_diagnostic_budget.TryConsume(
+                    XclipseImageDiagnosticCategory::UndefinedSampleRead)) {
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE DREF undefined-read candidate [diag=undefined-sample] "
+                            "frame={} pipeline={:016x} shader={:016x} stage={} descriptor={} "
+                            "element={} image_id={} gpu={:#x} fmt={} mip={} layer={} "
+                            "last_writer={} writer_tick={} last_layout={} transition_tick={}",
+                            device.GetXclipseTelemetry().FrameCount(),
+                            diagnostic_context.pipeline_hash, diagnostic_context.shader_hash,
+                            diagnostic_context.stage, descriptor_index, index,
+                            image_view.image_id.Value(), image_view.GpuAddr(),
+                            static_cast<u32>(image_view.format), image_view.range.base.level,
+                            image_view.range.base.layer,
+                            XclipseImageWriterName(provenance.last_writer),
+                            provenance.last_writer_tick, provenance.last_layout,
+                            provenance.last_transition_tick);
+            }
             const VkSampler vk_sampler =
                 sampler.HandleFor(image_view, desc.dref_mode, vk_image_view);
             if (vk_sampler == VK_NULL_HANDLE) {
@@ -390,6 +450,7 @@ public:
             is_rescaled |= element_rescaled;
         }
         rescaling.PushTexture(is_rescaled);
+        ++descriptor_index;
     }
     for (const auto& desc : info.image_descriptors) {
         bool is_rescaled{};
