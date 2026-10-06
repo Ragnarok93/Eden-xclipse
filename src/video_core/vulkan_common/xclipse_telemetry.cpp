@@ -354,17 +354,41 @@ void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
     }
 }
 
-void XclipseTelemetry::RecordDrefBinding(bool compare_dropped,
-                                         bool software_emulated) noexcept {
+void XclipseTelemetry::RecordDrefBinding(XclipseDrefPath path, XclipseDrefFormat format,
+                                         bool compare_dropped, bool dynamic_unknown) noexcept {
     if (!Enabled()) {
         return;
     }
     dref_shader_bindings.fetch_add(1, std::memory_order_relaxed);
-    (software_emulated ? dref_software_bindings : dref_native_bindings)
-        .fetch_add(1, std::memory_order_relaxed);
+    switch (path) {
+    case XclipseDrefPath::Native:
+        dref_native_bindings.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseDrefPath::Software:
+        dref_software_bindings.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseDrefPath::Unresolved:
+        dref_unresolved_bindings.fetch_add(1, std::memory_order_relaxed);
+        break;
+    }
+    switch (format) {
+    case XclipseDrefFormat::R32:
+        dref_r32_bindings.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseDrefFormat::D32:
+        dref_d32_bindings.fetch_add(1, std::memory_order_relaxed);
+        break;
+    case XclipseDrefFormat::Other:
+        break;
+    }
+    if (dynamic_unknown) {
+        dref_dynamic_unknown_bindings.fetch_add(1, std::memory_order_relaxed);
+    }
     if (compare_dropped) {
         dref_compare_drops.fetch_add(1, std::memory_order_relaxed);
-        if (!software_emulated) {
+        if (path == XclipseDrefPath::Software) {
+            dref_emulated_drops.fetch_add(1, std::memory_order_relaxed);
+        } else {
             dref_unemulated_drops.fetch_add(1, std::memory_order_relaxed);
         }
     }
@@ -562,8 +586,14 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .dref_shader_bindings = dref_shader_bindings.load(std::memory_order_relaxed),
         .dref_native_bindings = dref_native_bindings.load(std::memory_order_relaxed),
         .dref_software_bindings = dref_software_bindings.load(std::memory_order_relaxed),
+        .dref_unresolved_bindings = dref_unresolved_bindings.load(std::memory_order_relaxed),
         .dref_compare_drops = dref_compare_drops.load(std::memory_order_relaxed),
+        .dref_emulated_drops = dref_emulated_drops.load(std::memory_order_relaxed),
         .dref_unemulated_drops = dref_unemulated_drops.load(std::memory_order_relaxed),
+        .dref_r32_bindings = dref_r32_bindings.load(std::memory_order_relaxed),
+        .dref_d32_bindings = dref_d32_bindings.load(std::memory_order_relaxed),
+        .dref_dynamic_unknown_bindings =
+            dref_dynamic_unknown_bindings.load(std::memory_order_relaxed),
         .bcn_gpu_decode_dispatches =
             bcn_gpu_decode_dispatches.load(std::memory_order_relaxed),
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
