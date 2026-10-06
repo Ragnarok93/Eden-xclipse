@@ -929,18 +929,9 @@ void RasterizerVulkan::TickFrame() {
                      staging_after.largest_active_upload_bucket_bytes);
         }
     }
-    const bool severe_memory_pressure =
-        pressure_update.sampled &&
-        (pressure_update.pressure == MemoryPressureClass::High ||
-         pressure_update.pressure == MemoryPressureClass::Critical);
-    if (severe_memory_pressure &&
-        (pressure_update.changed ||
-         xclipse_runtime_frame_counter - xclipse_last_host_memory_reclaim_frame >= 300)) {
-        const bool reclaimed = gpu.TrimMemoryForPressure();
-        xclipse_last_host_memory_reclaim_frame = xclipse_runtime_frame_counter;
-        LOG_INFO(Render_Vulkan, "XCLIPSE HOST MEMORY RECLAIM pressure={} success={}",
-                 MemoryPressureClassName(pressure_update.pressure), reclaimed);
-    }
+    // Reclaim renderer-owned caches above, but leave guest working-set paging to Android.
+    // MADV_PAGEOUT over the entire live guest backing can evict hot pages on each
+    // High/Critical transition and introduce swap faults in subsequent frames.
 
     if (pressure_update.sampled && pressure_update.changed) {
         const auto& sample = pressure_update.sample;
@@ -980,7 +971,8 @@ void RasterizerVulkan::TickFrame() {
         const s32 gtt_pct =
             sample.gtt_used_percent ? static_cast<s32>(*sample.gtt_used_percent) : -1;
         LOG_INFO(Render_Vulkan,
-                 "XCLIPSE MEMORY PRESSURE state={} budget_pct={} vulkan_usage_mib={} "
+                 "XCLIPSE MEMORY PRESSURE guest_pageout=disabled state={} budget_pct={} "
+                 "vulkan_usage_mib={} "
                  "vulkan_budget_mib={} ram_available_pct={} ram_available_kib={} "
                  "swap_total_kib={} swap_free_kib={} swap_used_kib={} rss_mib={} rss_pct={} "
                  "process_swap_mib={} "
@@ -997,6 +989,20 @@ void RasterizerVulkan::TickFrame() {
 
     if (telemetry.Enabled() && xclipse_runtime_frame_counter % 300 == 0) {
         const auto snapshot = telemetry.Snapshot();
+        const double compile_avg_ms = snapshot.pipeline_creates != 0
+            ? static_cast<double>(snapshot.pipeline_compile_ns_total) /
+                  static_cast<double>(snapshot.pipeline_creates) / 1'000'000.0
+            : 0.0;
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PIPELINE RUNTIME frame={} creates={} graphics={} compute={} "
+                 "runtime_map_hits={} runtime_map_misses={} failures={} policy_violations={} "
+                 "compile_avg_ms={:.3f} compile_max_ms={:.3f}",
+                 xclipse_runtime_frame_counter, snapshot.pipeline_creates,
+                 snapshot.graphics_pipeline_creates, snapshot.compute_pipeline_creates,
+                 snapshot.pipeline_cache_hits, snapshot.pipeline_cache_misses,
+                 snapshot.pipeline_failures, snapshot.pipeline_policy_violations,
+                 compile_avg_ms,
+                 static_cast<double>(snapshot.pipeline_compile_ns_max) / 1'000'000.0);
         const auto& pressure = xclipse_memory_pressure.LastSnapshot();
         const auto& sample = pressure.sample;
         const s32 budget_pct = sample.memory_budget_used_percent
@@ -2191,3 +2197,4 @@ void RasterizerVulkan::ReleaseChannel(s32 channel_id) {
 }
 
 } // namespace Vulkan
+

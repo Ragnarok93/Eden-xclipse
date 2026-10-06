@@ -234,7 +234,7 @@ private:
 
     u32 draw_counter = 0;
     u64 xclipse_runtime_frame_counter{};
-    u64 xclipse_last_host_memory_reclaim_frame{};
 };
 
 } // namespace Vulkan
+

@@ -1260,10 +1260,11 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
         std::vector<char> cache_data(cache_size);
         file.read(cache_data.data(), cache_size);
 
+        auto cache = create_pipeline_cache(cache_size, cache_data.data());
         LOG_INFO(Render_Vulkan,
-                 "Loaded Vulkan driver pipeline cache: ", Common::FS::PathToUTF8String(filename));
-
-        return create_pipeline_cache(cache_size, cache_data.data());
+                 "Loaded Vulkan driver pipeline cache: {} bytes={} policy={:016x}",
+                 Common::FS::PathToUTF8String(filename), cache_size, expected_policy_hash);
+        return cache;
 
     } catch (const std::ios_base::failure& e) {
         LOG_ERROR(Common_Filesystem, "{}", e.what());
@@ -1277,3 +1278,4 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
 }
 
 } // namespace Vulkan
+
