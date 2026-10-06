@@ -133,10 +133,12 @@ jobs:
           enable_testing()
           add_executable(policy_tests
             "${EDEN_SOURCE_DIR}/src/video_core/vulkan_common/vulkan_device_profile.cpp"
+            "${EDEN_SOURCE_DIR}/src/video_core/vulkan_common/xclipse_telemetry.cpp"
             "${EDEN_SOURCE_DIR}/src/video_core/renderer_vulkan/vk_pipeline_policy.cpp"
             "${EDEN_SOURCE_DIR}/src/tests/video_core/vulkan_device_profile.cpp"
             "${EDEN_SOURCE_DIR}/src/tests/video_core/vulkan_feature_policy.cpp"
-            "${EDEN_SOURCE_DIR}/src/tests/video_core/xclipse_pipeline_policy.cpp")
+            "${EDEN_SOURCE_DIR}/src/tests/video_core/xclipse_pipeline_policy.cpp"
+            "${EDEN_SOURCE_DIR}/src/tests/video_core/xclipse_telemetry.cpp")
           target_compile_features(policy_tests PRIVATE cxx_std_20)
           target_include_directories(policy_tests PRIVATE "${EDEN_SOURCE_DIR}/src" ${Vulkan_INCLUDE_DIRS})
           target_link_libraries(policy_tests PRIVATE Catch2::Catch2WithMain)
