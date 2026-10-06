@@ -54,6 +54,25 @@ TEST_CASE("VulkanDeviceProfile: transfer reset preserves independent depth evide
     REQUIRE(probes.buffer_transfer == CapabilityState::Unsupported);
 }
 
+TEST_CASE("VulkanDeviceProfile: native BC usage only requires requested transfers",
+          "[video_core][xclipse][bcn]") {
+    using Vulkan::CapabilityState;
+    Vulkan::FormatCapabilitySnapshot sampled_only{};
+    sampled_only.image_create = CapabilityState::Validated;
+    sampled_only.sampled = CapabilityState::Validated;
+    sampled_only.linear_filter = CapabilityState::Validated;
+    sampled_only.transfer_dst = CapabilityState::Validated;
+    sampled_only.transfer_src = CapabilityState::Unsupported;
+
+    REQUIRE(Vulkan::SupportsAdvertisedBcnUsage(sampled_only, false, true));
+    REQUIRE(Vulkan::SupportsValidatedBcnUsage(sampled_only, false, true));
+    REQUIRE_FALSE(Vulkan::SupportsAdvertisedBcnUsage(sampled_only, true, true));
+    REQUIRE_FALSE(Vulkan::SupportsValidatedBcnUsage(sampled_only, true, true));
+
+    sampled_only.transfer_dst = CapabilityState::Unsupported;
+    REQUIRE_FALSE(Vulkan::SupportsValidatedBcnUsage(sampled_only, false, true));
+}
+
 TEST_CASE("VulkanDeviceProfile: Xclipse detection requires device-name evidence", "[video_core]") {
     Vulkan::VulkanDeviceIdentity xclipse{};
     xclipse.device_name = "Samsung Xclipse 940";

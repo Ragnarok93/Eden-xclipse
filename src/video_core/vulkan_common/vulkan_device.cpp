@@ -215,7 +215,7 @@ FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties pro
     const bool transfer_src = (flags & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) != 0;
     const bool transfer_dst = (flags & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) != 0;
     return {
-        .image_create = Advertised(sampled && transfer_src && transfer_dst),
+        .image_create = Advertised(sampled && transfer_dst),
         .sampled = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT),
         .linear_filter = has(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
         .storage_image = has(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT),
@@ -227,33 +227,21 @@ FormatCapabilitySnapshot CaptureOptimalFormatCapabilities(VkFormatProperties pro
 }
 
 bool SupportsAdvertisedNativeBcnPath(const FormatCapabilitySnapshot& format) {
-    return format.image_create != CapabilityState::Unsupported &&
-           format.sampled != CapabilityState::Unsupported &&
-           format.linear_filter != CapabilityState::Unsupported &&
-           format.transfer_src != CapabilityState::Unsupported &&
-           format.transfer_dst != CapabilityState::Unsupported;
-}
-
-bool SupportsValidatedNativeBcnPath(const FormatCapabilitySnapshot& format) {
-    return format.image_create == CapabilityState::Validated &&
-           format.sampled == CapabilityState::Validated &&
-           format.linear_filter == CapabilityState::Validated &&
-           format.transfer_src == CapabilityState::Validated &&
-           format.transfer_dst == CapabilityState::Validated;
+    return SupportsAdvertisedBcnUsage(format);
 }
 
 bool HasValidatedImageCreation(const FormatCapabilitySnapshot& format) {
     return format.image_create == CapabilityState::Validated &&
-           SupportsAdvertisedNativeBcnPath(format);
+           SupportsAdvertisedBcnUsage(format, false, true);
 }
 
-bool SupportsXclipseRuntimeNativeBcnPath(VkFormat,
-                                         const FormatCapabilitySnapshot& capability) {
+bool SupportsXclipseRuntimeNativeBcnPath(VkFormat, const FormatCapabilitySnapshot& capability,
+                                         bool require_transfer_src = true,
+                                         bool require_transfer_dst = true) {
     // Image creation alone is not enough evidence for the native compressed-texture path.
-    // Sampling, linear filtering, and transfer behavior must all be execution-validated first.
-    // Until those probes exist, preserve Eden's conversion path instead of trusting Samsung's
-    // advertised BC operation bits.
-    return SupportsValidatedNativeBcnPath(capability);
+    // Sampling, linear filtering, and each requested transfer operation must be validated before
+    // selecting the native path. An operation that the image never requests must not veto it.
+    return SupportsValidatedBcnUsage(capability, require_transfer_src, require_transfer_dst);
 }
 
 ::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
@@ -666,11 +654,8 @@ void Device::RunXclipseBcnNativeValidationProbes() {
     constexpr u64 ProbeTimeoutNs = 250'000'000ULL;
 
     const auto advertised_for_probe = [](const FormatCapabilitySnapshot& format) {
-        return format.image_create == CapabilityState::Validated &&
-               format.sampled != CapabilityState::Unsupported &&
-               format.linear_filter != CapabilityState::Unsupported &&
-               format.transfer_src != CapabilityState::Unsupported &&
-               format.transfer_dst != CapabilityState::Unsupported;
+        return SupportsAdvertisedBcnUsage(format, false, true) &&
+               format.image_create == CapabilityState::Validated;
     };
     if (std::ranges::none_of(
             std::span{caps.bcn}.first(BasicBcnFormatCount), advertised_for_probe)) {
@@ -936,7 +921,9 @@ void Device::RunXclipseBcnNativeValidationProbes() {
         std::copy_n(block.begin(), block_bytes, mapped);
 
         ImageResource image_resource{dld, raw_device};
-        const VkImageCreateInfo image_ci{
+        bool validate_transfer_src =
+            format_caps.transfer_src != CapabilityState::Unsupported;
+        VkImageCreateInfo image_ci{
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
@@ -947,8 +934,10 @@ void Device::RunXclipseBcnNativeValidationProbes() {
             .arrayLayers = 1,
             .samples = VK_SAMPLE_COUNT_1_BIT,
             .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            // Upload and sampling are the baseline native texture operations. Transfer-source
+            // readback is added only when the format advertises it and is validated separately.
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                     (validate_transfer_src ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : VkImageUsageFlags{}),
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = nullptr,
@@ -956,7 +945,22 @@ void Device::RunXclipseBcnNativeValidationProbes() {
         };
 
         try {
-            vk::Check(dld.vkCreateImage(raw_device, &image_ci, nullptr, &image_resource.image));
+            VkResult image_create_result =
+                dld.vkCreateImage(raw_device, &image_ci, nullptr, &image_resource.image);
+            if (image_create_result != VK_SUCCESS && validate_transfer_src) {
+                // A driver may advertise the optional transfer-source bit while rejecting an
+                // image create that requests it. Retry the independent sampled/upload path so
+                // that this irrelevant operation cannot poison native sampling selection.
+                validate_transfer_src = false;
+                if (image_resource.image) {
+                    dld.vkDestroyImage(raw_device, image_resource.image, nullptr);
+                    image_resource.image = VK_NULL_HANDLE;
+                }
+                image_ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                image_create_result =
+                    dld.vkCreateImage(raw_device, &image_ci, nullptr, &image_resource.image);
+            }
+            vk::Check(image_create_result);
             const VkMemoryRequirements image_requirements =
                 logical.GetImageMemoryRequirements(image_resource.image);
             const auto image_memory_type =
@@ -1106,25 +1110,27 @@ void Device::RunXclipseBcnNativeValidationProbes() {
                                               *pipeline_layout, 0, descriptor_set, {});
             command_buffer.Dispatch(1, 1, 1);
 
-            const VkImageMemoryBarrier to_transfer_src{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .pNext = nullptr,
-                .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
-                .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-                .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = image_resource.image,
-                .subresourceRange = range,
-            };
-            command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                                           to_transfer_src);
-            copy.bufferOffset = TransferReadbackOffset;
-            command_buffer.CopyImageToBuffer(image_resource.image,
-                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                             probe_buffer.buffer, copy);
+            if (validate_transfer_src) {
+                const VkImageMemoryBarrier to_transfer_src{
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .pNext = nullptr,
+                    .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                    .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                    .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = image_resource.image,
+                    .subresourceRange = range,
+                };
+                command_buffer.PipelineBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                               VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                               to_transfer_src);
+                copy.bufferOffset = TransferReadbackOffset;
+                command_buffer.CopyImageToBuffer(image_resource.image,
+                                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                 probe_buffer.buffer, copy);
+            }
 
             const VkMemoryBarrier host_read_barrier{
                 .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -1172,20 +1178,23 @@ void Device::RunXclipseBcnNativeValidationProbes() {
                 sample[0] == 255U && sample[1] == 0U &&
                 sample[2] == 0U && sample[3] == 255U;
             const bool transfer_ok =
+                !validate_transfer_src ||
                 std::equal(block.begin(), block.begin() + block_bytes,
                            mapped + TransferReadbackOffset);
-            const bool valid = sample_ok && transfer_ok;
-            if (valid) {
+            if (sample_ok) {
                 format_caps.image_create = CapabilityState::Validated;
                 format_caps.sampled = CapabilityState::Validated;
                 format_caps.linear_filter = CapabilityState::Validated;
-                format_caps.transfer_src = CapabilityState::Validated;
                 format_caps.transfer_dst = CapabilityState::Validated;
+                if (validate_transfer_src && transfer_ok) {
+                    format_caps.transfer_src = CapabilityState::Validated;
+                }
             }
             LOG_INFO(Render_Vulkan,
-                     "XCLIPSE PROBE BC format={} native_sample_transfer={} "
-                     "sample_ok={} transfer_ok={}",
-                     format, valid ? "validated" : "failed", sample_ok, transfer_ok);
+                     "XCLIPSE PROBE BC format={} native_sample_usage={} "
+                     "sample_ok={} transfer_src_requested={} transfer_ok={}",
+                     format, sample_ok ? "validated" : "failed", sample_ok,
+                     validate_transfer_src, transfer_ok);
         } catch (const vk::Exception& exception) {
             LOG_WARNING(Render_Vulkan,
                         "XCLIPSE PROBE BC format={} exception: {}",
@@ -2346,8 +2355,8 @@ void Device::RunXclipseValidationProbes() {
             .arrayLayers = 1,
             .samples = VK_SAMPLE_COUNT_1_BIT,
             .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            // Validate the image-creation baseline independently from optional readback.
+            .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = nullptr,
@@ -3494,7 +3503,8 @@ bool Device::IsFormatSupported(VkFormat wanted_format, VkFormatFeatureFlags want
     return (supported_usage & wanted_usage) == wanted_usage;
 }
 
-bool Device::IsOptimalBcnSupported(VkFormat format) const {
+bool Device::IsOptimalBcnSupported(VkFormat format, bool require_transfer_src,
+                                   bool require_transfer_dst) const {
     if (!device_policy.xclipse.detected) {
         return features.features.textureCompressionBC;
     }
@@ -3504,7 +3514,9 @@ bool Device::IsOptimalBcnSupported(VkFormat format) const {
         return false;
     }
     const std::size_t index = static_cast<std::size_t>(std::distance(BCN_FORMATS.begin(), it));
-    return SupportsXclipseRuntimeNativeBcnPath(format, device_policy.capabilities.bcn[index]);
+    return SupportsXclipseRuntimeNativeBcnPath(
+        format, device_policy.capabilities.bcn[index], require_transfer_src,
+        require_transfer_dst);
 }
 
 std::string Device::GetDriverName() const {

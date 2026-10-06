@@ -148,10 +148,32 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     }
 }
 
+[[nodiscard]] bool RequiresBcnTransferSource(const Device& device,
+                                             const ImageInfo& info) noexcept {
+    if (!device.IsXclipse()) {
+        return true;
+    }
+    if (!VideoCore::Surface::IsPixelFormatBCn(info.format)) {
+        return true;
+    }
+    // Native BC images are immutable sampled resources in the common TIC path. Keep source
+    // support for linear/sparse/MSAA images and whenever active resolution scaling or an explicit
+    // download already makes a readback/copy part of the image's runtime use.
+    if (info.type != ImageType::e2D || info.num_samples != 1 || info.is_sparse ||
+        info.forced_flushed || info.dma_downloaded) {
+        return true;
+    }
+    return Settings::values.resolution_info.active &&
+           (info.rescaleable || info.downscaleable);
+}
+
 [[nodiscard]] VkImageUsageFlags ImageUsageFlags(const MaxwellToVK::FormatInfo& info,
-                                                PixelFormat format, bool allow_storage = true) {
-    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                              VK_IMAGE_USAGE_SAMPLED_BIT;
+                                                PixelFormat format, bool allow_storage = true,
+                                                bool require_transfer_src = true) {
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (require_transfer_src) {
+        usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
     if (info.attachable) {
         switch (VideoCore::Surface::GetFormatType(format)) {
         case VideoCore::Surface::SurfaceType::ColorTexture:
@@ -171,6 +193,15 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
         usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     return usage;
+}
+
+[[nodiscard]] bool IsNativeBcnVkFormat(VkFormat format) noexcept {
+    for (size_t index = 0; index < VideoCore::Surface::MaxPixelFormat; ++index) {
+        if (MaxwellToVK::NativeBcnFormat(static_cast<PixelFormat>(index)) == format) {
+            return true;
+        }
+    }
+    return false;
 }
 
 [[nodiscard]] bool WillUseAcceleratedAstcDecode(const Device& device, const ImageInfo& info) {
@@ -252,8 +283,9 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
 }
 
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
+    const bool require_transfer_src = RequiresBcnTransferSource(device, info);
     if (device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
-        MaxwellToVK::IsBcnNative(device, info.format)) {
+        MaxwellToVK::IsBcnNative(device, info.format, require_transfer_src, true)) {
         return false;
     }
 
@@ -360,8 +392,10 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
 
 [[nodiscard]] VkImageCreateInfo MakeImageCreateInfo(const Device& device, const ImageInfo& info,
                                                     std::optional<VkFormat> format_override = {}) {
+    const bool require_transfer_src = RequiresBcnTransferSource(device, info);
     auto format_info =
-        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, info.format);
+        MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, false, info.format,
+                                   require_transfer_src, true);
     if (format_override) {
         format_info.format = *format_override;
         format_info.attachable = false;
@@ -393,7 +427,7 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
         .arrayLayers = static_cast<u32>(info.resources.layers),
         .samples = ConvertSampleCount(info.num_samples),
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = ImageUsageFlags(format_info, info.format, allow_storage),
+        .usage = ImageUsageFlags(format_info, info.format, allow_storage, require_transfer_src),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
@@ -420,6 +454,20 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
         return vk::Image{};
     }
     VkImageCreateInfo image_ci = MakeImageCreateInfo(device, info, format_override);
+    boost::container::small_vector<VkFormat, 16> filtered_view_formats;
+    if (device.IsXclipse() && IsPixelFormatBCn(info.format)) {
+        const bool base_is_native_bcn =
+            IsNativeBcnVkFormat(image_ci.format) &&
+            image_ci.format == MaxwellToVK::NativeBcnFormat(info.format);
+        filtered_view_formats.reserve(view_formats.size());
+        for (const VkFormat view_format : view_formats) {
+            if (IsNativeBcnVkFormat(view_format) == base_is_native_bcn) {
+                filtered_view_formats.push_back(view_format);
+            }
+        }
+        view_formats = std::span<const VkFormat>{filtered_view_formats.data(),
+                                                 filtered_view_formats.size()};
+    }
     const VkImageFormatListCreateInfo image_format_list = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
         .pNext = nullptr,
@@ -1223,9 +1271,21 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
         }
         for (size_t index_b = 0; index_b < VideoCore::Surface::MaxPixelFormat; index_b++) {
             const auto view_format = static_cast<PixelFormat>(index_b);
+            const bool usage_aware_bcn_view = device.IsXclipse() && IsPixelFormatBCn(view_format);
             if (VideoCore::Surface::IsViewCompatible(image_format, view_format, false, true)) {
+                // Do not add an emulated BC view format to a mutable image-format list. A native
+                // sampled-only BC image may intentionally omit transfer-source usage, while a
+                // converted BC image is backed by R8/RG8/RGBA and cannot legally expose a BC view.
+                if (usage_aware_bcn_view &&
+                    !MaxwellToVK::IsBcnNative(device, view_format, false, true)) {
+                    continue;
+                }
                 const auto view_info =
-                    MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, view_format);
+                    MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, view_format,
+                                               usage_aware_bcn_view ? false : true, true);
+                if (usage_aware_bcn_view && view_info.host_substitution) {
+                    continue;
+                }
                 view_formats[index_a].push_back(view_info.format);
             }
         }
@@ -2318,8 +2378,9 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
         flags |= VideoCommon::ImageFlagBits::CostlyLoad;
     }
     if (IsPixelFormatBCn(info.format)) {
+        const bool require_transfer_src = RequiresBcnTransferSource(runtime->device, info);
         const auto telemetry_format = BcnTelemetryFormat(info.format);
-        if (MaxwellToVK::IsBcnNative(runtime->device, info.format)) {
+        if (MaxwellToVK::IsBcnNative(runtime->device, info.format, require_transfer_src, true)) {
             runtime->device.GetXclipseTelemetry().RecordBcnNativePath(telemetry_format);
         } else {
             if ((runtime->BcnDecoderPassFor(info.format) ||
@@ -3041,7 +3102,10 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
             SanitizeDepthStencilSwizzle(swizzle, device->SupportsDepthStencilSwizzleOne());
         }
     }
-    auto format_info = MaxwellToVK::SurfaceFormat(*device, FormatType::Optimal, true, format);
+    const bool require_transfer_src =
+        (image.UsageFlags() & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    auto format_info = MaxwellToVK::SurfaceFormat(*device, FormatType::Optimal, true, format,
+                                                  require_transfer_src, true);
     if (device->ApiVersion() >= VK_API_VERSION_1_3) {
         const VkFormatProperties3 properties3 =
             device->GetPhysical().GetFormatProperties3(format_info.format);
@@ -3070,7 +3134,8 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
     };
     has_identity_swizzle = swizzle[0] == SwizzleSource::R && swizzle[1] == SwizzleSource::G &&
                            swizzle[2] == SwizzleSource::B && swizzle[3] == SwizzleSource::A;
-    const VkImageUsageFlags requested_view_usage = ImageUsageFlags(format_info, format);
+    const VkImageUsageFlags requested_view_usage =
+        ImageUsageFlags(format_info, format, true, require_transfer_src);
     const VkImageUsageFlags image_usage = image.UsageFlags();
     const VkImageUsageFlags clamped_view_usage = requested_view_usage & image_usage;
     const VkImageViewUsageCreateInfo image_view_usage{

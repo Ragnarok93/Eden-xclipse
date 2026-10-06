@@ -58,6 +58,8 @@ enum class BcnFormat : std::uint8_t {
 constexpr std::size_t BcnFormatCount = static_cast<std::size_t>(BcnFormat::Count);
 
 struct FormatCapabilitySnapshot {
+    // Image creation is validated for the sampled/upload usage baseline. Optional operations
+    // such as transfer-source readback are tracked independently below.
     CapabilityState image_create{CapabilityState::Unsupported};
     CapabilityState sampled{CapabilityState::Unsupported};
     CapabilityState linear_filter{CapabilityState::Unsupported};
@@ -67,6 +69,26 @@ struct FormatCapabilitySnapshot {
     CapabilityState blit_src{CapabilityState::Unsupported};
     CapabilityState blit_dst{CapabilityState::Unsupported};
 };
+
+[[nodiscard]] constexpr bool SupportsAdvertisedBcnUsage(
+    const FormatCapabilitySnapshot& format, bool require_transfer_src = true,
+    bool require_transfer_dst = true) noexcept {
+    return format.image_create != CapabilityState::Unsupported &&
+           format.sampled != CapabilityState::Unsupported &&
+           format.linear_filter != CapabilityState::Unsupported &&
+           (!require_transfer_src || format.transfer_src != CapabilityState::Unsupported) &&
+           (!require_transfer_dst || format.transfer_dst != CapabilityState::Unsupported);
+}
+
+[[nodiscard]] constexpr bool SupportsValidatedBcnUsage(
+    const FormatCapabilitySnapshot& format, bool require_transfer_src = true,
+    bool require_transfer_dst = true) noexcept {
+    return format.image_create == CapabilityState::Validated &&
+           format.sampled == CapabilityState::Validated &&
+           format.linear_filter == CapabilityState::Validated &&
+           (!require_transfer_src || format.transfer_src == CapabilityState::Validated) &&
+           (!require_transfer_dst || format.transfer_dst == CapabilityState::Validated);
+}
 
 struct VulkanDeviceIdentity {
     std::string device_name;

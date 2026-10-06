@@ -442,9 +442,10 @@ FN_MAX_LIMIT_LIST
         return is_optimal_astc_supported;
     }
 
-    /// Returns true if the host can use the requested BC format on Eden's native sampled path.
+    /// Returns true if the host can use the requested BC format for the requested native usage.
     /// Xclipse requires operation-level validation; other devices preserve the upstream feature gate.
-    bool IsOptimalBcnSupported(VkFormat format) const;
+    bool IsOptimalBcnSupported(VkFormat format, bool require_transfer_src = true,
+                               bool require_transfer_dst = true) const;
 
     /// Coarse compatibility query retained for non-format-specific callers.
     bool IsOptimalBcnSupported() const {
