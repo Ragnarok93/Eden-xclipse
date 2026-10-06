@@ -308,6 +308,14 @@ public:
         return device_policy.xclipse.detected && device_policy.use_xclipse_bptc_gpu_decode;
     }
 
+    bool UseXclipseBc6GpuDecode() const noexcept {
+        return UseXclipseBptcGpuDecode() && device_policy.xclipse.bc6_gpu_decode_validated;
+    }
+
+    bool UseXclipseBc7GpuDecode() const noexcept {
+        return UseXclipseBptcGpuDecode() && device_policy.xclipse.bc7_gpu_decode_validated;
+    }
+
     bool UseXclipseDescriptorBuffer() const noexcept {
         return device_policy.xclipse.detected &&
                device_policy.xclipse.descriptor_buffer_validated &&
