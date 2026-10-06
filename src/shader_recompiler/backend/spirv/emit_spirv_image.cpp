@@ -666,17 +666,19 @@ Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, const IR::Va
             const ImageOperands operands(ctx, info.has_bias != 0, false,
                                          info.has_lod_clamp != 0, bias_lc, offset);
             const Id sampled{Emit(&EmitContext::OpImageSparseSampleImplicitLod,
-                                  &EmitContext::OpImageSampleImplicitLod, ctx, inst, ctx.F32[1],
+                                  &EmitContext::OpImageSampleImplicitLod, ctx, inst, ctx.F32[4],
                                   Texture(ctx, info, index), coords, operands.MaskOptional(),
                                   operands.Span())};
-            return EmitDrefCompare(ctx, sampled, dref, info);
+            return EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 0u), dref,
+                                   info);
         }
         const Id lod{ctx.Const(0.0f)};
         const ImageOperands operands(ctx, false, true, false, lod, offset);
         const Id sampled{Emit(&EmitContext::OpImageSparseSampleExplicitLod,
-                              &EmitContext::OpImageSampleExplicitLod, ctx, inst, ctx.F32[1],
+                              &EmitContext::OpImageSampleExplicitLod, ctx, inst, ctx.F32[4],
                               Texture(ctx, info, index), coords, operands.Mask(), operands.Span())};
-        return EmitDrefCompare(ctx, sampled, dref, info);
+        return EmitDrefCompare(ctx, ctx.OpCompositeExtract(ctx.F32[1], sampled, 0u), dref,
+                               info);
     }
     if (ctx.stage == Stage::Fragment) {
         const ImageOperands operands(ctx, info.has_bias != 0, false, info.has_lod_clamp != 0,
