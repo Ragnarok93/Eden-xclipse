@@ -294,6 +294,10 @@ public:
         return enabled.load(std::memory_order_relaxed);
     }
 
+    [[nodiscard]] u64 FrameCount() const noexcept {
+        return frame_count.load(std::memory_order_relaxed);
+    }
+
     void RecordRuntimePipelineMapLookup(bool hit) noexcept;
     void RecordPipelineCreate(bool graphics, u64 create_ns, bool success) noexcept;
     void RecordPipelineBuild(u64 build_ns) noexcept;
