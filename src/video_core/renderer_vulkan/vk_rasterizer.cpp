@@ -1569,22 +1569,31 @@ void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
         const bool effective_enable =
             enabled_lut[POLYGON_OFFSET_ENABLE_LUT[topology_index]] != 0;
         const GraphicsPipeline* const pipeline = pipeline_cache.CurrentGraphicsPipeline();
+        const auto guest_depth_format =
+            VideoCore::Surface::PixelFormatFromDepthFormat(regs.zeta.format);
+        const VkFormat host_depth_format =
+            MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, guest_depth_format).format;
+        const bool depth_bias_control = device.IsExtDepthBiasControlSupported();
         LOG_INFO(Render_Vulkan,
                  "XCLIPSE DEPTH BIAS [diag=depth-bias] frame={} pipeline={:016x} "
                  "enabled={} point={} line={} fill={} topology={} "
                  "guest_constant={} host_constant={} slope={} clamp={} zeta_fmt={} "
-                 "depth_compare={} dref_pipeline={} values_dynamic=1 enable_dynamic={} "
-                 "extended_dynamic_state={} depth_bias_control={}",
+                 "host_depth_fmt={} depth_compare={} dref_pipeline={} values_dynamic=1 "
+                 "enable_dynamic_cap={} enable_dynamic_used={} extended_dynamic_state={} "
+                 "depth_bias_control_cap={} depth_bias_control_used={} "
+                 "depth_bias_exact_cap={} depth_bias_exact_used=0",
                  device.GetXclipseTelemetry().FrameCount(),
                  pipeline ? pipeline->DiagnosticHash() : 0, effective_enable,
                  regs.polygon_offset_point_enable != 0, regs.polygon_offset_line_enable != 0,
                  regs.polygon_offset_fill_enable != 0, topology_index, regs.depth_bias / 2.0f,
                  units, regs.slope_scale_depth_bias, regs.depth_bias_clamp,
-                 static_cast<u32>(regs.zeta.format), static_cast<u32>(regs.depth_test_func),
+                 static_cast<u32>(regs.zeta.format), static_cast<u32>(host_depth_format),
+                 static_cast<u32>(regs.depth_test_func),
                  pipeline ? pipeline->HasDrefDescriptors() : false,
                  device.IsExtExtendedDynamicState2Supported(),
+                 pipeline ? pipeline->UsesExtendedDynamicState2() : false,
                  pipeline ? pipeline->UsesExtendedDynamicState() : false,
-                 device.IsExtDepthBiasControlSupported());
+                 depth_bias_control, depth_bias_control, device.HasExactDepthBiasControl());
     }
 
     scheduler.Record([constant = units, clamp = regs.depth_bias_clamp,
