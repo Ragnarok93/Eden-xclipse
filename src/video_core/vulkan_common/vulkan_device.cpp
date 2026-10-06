@@ -2839,9 +2839,12 @@ void Device::LogXclipseTelemetry() const {
              t.descriptor_stalls);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE DREF shader_bindings={} native_bindings={} software_bindings={} "
-             "compare_drops={} unemulated_drops={}",
+             "unresolved_bindings={} compare_drops={} emulated_drops={} unemulated_drops={} "
+             "r32_bindings={} d32_bindings={} dynamic_unknown_bindings={}",
              t.dref_shader_bindings, t.dref_native_bindings, t.dref_software_bindings,
-             t.dref_compare_drops, t.dref_unemulated_drops);
+             t.dref_unresolved_bindings, t.dref_compare_drops, t.dref_emulated_drops,
+             t.dref_unemulated_drops, t.dref_r32_bindings, t.dref_d32_bindings,
+             t.dref_dynamic_unknown_bindings);
     LOG_INFO(Render_Vulkan,
              "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} cpu_fallbacks={} "
              "bptc_bc6_dispatches={} bptc_bc7_dispatches={} bptc_compressed_bytes={}",
