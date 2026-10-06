@@ -168,7 +168,8 @@ void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabl
 
 void UpdateXclipseBptcDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
     policy.use_xclipse_bptc_gpu_decode =
-        policy.xclipse.detected && setting_enabled && policy.xclipse.bptc_gpu_decode_capable;
+        policy.xclipse.detected && setting_enabled && policy.xclipse.bptc_gpu_decode_capable &&
+        (policy.xclipse.bc6_gpu_decode_validated || policy.xclipse.bc7_gpu_decode_validated);
 }
 
 void UpdateXclipseSubgroupSizePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
@@ -266,6 +267,8 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.synchronization2_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
     hash.AddIntegral(xclipse.bptc_gpu_decode_capable);
+    hash.AddIntegral(xclipse.bc6_gpu_decode_validated);
+    hash.AddIntegral(xclipse.bc7_gpu_decode_validated);
 
     const auto& probes = policy.optimization_probes;
     hash.AddIntegral(probes.timestamp_queries);
