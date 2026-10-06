@@ -12,6 +12,8 @@
 #include <span>
 #include <string_view>
 
+#include <bc_decoder.h>
+
 #include "common/common_types.h"
 #include "video_core/host_shaders/bcn_decoder_r8_comp_spv.h"
 #include "video_core/host_shaders/bcn_decoder_r8_snorm_comp_spv.h"
@@ -727,21 +729,25 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     if (bytes.size() < required) {
         return false;
     }
-    for (u32 y = 0; y < Height; ++y) {
-        for (u32 x = 0; x < Width; ++x) {
-            const bool right = x >= 4;
-            const s32 expected_r = right ? probe.right_r : probe.left_r;
-            const s32 expected_g = right ? probe.right_g : probe.left_g;
-            const size_t offset = (static_cast<size_t>(y) * Width + x) * probe.bytes_per_pixel;
-            if (bytes[offset] != EncodeProbeChannel(expected_r)) {
-                return false;
-            }
-            if (probe.is_bc5 && bytes[offset + 1] != EncodeProbeChannel(expected_g)) {
-                return false;
-            }
-        }
+
+    std::array<u8, 16> left_block{};
+    std::array<u8, 16> right_block{};
+    WriteBc4ProbeBlock(left_block.data(), probe.left_r);
+    WriteBc4ProbeBlock(right_block.data(), probe.right_r);
+    if (probe.is_bc5) {
+        WriteBc4ProbeBlock(left_block.data() + 8, probe.left_g);
+        WriteBc4ProbeBlock(right_block.data() + 8, probe.right_g);
     }
-    return true;
+
+    std::array<u8, Width * Height * 2> expected{};
+    if (probe.is_bc5) {
+        bcn::DecodeBc5(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
+        bcn::DecodeBc5(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
+    } else {
+        bcn::DecodeBc4(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
+        bcn::DecodeBc4(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
+    }
+    return std::memcmp(bytes.data(), expected.data(), required) == 0;
 }
 
 [[nodiscard]] bool RunRgtcDecodeCase(const Device& device, const RgtcProbeCase& probe) {
