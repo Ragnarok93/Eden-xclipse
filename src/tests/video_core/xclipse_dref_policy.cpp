@@ -7,7 +7,7 @@
 
 #include "shader_recompiler/runtime_info.h"
 #include "shader_recompiler/shader_info.h"
-#include "video_core/renderer_vulkan/pipeline_helper.h"
+#include "video_core/renderer_vulkan/vk_rescaling_push_constant.h"
 
 TEST_CASE("Xclipse DREF execution mode selection", "[video_core][xclipse][dref]") {
     using Shader::DrefExecutionMode;

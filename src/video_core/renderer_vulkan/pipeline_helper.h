@@ -15,6 +15,7 @@
 #include "common/logging.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/shader_info.h"
+#include "video_core/renderer_vulkan/vk_rescaling_push_constant.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
 #include "video_core/surface.h"
@@ -23,10 +24,6 @@
 #include "video_core/vulkan_common/vulkan_feature_policy.h"
 
 namespace Vulkan {
-
-using Shader::Backend::SPIRV::DREF_COMPARE_OPS_PER_WORD;
-using Shader::Backend::SPIRV::NUM_DREF_COMPARE_OP_WORDS;
-using Shader::Backend::SPIRV::NUM_TEXTURE_AND_IMAGE_SCALING_WORDS;
 
 [[nodiscard]] inline std::optional<PixelFormat> PixelFormatFromImageFormat(
     Shader::ImageFormat format) {
@@ -297,58 +294,6 @@ private:
     u32 binding{};
     u32 num_descriptors{};
     size_t offset{};
-};
-
-class RescalingPushConstant {
-public:
-    explicit RescalingPushConstant() noexcept {}
-
-    void PushTexture(bool is_rescaled) noexcept {
-        *texture_ptr |= is_rescaled ? texture_bit : 0u;
-        texture_bit <<= 1u;
-        if (texture_bit == 0u) {
-            texture_bit = 1u;
-            ++texture_ptr;
-        }
-        ++texture_index;
-    }
-
-    void PushImage(bool is_rescaled) noexcept {
-        *image_ptr |= is_rescaled ? image_bit : 0u;
-        image_bit <<= 1u;
-        if (image_bit == 0u) {
-            image_bit = 1u;
-            ++image_ptr;
-        }
-    }
-
-    void SetDrefCompareOp(u32 compare_op) noexcept {
-        const u32 word_index{texture_index / DREF_COMPARE_OPS_PER_WORD};
-        if (word_index >= dref_compare_ops.size()) {
-            return;
-        }
-        const u32 shift{(texture_index % DREF_COMPARE_OPS_PER_WORD) * 4};
-        const u32 mask{0xFu << shift};
-        dref_compare_ops[word_index] =
-            (dref_compare_ops[word_index] & ~mask) | ((compare_op & 0x7u) << shift);
-    }
-
-    const std::array<u32, NUM_DREF_COMPARE_OP_WORDS>& DrefCompareOps() const noexcept {
-        return dref_compare_ops;
-    }
-
-    const std::array<u32, NUM_TEXTURE_AND_IMAGE_SCALING_WORDS>& Data() const noexcept {
-        return words;
-    }
-
-private:
-    std::array<u32, NUM_TEXTURE_AND_IMAGE_SCALING_WORDS> words{};
-    u32* texture_ptr{words.data()};
-    u32* image_ptr{words.data() + Shader::Backend::SPIRV::NUM_TEXTURE_SCALING_WORDS};
-    u32 texture_bit{1u};
-    u32 image_bit{1u};
-    u32 texture_index{};
-    std::array<u32, NUM_DREF_COMPARE_OP_WORDS> dref_compare_ops{};
 };
 
 class RenderAreaPushConstant {
