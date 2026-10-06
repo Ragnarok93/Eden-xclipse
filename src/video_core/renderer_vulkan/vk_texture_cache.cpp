@@ -3414,12 +3414,18 @@ VkSampler Sampler::HandleFor(const ImageView& image_view,
                              VkImageView descriptor_view) {
     const bool guest_dref{Shader::IsDref(dref_mode)};
     const bool software_dref{Shader::IsSoftwareDref(dref_mode)};
-    const bool native_dref = dref_mode == Shader::DrefExecutionMode::NativeDref ||
-                             dref_mode == Shader::DrefExecutionMode::RuntimeValidatedDref;
+    const bool dynamic_unknown = dref_mode == Shader::DrefExecutionMode::RuntimeValidatedDref;
+    const bool native_dref = dref_mode == Shader::DrefExecutionMode::NativeDref || dynamic_unknown;
+    const XclipseDrefFormat dref_format = image_view.format == PixelFormat::R32_FLOAT
+                                               ? XclipseDrefFormat::R32
+                                           : image_view.format == PixelFormat::D32_FLOAT
+                                               ? XclipseDrefFormat::D32
+                                               : XclipseDrefFormat::Other;
     if (native_dref &&
         (!has_depth_comparison || !image_view.SupportsDepthComparison())) {
         device_ptr->GetXclipseTelemetry().RecordDrefBinding(
-            has_depth_comparison && !image_view.SupportsDepthComparison(), false);
+            XclipseDrefPath::Unresolved, dref_format,
+            has_depth_comparison && !image_view.SupportsDepthComparison(), dynamic_unknown);
         if (device_ptr->XclipseDrefDiagnosticsEnabled() &&
             xclipse_image_diagnostic_budget.TryConsume(
                 XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
@@ -3444,8 +3450,9 @@ VkSampler Sampler::HandleFor(const ImageView& image_view,
     const bool create_variant = existing == VK_NULL_HANDLE;
     const VkSampler sampler_handle = create_variant ? Emplace(key) : existing;
     if (guest_dref) {
-        device_ptr->GetXclipseTelemetry().RecordDrefBinding(key.drop_depth_comparison,
-                                                            software_dref);
+        device_ptr->GetXclipseTelemetry().RecordDrefBinding(
+            software_dref ? XclipseDrefPath::Software : XclipseDrefPath::Native,
+            dref_format, key.drop_depth_comparison, dynamic_unknown);
     }
     if (key.drop_depth_comparison && device_ptr->XclipseDrefDiagnosticsEnabled() &&
         xclipse_image_diagnostic_budget.HasRemaining(
