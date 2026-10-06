@@ -119,7 +119,7 @@ jobs:
       - name: Install focused host test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build catch2 libfmt-dev libvulkan-dev
+          sudo apt-get install -y cmake ninja-build catch2 libboost-container-dev libfmt-dev libvulkan-dev
 
       - name: Build actual policy sources and existing regression tests
         shell: bash
