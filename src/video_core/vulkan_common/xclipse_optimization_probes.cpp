@@ -724,36 +724,6 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     }
 }
 
-[[nodiscard]] bool ValidateRgtcProbeReadback(const RgtcProbeCase& probe,
-                                             std::span<const u8> bytes) {
-    constexpr u32 Width = 8;
-    constexpr u32 Height = 4;
-    const size_t required = Width * Height * probe.bytes_per_pixel;
-    if (bytes.size() < required) {
-        return false;
-    }
-
-    std::array<u8, 16> left_block{};
-    std::array<u8, 16> right_block{};
-    WriteBc4ProbeBlock(left_block.data(), probe.left_r);
-    WriteBc4ProbeBlock(right_block.data(), probe.right_r);
-    if (probe.is_bc5) {
-        WriteBc4ProbeBlock(left_block.data() + 8, probe.left_g);
-        WriteBc4ProbeBlock(right_block.data() + 8, probe.right_g);
-    }
-
-    std::array<u8, Width * Height * 2> expected{};
-    if (probe.is_bc5) {
-        bcn::DecodeBc5(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
-        bcn::DecodeBc5(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
-    } else {
-        bcn::DecodeBc4(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
-        bcn::DecodeBc4(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
-    }
-    return std::memcmp(bytes.data(), expected.data(), required) == 0;
-}
-
-
 struct BlockDecodeProbeCase {
     const char* name{};
     u32 format{};
