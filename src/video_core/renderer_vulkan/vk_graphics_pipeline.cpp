@@ -543,8 +543,13 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     const VideoCommon::ImageViewInOut* views_it{views.data()};
     const auto prepare_stage{[&](size_t stage) LAMBDA_FORCEINLINE -> bool {
         buffer_cache.BindHostStageBuffers(stage);
+        const DrefDiagnosticContext dref_context{
+            .pipeline_hash = key.Hash(),
+            .shader_hash = key.unique_hashes[stage + 1],
+            .stage = static_cast<u32>(stage),
+        };
         if (!PushImageDescriptors(texture_cache, guest_descriptor_queue, stage_infos[stage],
-                                  rescaling, samplers_it, views_it)) {
+                                  rescaling, samplers_it, views_it, dref_context)) {
             return false;
         }
         const auto& info{stage_infos[stage]};
