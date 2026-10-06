@@ -210,7 +210,7 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     // v10 includes queried alpha-to-one support because it changes generated multisample state.
     // Query-only sparse strictness and descriptor capture/replay sizes stay out of identity until
     // an execution path actually consumes them.
-    hash.Add("eden-xclipse-policy-v10");
+    hash.Add("eden-xclipse-policy-v11");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
