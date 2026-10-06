@@ -2377,6 +2377,20 @@ void Device::RunXclipseValidationProbes() {
                     exception.what());
     }
 
+    device_policy.xclipse.bc6_gpu_decode_validated = false;
+    device_policy.xclipse.bc7_gpu_decode_validated = false;
+    if (device_policy.xclipse.bptc_gpu_decode_capable) {
+        try {
+            const XclipseBptcDecodeValidation validation{
+                RunXclipseBptcDecodeValidationProbe(*this)};
+            device_policy.xclipse.bc6_gpu_decode_validated = validation.bc6;
+            device_policy.xclipse.bc7_gpu_decode_validated = validation.bc7;
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE BPTC decode validation exception: {}",
+                        exception.what());
+        }
+    }
+
     try {
         RunXclipseDepthComparisonProbes(*this, device_policy.optimization_probes);
     } catch (const vk::Exception& exception) {
@@ -2618,8 +2632,8 @@ void Device::LogDevicePolicy() const {
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
              "sync2={} timeline={} descriptor_buffer={} descriptor_image={} sparse={} sync_policy={} "
-             "rgtc_gpu_decode={} bptc_gpu_decode={} subgroup32_policy={} "
-             "wave32_probe_ns={} wave64_probe_ns={}",
+             "rgtc_gpu_decode={} bptc_gpu_decode={} bc6_decode={} bc7_decode={} "
+             "subgroup32_policy={} wave32_probe_ns={} wave64_probe_ns={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
                         BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
              bcn_state({BcnFormat::BC2_UNORM, BcnFormat::BC2_SRGB}),
@@ -2642,8 +2656,10 @@ void Device::LogDevicePolicy() const {
                                                       : "conservative-fallback"),
              device_policy.use_xclipse_bptc_gpu_decode
                  ? "validated-enabled"
-                 : (xclipse.bptc_gpu_decode_capable ? "capable-disabled"
+                 : (xclipse.bptc_gpu_decode_capable ? "validation-fallback"
                                                      : "unsupported"),
+             xclipse.bc6_gpu_decode_validated ? "validated" : "fallback",
+             xclipse.bc7_gpu_decode_validated ? "validated" : "fallback",
              device_policy.use_xclipse_subgroup_size_control ? "validated-enabled"
                                                               : "conservative-fallback",
              xclipse.wave32_probe_ns, xclipse.wave64_probe_ns);
