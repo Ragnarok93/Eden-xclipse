@@ -257,21 +257,24 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
         return false;
     }
 
-    switch (info.format) {
-    case PixelFormat::BC4_UNORM:
-    case PixelFormat::BC4_SNORM:
-    case PixelFormat::BC5_UNORM:
-    case PixelFormat::BC5_SNORM:
-        return device.UseXclipseBcnGpuDecode();
-    case PixelFormat::BC6H_UFLOAT:
-    case PixelFormat::BC6H_SFLOAT:
-    case PixelFormat::BC7_UNORM:
-    case PixelFormat::BC7_SRGB:
-        if (!device.UseXclipseBptcGpuDecode()) {
+    const bool validated_decode = [&] {
+        switch (info.format) {
+        case PixelFormat::BC4_UNORM:
+        case PixelFormat::BC4_SNORM:
+        case PixelFormat::BC5_UNORM:
+        case PixelFormat::BC5_SNORM:
+            return device.UseXclipseBcnGpuDecode();
+        case PixelFormat::BC6H_UFLOAT:
+        case PixelFormat::BC6H_SFLOAT:
+            return device.UseXclipseBc6GpuDecode();
+        case PixelFormat::BC7_UNORM:
+        case PixelFormat::BC7_SRGB:
+            return device.UseXclipseBc7GpuDecode();
+        default:
             return false;
         }
-        break;
-    default:
+    }();
+    if (!validated_decode) {
         return false;
     }
 
@@ -315,11 +318,21 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
         }
         break;
     case XclipseBcnFormat::BC6H:
+        if (!Settings::values.xclipse_gpu_bptc_decode.GetValue()) {
+            return XclipseBcnFallbackReason::RuntimeDisabled;
+        }
+        if (!device.UseXclipseBc6GpuDecode()) {
+            return XclipseBcnFallbackReason::ValidationUnavailable;
+        }
+        if (!runtime.BptcDecoderPassFor(info.format)) {
+            return XclipseBcnFallbackReason::DecoderUnavailable;
+        }
+        break;
     case XclipseBcnFormat::BC7:
         if (!Settings::values.xclipse_gpu_bptc_decode.GetValue()) {
             return XclipseBcnFallbackReason::RuntimeDisabled;
         }
-        if (!device.UseXclipseBptcGpuDecode()) {
+        if (!device.UseXclipseBc7GpuDecode()) {
             return XclipseBcnFallbackReason::ValidationUnavailable;
         }
         if (!runtime.BptcDecoderPassFor(info.format)) {
@@ -1146,50 +1159,58 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
         astc_decoder_pass.emplace(device, scheduler, descriptor_pool, staging_buffer_pool,
                                   compute_pass_descriptor_queue, memory_allocator);
     }
-    if (device.UseXclipseBcnGpuDecode() && !device.HasBrokenCompute()) {
-        constexpr std::array formats{
-            PixelFormat::BC4_UNORM,
-            PixelFormat::BC4_SNORM,
-            PixelFormat::BC5_UNORM,
-            PixelFormat::BC5_SNORM,
-        };
-        for (const PixelFormat format : formats) {
-            const auto index = BcnDecoderIndex(format);
-            ASSERT(index.has_value());
-            try {
-                bcn_decoder_passes[*index].emplace(device, scheduler, descriptor_pool,
-                                                   compute_pass_descriptor_queue, format);
-            } catch (const vk::Exception& exception) {
-                LOG_WARNING(Render_Vulkan,
-                            "XCLIPSE BC GPU decoder format={} unavailable, retaining CPU fallback: {}",
-                            static_cast<u32>(format), exception.what());
-                bcn_decoder_passes[*index].reset();
+    if (!device.HasBrokenCompute()) {
+        if (device.UseXclipseBcnGpuDecode()) {
+            constexpr std::array formats{
+                PixelFormat::BC4_UNORM,
+                PixelFormat::BC4_SNORM,
+                PixelFormat::BC5_UNORM,
+                PixelFormat::BC5_SNORM,
+            };
+            for (const PixelFormat format : formats) {
+                const auto index = BcnDecoderIndex(format);
+                ASSERT(index.has_value());
+                try {
+                    bcn_decoder_passes[*index].emplace(device, scheduler, descriptor_pool,
+                                                       compute_pass_descriptor_queue, format);
+                } catch (const vk::Exception& exception) {
+                    LOG_WARNING(
+                        Render_Vulkan,
+                        "XCLIPSE BC GPU decoder format={} unavailable, retaining CPU fallback: {}",
+                        static_cast<u32>(format), exception.what());
+                    bcn_decoder_passes[*index].reset();
+                }
             }
         }
 
-        if (device.UseXclipseBptcGpuDecode()) {
+        if (device.UseXclipseBc6GpuDecode()) {
             try {
                 bptc_bc6_decoder_pass.emplace(device, scheduler, descriptor_pool,
                                               compute_pass_descriptor_queue,
                                               BPTCDecoderPass::Kind::BC6H);
+            } catch (const vk::Exception& exception) {
+                bptc_bc6_decoder_pass.reset();
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE BC6H GPU decoder unavailable; retaining CPU fallback: {}",
+                            exception.what());
+            }
+        }
+        if (device.UseXclipseBc7GpuDecode()) {
+            try {
                 bptc_bc7_decoder_pass.emplace(device, scheduler, descriptor_pool,
                                               compute_pass_descriptor_queue,
                                               BPTCDecoderPass::Kind::BC7);
-                LOG_WARNING(Render_Vulkan,
-                            "XCLIPSE BCN policy: BC6H/BC7 GPU compute decode enabled by "
-                            "explicit debug opt-in; path is capability-gated but not bit-exact self-tested");
             } catch (const vk::Exception& exception) {
-                bptc_bc6_decoder_pass.reset();
                 bptc_bc7_decoder_pass.reset();
                 LOG_WARNING(Render_Vulkan,
-                            "XCLIPSE BC6H/BC7 GPU decoder unavailable; retaining CPU fallback: {}",
+                            "XCLIPSE BC7 GPU decoder unavailable; retaining CPU fallback: {}",
                             exception.what());
             }
-        } else {
-            LOG_INFO(Render_Vulkan,
-                     "XCLIPSE BCN policy: validated BC4/BC5 GPU decode enabled; "
-                     "BC6H/BC7 remain on CPU fallback");
         }
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE BCN policy: rgtc_gpu={} bc6_gpu={} bc7_gpu={}",
+                 device.UseXclipseBcnGpuDecode(), device.UseXclipseBc6GpuDecode(),
+                 device.UseXclipseBc7GpuDecode());
     }
     if (!device.IsKhrImageFormatListSupported()) {
         return;
