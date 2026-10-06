@@ -2319,6 +2319,19 @@ Image::~Image() {
     }
 }
 
+void Image::RecordProvenanceWrite(XclipseImageWriter writer) noexcept {
+    xclipse_provenance.contents_defined = true;
+    xclipse_provenance.last_writer = writer;
+    xclipse_provenance.last_writer_tick = scheduler ? scheduler->CurrentTick() : 0;
+}
+
+void Image::RecordProvenanceTransition(VkImageLayout old_layout,
+                                       VkImageLayout new_layout) noexcept {
+    xclipse_provenance.saw_undefined_transition |= old_layout == VK_IMAGE_LAYOUT_UNDEFINED;
+    xclipse_provenance.last_layout = static_cast<u32>(new_layout);
+    xclipse_provenance.last_transition_tick = scheduler ? scheduler->CurrentTick() : 0;
+}
+
 void Image::AllocateComputeUnswizzleBuffer(u32 max_slices) {
     using VideoCore::Surface::BytesPerBlock;
 
@@ -3100,6 +3113,20 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::NullImageV
 
 ImageView::~ImageView() = default;
 
+const Image* ImageView::SourceImage() const noexcept {
+    return slot_images ? &(*slot_images)[image_id] : nullptr;
+}
+
+Image* ImageView::SourceImage() noexcept {
+    return slot_images ? &const_cast<SlotVector<Image>&>(*slot_images)[image_id] : nullptr;
+}
+
+void ImageView::RecordImageWrite(XclipseImageWriter writer) noexcept {
+    if (Image* image = SourceImage()) {
+        image->RecordProvenanceWrite(writer);
+    }
+}
+
 VkImageView ImageView::DepthView() {
     if (!image_handle) {
         return VK_NULL_HANDLE;
@@ -3722,6 +3749,7 @@ void TextureCacheRuntime::AccelerateImageUpload(
 
 void TextureCacheRuntime::TransitionImageLayout(Image& image) {
     if (!image.ExchangeInitialization()) {
+        image.RecordProvenanceTransition(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         VkImageMemoryBarrier barrier{
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
