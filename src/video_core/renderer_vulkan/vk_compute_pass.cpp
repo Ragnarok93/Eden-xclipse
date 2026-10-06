@@ -243,6 +243,35 @@ std::span<const u32> BptcDecoderCode(BPTCDecoderPass::Kind kind) {
     return {};
 }
 
+XclipseBcnFormat BcnTelemetryFormat(VideoCore::Surface::PixelFormat format) noexcept {
+    using VideoCore::Surface::PixelFormat;
+    switch (format) {
+    case PixelFormat::BC1_RGBA_UNORM:
+    case PixelFormat::BC1_RGBA_SRGB:
+        return XclipseBcnFormat::BC1;
+    case PixelFormat::BC2_UNORM:
+    case PixelFormat::BC2_SRGB:
+        return XclipseBcnFormat::BC2;
+    case PixelFormat::BC3_UNORM:
+    case PixelFormat::BC3_SRGB:
+        return XclipseBcnFormat::BC3;
+    case PixelFormat::BC4_UNORM:
+    case PixelFormat::BC4_SNORM:
+        return XclipseBcnFormat::BC4;
+    case PixelFormat::BC5_UNORM:
+    case PixelFormat::BC5_SNORM:
+        return XclipseBcnFormat::BC5;
+    case PixelFormat::BC6H_UFLOAT:
+    case PixelFormat::BC6H_SFLOAT:
+        return XclipseBcnFormat::BC6H;
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
+        return XclipseBcnFormat::BC7;
+    default:
+        return XclipseBcnFormat::Count;
+    }
+}
+
 u32 BptcDecoderFormat(VideoCore::Surface::PixelFormat format) {
     using VideoCore::Surface::PixelFormat;
     switch (format) {
@@ -730,6 +759,8 @@ void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
     const auto decoder_format = BcnDecoderFormat(format);
     ASSERT(decoder_format.has_value());
 
+    device.GetXclipseTelemetry().RecordBcnGpuDecode(BcnTelemetryFormat(format),
+                                                    image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
     const VkPipeline vk_pipeline = *pipeline;
     const VkImageAspectFlags aspect_mask = image.AspectMask();
@@ -856,7 +887,7 @@ void BPTCDecoderPass::Assemble(
     ASSERT(Supports(image.info.format));
 
     device.GetXclipseTelemetry().RecordBptcGpuDecode(
-        kind == BPTCDecoderPass::Kind::BC7, image.guest_size_bytes);
+        BcnTelemetryFormat(image.info.format), image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
 
     const VkPipeline vk_pipeline = *pipeline;

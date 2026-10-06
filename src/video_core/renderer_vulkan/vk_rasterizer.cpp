@@ -989,9 +989,10 @@ void RasterizerVulkan::TickFrame() {
 
     if (telemetry.Enabled() && xclipse_runtime_frame_counter % 300 == 0) {
         const auto snapshot = telemetry.Snapshot();
-        const double compile_avg_ms = snapshot.pipeline_creates != 0
-            ? static_cast<double>(snapshot.pipeline_compile_ns_total) /
-                  static_cast<double>(snapshot.pipeline_creates) / 1'000'000.0
+        const auto& create_latency = snapshot.vulkan_pipeline_create_latency;
+        const double compile_avg_ms = create_latency.count != 0
+            ? static_cast<double>(create_latency.total_ns) /
+                  static_cast<double>(create_latency.count) / 1'000'000.0
             : 0.0;
         LOG_INFO(Render_Vulkan,
                  "XCLIPSE PIPELINE RUNTIME frame={} creates={} graphics={} compute={} "
@@ -999,10 +1000,10 @@ void RasterizerVulkan::TickFrame() {
                  "compile_avg_ms={:.3f} compile_max_ms={:.3f}",
                  xclipse_runtime_frame_counter, snapshot.pipeline_creates,
                  snapshot.graphics_pipeline_creates, snapshot.compute_pipeline_creates,
-                 snapshot.pipeline_cache_hits, snapshot.pipeline_cache_misses,
+                 snapshot.runtime_pipeline_map_hits, snapshot.runtime_pipeline_map_misses,
                  snapshot.pipeline_failures, snapshot.pipeline_policy_violations,
                  compile_avg_ms,
-                 static_cast<double>(snapshot.pipeline_compile_ns_max) / 1'000'000.0);
+                 static_cast<double>(create_latency.max_ns) / 1'000'000.0);
         const auto& pressure = xclipse_memory_pressure.LastSnapshot();
         const auto& sample = pressure.sample;
         const s32 budget_pct = sample.memory_budget_used_percent

@@ -261,26 +261,62 @@ void XclipseTelemetry::RecordDescriptorFrameWaitRequest() noexcept {
     }
 }
 
-void XclipseTelemetry::RecordBptcGpuDecode(bool bc7, u64 bytes) noexcept {
+void XclipseTelemetry::RecordBcnNativePath(XclipseBcnFormat format) noexcept {
     if (!Enabled()) {
         return;
     }
-    (bc7 ? bptc_bc7_dispatches : bptc_bc6_dispatches).fetch_add(1, std::memory_order_relaxed);
+    const auto index = static_cast<std::size_t>(format);
+    if (index >= XCLIPSE_BCN_FORMAT_COUNT) {
+        return;
+    }
+    bcn_native_images[index].fetch_add(1, std::memory_order_relaxed);
+}
+
+void XclipseTelemetry::RecordBptcGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    const auto index = static_cast<std::size_t>(format);
+    if (index >= XCLIPSE_BCN_FORMAT_COUNT ||
+        (format != XclipseBcnFormat::BC6H && format != XclipseBcnFormat::BC7)) {
+        return;
+    }
+    (format == XclipseBcnFormat::BC7 ? bptc_bc7_dispatches : bptc_bc6_dispatches)
+        .fetch_add(1, std::memory_order_relaxed);
+    bcn_gpu_decode_dispatches.fetch_add(1, std::memory_order_relaxed);
+    bcn_gpu_decode_dispatches_by_format[index].fetch_add(1, std::memory_order_relaxed);
+    bcn_gpu_decode_bytes.fetch_add(bytes, std::memory_order_relaxed);
     bptc_gpu_decode_bytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
-void XclipseTelemetry::RecordBcnGpuDecode(u64 bytes) noexcept {
+void XclipseTelemetry::RecordBcnGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept {
     if (!Enabled()) {
         return;
     }
+    const auto index = static_cast<std::size_t>(format);
+    if (index >= XCLIPSE_BCN_FORMAT_COUNT) {
+        return;
+    }
     bcn_gpu_decode_dispatches.fetch_add(1, std::memory_order_relaxed);
+    bcn_gpu_decode_dispatches_by_format[index].fetch_add(1, std::memory_order_relaxed);
     bcn_gpu_decode_bytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
-void XclipseTelemetry::RecordBcnGpuDecodeFallback() noexcept {
-    if (Enabled()) {
-        bcn_gpu_decode_fallbacks.fetch_add(1, std::memory_order_relaxed);
+void XclipseTelemetry::RecordBcnCpuFallback(XclipseBcnFormat format,
+                                            XclipseBcnFallbackReason reason) noexcept {
+    if (!Enabled()) {
+        return;
     }
+    const auto format_index = static_cast<std::size_t>(format);
+    const auto reason_index = static_cast<std::size_t>(reason);
+    if (format_index >= XCLIPSE_BCN_FORMAT_COUNT ||
+        reason_index >= XCLIPSE_BCN_FALLBACK_REASON_COUNT) {
+        return;
+    }
+    bcn_gpu_decode_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    bcn_cpu_fallbacks[format_index].fetch_add(1, std::memory_order_relaxed);
+    bcn_fallback_reasons[format_index][reason_index].fetch_add(1,
+                                                               std::memory_order_relaxed);
 }
 
 void XclipseTelemetry::RecordColorShaderBlit() noexcept {
@@ -386,6 +422,40 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .bcn_gpu_decode_bytes = bcn_gpu_decode_bytes.load(std::memory_order_relaxed),
         .bcn_gpu_decode_fallbacks =
             bcn_gpu_decode_fallbacks.load(std::memory_order_relaxed),
+        .bcn_native_images = [&] {
+            std::array<u64, XCLIPSE_BCN_FORMAT_COUNT> result{};
+            for (std::size_t index = 0; index < result.size(); ++index) {
+                result[index] = bcn_native_images[index].load(std::memory_order_relaxed);
+            }
+            return result;
+        }(),
+        .bcn_gpu_decode_dispatches_by_format = [&] {
+            std::array<u64, XCLIPSE_BCN_FORMAT_COUNT> result{};
+            for (std::size_t index = 0; index < result.size(); ++index) {
+                result[index] =
+                    bcn_gpu_decode_dispatches_by_format[index].load(std::memory_order_relaxed);
+            }
+            return result;
+        }(),
+        .bcn_cpu_fallbacks = [&] {
+            std::array<u64, XCLIPSE_BCN_FORMAT_COUNT> result{};
+            for (std::size_t index = 0; index < result.size(); ++index) {
+                result[index] = bcn_cpu_fallbacks[index].load(std::memory_order_relaxed);
+            }
+            return result;
+        }(),
+        .bcn_fallback_reasons = [&] {
+            std::array<std::array<u64, XCLIPSE_BCN_FALLBACK_REASON_COUNT>,
+                       XCLIPSE_BCN_FORMAT_COUNT>
+                result{};
+            for (std::size_t format = 0; format < result.size(); ++format) {
+                for (std::size_t reason = 0; reason < result[format].size(); ++reason) {
+                    result[format][reason] =
+                        bcn_fallback_reasons[format][reason].load(std::memory_order_relaxed);
+                }
+            }
+            return result;
+        }(),
         .bptc_bc6_dispatches = bptc_bc6_dispatches.load(std::memory_order_relaxed),
         .bptc_bc7_dispatches = bptc_bc7_dispatches.load(std::memory_order_relaxed),
         .bptc_gpu_decode_bytes = bptc_gpu_decode_bytes.load(std::memory_order_relaxed),

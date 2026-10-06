@@ -2794,10 +2794,35 @@ void Device::LogXclipseTelemetry() const {
              t.descriptor_bytes, t.descriptor_buffer_wraps, t.descriptor_frame_wait_requests,
              t.descriptor_stalls);
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} gpu_fallbacks={} "
+             "XCLIPSE BCN gpu_dispatches={} compressed_bytes={} cpu_fallbacks={} "
              "bptc_bc6_dispatches={} bptc_bc7_dispatches={} bptc_compressed_bytes={}",
              t.bcn_gpu_decode_dispatches, t.bcn_gpu_decode_bytes, t.bcn_gpu_decode_fallbacks,
              t.bptc_bc6_dispatches, t.bptc_bc7_dispatches, t.bptc_gpu_decode_bytes);
+    for (std::size_t format_index = 0; format_index < XCLIPSE_BCN_FORMAT_COUNT;
+         ++format_index) {
+        const auto format = static_cast<XclipseBcnFormat>(format_index);
+        const u64 native = t.bcn_native_images[format_index];
+        const u64 gpu = t.bcn_gpu_decode_dispatches_by_format[format_index];
+        const u64 cpu = t.bcn_cpu_fallbacks[format_index];
+        if (native == 0 && gpu == 0 && cpu == 0) {
+            continue;
+        }
+        LOG_INFO(Render_Vulkan, "XCLIPSE BCN FORMAT format={} native_images={} gpu_dispatches={} "
+                                "cpu_fallbacks={}",
+                 XclipseBcnFormatName(format), native, gpu, cpu);
+        for (std::size_t reason_index = 0;
+             reason_index < XCLIPSE_BCN_FALLBACK_REASON_COUNT; ++reason_index) {
+            const u64 count = t.bcn_fallback_reasons[format_index][reason_index];
+            if (count == 0) {
+                continue;
+            }
+            LOG_INFO(Render_Vulkan, "XCLIPSE BCN FALLBACK format={} reason={} count={}",
+                     XclipseBcnFormatName(format),
+                     XclipseBcnFallbackReasonName(
+                         static_cast<XclipseBcnFallbackReason>(reason_index)),
+                     count);
+        }
+    }
     LOG_INFO(Render_Vulkan,
              "XCLIPSE RENDER color_shader_blits={} depth_native_blits={} "
              "depth_shader_blits={} native_resolves={} native_image_copies={} "

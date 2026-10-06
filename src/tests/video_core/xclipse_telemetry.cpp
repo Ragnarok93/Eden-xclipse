@@ -87,8 +87,11 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordDescriptorBufferWrap(false);
     telemetry.RecordDescriptorBufferWrap(true);
     telemetry.RecordDescriptorFrameWaitRequest();
-    telemetry.RecordBcnGpuDecode(4096);
-    telemetry.RecordBcnGpuDecodeFallback();
+    telemetry.RecordBcnNativePath(Vulkan::XclipseBcnFormat::BC3);
+    telemetry.RecordBcnGpuDecode(Vulkan::XclipseBcnFormat::BC5, 4096);
+    telemetry.RecordBptcGpuDecode(Vulkan::XclipseBcnFormat::BC7, 8192);
+    telemetry.RecordBcnCpuFallback(Vulkan::XclipseBcnFormat::BC7,
+                                   Vulkan::XclipseBcnFallbackReason::RuntimeDisabled);
     telemetry.RecordColorShaderBlit();
     telemetry.RecordDepthStencilBlit(true);
     telemetry.RecordDepthStencilBlit(false);
@@ -141,9 +144,22 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.descriptor_buffer_wraps == 2);
     REQUIRE(snapshot.descriptor_stalls == 1);
     REQUIRE(snapshot.descriptor_frame_wait_requests == 1);
-    REQUIRE(snapshot.bcn_gpu_decode_dispatches == 1);
-    REQUIRE(snapshot.bcn_gpu_decode_bytes == 4096);
+    REQUIRE(snapshot.bcn_gpu_decode_dispatches == 2);
+    REQUIRE(snapshot.bcn_gpu_decode_bytes == 12288);
     REQUIRE(snapshot.bcn_gpu_decode_fallbacks == 1);
+    REQUIRE(snapshot.bcn_native_images[static_cast<std::size_t>(
+                Vulkan::XclipseBcnFormat::BC3)] == 1);
+    REQUIRE(snapshot.bcn_gpu_decode_dispatches_by_format[static_cast<std::size_t>(
+                Vulkan::XclipseBcnFormat::BC5)] == 1);
+    REQUIRE(snapshot.bcn_gpu_decode_dispatches_by_format[static_cast<std::size_t>(
+                Vulkan::XclipseBcnFormat::BC7)] == 1);
+    REQUIRE(snapshot.bcn_cpu_fallbacks[static_cast<std::size_t>(
+                Vulkan::XclipseBcnFormat::BC7)] == 1);
+    REQUIRE(snapshot.bcn_fallback_reasons[static_cast<std::size_t>(
+                Vulkan::XclipseBcnFormat::BC7)][static_cast<std::size_t>(
+                Vulkan::XclipseBcnFallbackReason::RuntimeDisabled)] == 1);
+    REQUIRE(snapshot.bptc_bc7_dispatches == 1);
+    REQUIRE(snapshot.bptc_gpu_decode_bytes == 8192);
     REQUIRE(snapshot.color_shader_blits == 1);
     REQUIRE(snapshot.depth_stencil_native_blits == 1);
     REQUIRE(snapshot.depth_stencil_shader_blits == 1);

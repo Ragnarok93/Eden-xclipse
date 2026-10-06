@@ -62,9 +62,92 @@ enum class XclipseWaitSource : u8 {
     return "invalid";
 }
 
+enum class XclipseBcnFormat : u8 {
+    BC1,
+    BC2,
+    BC3,
+    BC4,
+    BC5,
+    BC6H,
+    BC7,
+    Count,
+};
+
+[[nodiscard]] constexpr const char* XclipseBcnFormatName(XclipseBcnFormat format) noexcept {
+    switch (format) {
+    case XclipseBcnFormat::BC1:
+        return "BC1";
+    case XclipseBcnFormat::BC2:
+        return "BC2";
+    case XclipseBcnFormat::BC3:
+        return "BC3";
+    case XclipseBcnFormat::BC4:
+        return "BC4";
+    case XclipseBcnFormat::BC5:
+        return "BC5";
+    case XclipseBcnFormat::BC6H:
+        return "BC6H";
+    case XclipseBcnFormat::BC7:
+        return "BC7";
+    case XclipseBcnFormat::Count:
+        break;
+    }
+    return "invalid";
+}
+
+enum class XclipseBcnFallbackReason : u8 {
+    RuntimeDisabled,
+    ValidationUnavailable,
+    DecoderUnavailable,
+    UnsupportedImageShape,
+    StorageFormatUnsupported,
+    FormatSpecificRestriction,
+    BrokenCompute,
+    UnsupportedGpuPath,
+    AllocationFailure,
+    SynchronizationConstraint,
+    Other,
+    Count,
+};
+
+[[nodiscard]] constexpr const char* XclipseBcnFallbackReasonName(
+    XclipseBcnFallbackReason reason) noexcept {
+    switch (reason) {
+    case XclipseBcnFallbackReason::RuntimeDisabled:
+        return "runtime-disabled";
+    case XclipseBcnFallbackReason::ValidationUnavailable:
+        return "validation-unavailable";
+    case XclipseBcnFallbackReason::DecoderUnavailable:
+        return "decoder-unavailable";
+    case XclipseBcnFallbackReason::UnsupportedImageShape:
+        return "image-shape";
+    case XclipseBcnFallbackReason::StorageFormatUnsupported:
+        return "storage-format";
+    case XclipseBcnFallbackReason::FormatSpecificRestriction:
+        return "format-specific";
+    case XclipseBcnFallbackReason::BrokenCompute:
+        return "broken-compute";
+    case XclipseBcnFallbackReason::UnsupportedGpuPath:
+        return "unsupported-gpu-path";
+    case XclipseBcnFallbackReason::AllocationFailure:
+        return "allocation";
+    case XclipseBcnFallbackReason::SynchronizationConstraint:
+        return "synchronization";
+    case XclipseBcnFallbackReason::Other:
+        return "other";
+    case XclipseBcnFallbackReason::Count:
+        break;
+    }
+    return "invalid";
+}
+
 inline constexpr std::size_t XCLIPSE_LATENCY_BUCKET_COUNT = 48;
 inline constexpr std::size_t XCLIPSE_WAIT_SOURCE_COUNT =
     static_cast<std::size_t>(XclipseWaitSource::Count);
+inline constexpr std::size_t XCLIPSE_BCN_FORMAT_COUNT =
+    static_cast<std::size_t>(XclipseBcnFormat::Count);
+inline constexpr std::size_t XCLIPSE_BCN_FALLBACK_REASON_COUNT =
+    static_cast<std::size_t>(XclipseBcnFallbackReason::Count);
 
 struct XclipseLatencySnapshot {
     u64 count{};
@@ -137,6 +220,12 @@ struct XclipseTelemetrySnapshot {
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
     u64 bcn_gpu_decode_fallbacks{};
+    std::array<u64, XCLIPSE_BCN_FORMAT_COUNT> bcn_native_images{};
+    std::array<u64, XCLIPSE_BCN_FORMAT_COUNT> bcn_gpu_decode_dispatches_by_format{};
+    std::array<u64, XCLIPSE_BCN_FORMAT_COUNT> bcn_cpu_fallbacks{};
+    std::array<std::array<u64, XCLIPSE_BCN_FALLBACK_REASON_COUNT>,
+               XCLIPSE_BCN_FORMAT_COUNT>
+        bcn_fallback_reasons{};
     u64 bptc_bc6_dispatches{};
     u64 bptc_bc7_dispatches{};
     u64 bptc_gpu_decode_bytes{};
@@ -183,9 +272,11 @@ public:
     void RecordDescriptorBufferUse(bool reused) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordDescriptorFrameWaitRequest() noexcept;
-    void RecordBcnGpuDecode(u64 bytes) noexcept;
-    void RecordBptcGpuDecode(bool bc7, u64 bytes) noexcept;
-    void RecordBcnGpuDecodeFallback() noexcept;
+    void RecordBcnNativePath(XclipseBcnFormat format) noexcept;
+    void RecordBcnGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept;
+    void RecordBptcGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept;
+    void RecordBcnCpuFallback(XclipseBcnFormat format,
+                              XclipseBcnFallbackReason reason) noexcept;
     void RecordColorShaderBlit() noexcept;
     void RecordDepthStencilBlit(bool native) noexcept;
     void RecordNativeResolve() noexcept;
@@ -246,6 +337,13 @@ private:
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
     std::atomic<u64> bcn_gpu_decode_fallbacks{};
+    std::array<std::atomic<u64>, XCLIPSE_BCN_FORMAT_COUNT> bcn_native_images{};
+    std::array<std::atomic<u64>, XCLIPSE_BCN_FORMAT_COUNT>
+        bcn_gpu_decode_dispatches_by_format{};
+    std::array<std::atomic<u64>, XCLIPSE_BCN_FORMAT_COUNT> bcn_cpu_fallbacks{};
+    std::array<std::array<std::atomic<u64>, XCLIPSE_BCN_FALLBACK_REASON_COUNT>,
+               XCLIPSE_BCN_FORMAT_COUNT>
+        bcn_fallback_reasons{};
     std::atomic<u64> bptc_bc6_dispatches{};
     std::atomic<u64> bptc_bc7_dispatches{};
     std::atomic<u64> bptc_gpu_decode_bytes{};

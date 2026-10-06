@@ -223,6 +223,34 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
     }
 }
 
+[[nodiscard]] XclipseBcnFormat BcnTelemetryFormat(PixelFormat format) noexcept {
+    switch (format) {
+    case PixelFormat::BC1_RGBA_UNORM:
+    case PixelFormat::BC1_RGBA_SRGB:
+        return XclipseBcnFormat::BC1;
+    case PixelFormat::BC2_UNORM:
+    case PixelFormat::BC2_SRGB:
+        return XclipseBcnFormat::BC2;
+    case PixelFormat::BC3_UNORM:
+    case PixelFormat::BC3_SRGB:
+        return XclipseBcnFormat::BC3;
+    case PixelFormat::BC4_UNORM:
+    case PixelFormat::BC4_SNORM:
+        return XclipseBcnFormat::BC4;
+    case PixelFormat::BC5_UNORM:
+    case PixelFormat::BC5_SNORM:
+        return XclipseBcnFormat::BC5;
+    case PixelFormat::BC6H_UFLOAT:
+    case PixelFormat::BC6H_SFLOAT:
+        return XclipseBcnFormat::BC6H;
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
+        return XclipseBcnFormat::BC7;
+    default:
+        return XclipseBcnFormat::Count;
+    }
+}
+
 [[nodiscard]] bool WillUseAcceleratedBcnDecode(const Device& device, const ImageInfo& info) {
     if (device.HasBrokenCompute() || !IsPixelFormatBCn(info.format) ||
         MaxwellToVK::IsBcnNative(device, info.format)) {
@@ -259,6 +287,62 @@ VkFormat BcnDecodeStorageFormat(PixelFormat format) {
     return storage_format != VK_FORMAT_UNDEFINED &&
            device.IsFormatSupported(storage_format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
                                     FormatType::Optimal);
+}
+
+[[nodiscard]] XclipseBcnFallbackReason ClassifyBcnCpuFallback(
+    TextureCacheRuntime& runtime, const ImageInfo& info) {
+    const auto format = BcnTelemetryFormat(info.format);
+    const auto& device = runtime.device;
+    if (device.HasBrokenCompute()) {
+        return XclipseBcnFallbackReason::BrokenCompute;
+    }
+
+    switch (format) {
+    case XclipseBcnFormat::BC1:
+    case XclipseBcnFormat::BC2:
+    case XclipseBcnFormat::BC3:
+        return XclipseBcnFallbackReason::UnsupportedGpuPath;
+    case XclipseBcnFormat::BC4:
+    case XclipseBcnFormat::BC5:
+        if (!Settings::values.xclipse_gpu_bcn_decode.GetValue()) {
+            return XclipseBcnFallbackReason::RuntimeDisabled;
+        }
+        if (!device.UseXclipseBcnGpuDecode()) {
+            return XclipseBcnFallbackReason::ValidationUnavailable;
+        }
+        if (!runtime.BcnDecoderPassFor(info.format)) {
+            return XclipseBcnFallbackReason::DecoderUnavailable;
+        }
+        break;
+    case XclipseBcnFormat::BC6H:
+    case XclipseBcnFormat::BC7:
+        if (!Settings::values.xclipse_gpu_bptc_decode.GetValue()) {
+            return XclipseBcnFallbackReason::RuntimeDisabled;
+        }
+        if (!device.UseXclipseBptcGpuDecode()) {
+            return XclipseBcnFallbackReason::ValidationUnavailable;
+        }
+        if (!runtime.BptcDecoderPassFor(info.format)) {
+            return XclipseBcnFallbackReason::DecoderUnavailable;
+        }
+        break;
+    case XclipseBcnFormat::Count:
+        return XclipseBcnFallbackReason::Other;
+    }
+
+    if (info.type != ImageType::e2D || info.size.depth != 1 || info.num_samples != 1) {
+        return XclipseBcnFallbackReason::UnsupportedImageShape;
+    }
+    if (info.format == PixelFormat::BC7_SRGB && !device.IsKhrImageFormatListSupported()) {
+        return XclipseBcnFallbackReason::FormatSpecificRestriction;
+    }
+    const VkFormat storage_format = BcnDecodeStorageFormat(info.format);
+    if (storage_format == VK_FORMAT_UNDEFINED ||
+        !device.IsFormatSupported(storage_format, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
+                                  FormatType::Optimal)) {
+        return XclipseBcnFallbackReason::StorageFormatUnsupported;
+    }
+    return XclipseBcnFallbackReason::Other;
 }
 
 [[nodiscard]] VkImageCreateInfo MakeImageCreateInfo(const Device& device, const ImageInfo& info,
@@ -2181,19 +2265,22 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
         flags |= VideoCommon::ImageFlagBits::Converted;
         flags |= VideoCommon::ImageFlagBits::CostlyLoad;
     }
-    if (IsPixelFormatBCn(info.format) &&
-        !MaxwellToVK::IsBcnNative(runtime->device, info.format)) {
-        const bool wants_gpu_bcn =
-            runtime->device.IsXclipse() && Settings::values.xclipse_gpu_bcn_decode.GetValue() &&
-            BcnDecoderIndex(info.format).has_value();
-        if ((runtime->BcnDecoderPassFor(info.format) || runtime->BptcDecoderPassFor(info.format)) &&
-            WillUseAcceleratedBcnDecode(runtime->device, info)) {
-            flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
-        } else if (wants_gpu_bcn) {
-            runtime->device.GetXclipseTelemetry().RecordBcnGpuDecodeFallback();
+    if (IsPixelFormatBCn(info.format)) {
+        const auto telemetry_format = BcnTelemetryFormat(info.format);
+        if (MaxwellToVK::IsBcnNative(runtime->device, info.format)) {
+            runtime->device.GetXclipseTelemetry().RecordBcnNativePath(telemetry_format);
+        } else {
+            if ((runtime->BcnDecoderPassFor(info.format) ||
+                 runtime->BptcDecoderPassFor(info.format)) &&
+                WillUseAcceleratedBcnDecode(runtime->device, info)) {
+                flags |= VideoCommon::ImageFlagBits::AcceleratedUpload;
+            } else {
+                runtime->device.GetXclipseTelemetry().RecordBcnCpuFallback(
+                    telemetry_format, ClassifyBcnCpuFallback(*runtime, info));
+            }
+            flags |= VideoCommon::ImageFlagBits::Converted;
+            flags |= VideoCommon::ImageFlagBits::CostlyLoad;
         }
-        flags |= VideoCommon::ImageFlagBits::Converted;
-        flags |= VideoCommon::ImageFlagBits::CostlyLoad;
     }
     if (runtime->device.HasDebuggingToolAttached()) {
         original_image.SetObjectNameEXT(VideoCommon::Name(*this).c_str());
