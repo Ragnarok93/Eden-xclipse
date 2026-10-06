@@ -67,7 +67,7 @@ void Scheduler::Finish(VkSemaphore signal_semaphore, VkSemaphore wait_semaphore)
     // When finishing, we need to wait for the submission to have executed on the device.
     const u64 presubmit_tick = CurrentTick();
     SubmitExecution(signal_semaphore, wait_semaphore);
-    Wait(presubmit_tick);
+    Wait(presubmit_tick, 0.0, XclipseWaitSource::SchedulerFinish);
     AllocateNewContext();
 }
 

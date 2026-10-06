@@ -7,7 +7,7 @@
 
 TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     Vulkan::XclipseTelemetry telemetry;
-    telemetry.RecordPipelineCacheLookup(true);
+    telemetry.RecordRuntimePipelineMapLookup(true);
     telemetry.RecordPipelineCreate(true, 100, false);
     telemetry.RecordQueueSubmit(4, true);
     telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache);
@@ -58,17 +58,20 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     Vulkan::XclipseTelemetry telemetry;
     telemetry.SetEnabled(true);
 
-    telemetry.RecordPipelineCacheLookup(true);
-    telemetry.RecordPipelineCacheLookup(false);
+    telemetry.RecordRuntimePipelineMapLookup(true);
+    telemetry.RecordRuntimePipelineMapLookup(false);
     telemetry.RecordPipelineCreate(true, 100, true);
     telemetry.RecordPipelineCreate(false, 250, false);
+    telemetry.RecordPipelineBuild(500);
+    telemetry.RecordPipelineQueueResidence(750);
+    telemetry.RecordPipelineBlockingWait(2'000'000);
     telemetry.RecordPipelinePolicyViolations(3);
     telemetry.RecordQueueSubmit(7, true);
     telemetry.RecordQueueSubmit(3, false);
-    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache);
-    telemetry.RecordGpuWait(false, Vulkan::XclipseWaitSource::Fence);
-    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::DescriptorBuffer);
-    telemetry.RecordGpuWait(true);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache, 1'000'000);
+    telemetry.RecordGpuWait(false, Vulkan::XclipseWaitSource::Fence, 2'000'000);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::DescriptorBuffer, 4'000'000);
+    telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::Unknown, 8'000'000);
     telemetry.RecordSchedulerFinish();
     telemetry.RecordAllCommandsBarrier();
     telemetry.RecordTransferConsumerBarrier();
@@ -98,12 +101,17 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.pipeline_creates == 2);
     REQUIRE(snapshot.graphics_pipeline_creates == 1);
     REQUIRE(snapshot.compute_pipeline_creates == 1);
-    REQUIRE(snapshot.pipeline_cache_hits == 1);
-    REQUIRE(snapshot.pipeline_cache_misses == 1);
+    REQUIRE(snapshot.runtime_pipeline_map_hits == 1);
+    REQUIRE(snapshot.runtime_pipeline_map_misses == 1);
     REQUIRE(snapshot.pipeline_failures == 1);
     REQUIRE(snapshot.pipeline_policy_violations == 3);
-    REQUIRE(snapshot.pipeline_compile_ns_total == 350);
-    REQUIRE(snapshot.pipeline_compile_ns_max == 250);
+    REQUIRE(snapshot.pipeline_build_latency.count == 1);
+    REQUIRE(snapshot.pipeline_queue_residence_latency.count == 1);
+    REQUIRE(snapshot.pipeline_blocking_latency.count == 1);
+    REQUIRE(snapshot.pipeline_blocking_latency.total_ns == 2'000'000);
+    REQUIRE(snapshot.vulkan_pipeline_create_latency.count == 2);
+    REQUIRE(snapshot.vulkan_pipeline_create_latency.total_ns == 350);
+    REQUIRE(snapshot.vulkan_pipeline_create_latency.max_ns == 250);
     REQUIRE(snapshot.queue_submits == 2);
     REQUIRE(snapshot.commands_submitted == 10);
     REQUIRE(snapshot.sync2_submits == 1);
@@ -114,6 +122,10 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.wait_buffer_cache == 1);
     REQUIRE(snapshot.wait_fence == 1);
     REQUIRE(snapshot.wait_descriptor_buffer == 1);
+    REQUIRE(snapshot.wait_latency[static_cast<std::size_t>(
+                Vulkan::XclipseWaitSource::BufferCache)].total_ns == 1'000'000);
+    REQUIRE(snapshot.wait_latency[static_cast<std::size_t>(
+                Vulkan::XclipseWaitSource::DescriptorBuffer)].total_ns == 4'000'000);
     REQUIRE(snapshot.scheduler_finishes == 1);
     REQUIRE(snapshot.all_commands_barriers == 1);
     REQUIRE(snapshot.transfer_consumer_barriers == 1);
@@ -138,4 +150,20 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.native_resolves == 1);
     REQUIRE(snapshot.native_image_copies == 1);
     REQUIRE(snapshot.reinterpret_copies == 1);
+}
+
+
+TEST_CASE("XclipseTelemetry: latency histograms expose bounded percentiles", "[video_core]") {
+    Vulkan::XclipseTelemetry telemetry;
+    telemetry.SetEnabled(true);
+    for (const u64 duration : {1'000'000ULL, 2'000'000ULL, 4'000'000ULL, 8'000'000ULL,
+                               16'000'000ULL, 32'000'000ULL, 64'000'000ULL, 128'000'000ULL}) {
+        telemetry.RecordPipelineCreate(true, duration, true);
+    }
+    const auto latency = telemetry.Snapshot().vulkan_pipeline_create_latency;
+    REQUIRE(latency.count == 8);
+    REQUIRE(latency.PercentileUpperBoundNs(50) >= 8'000'000ULL);
+    REQUIRE(latency.PercentileUpperBoundNs(90) >= 64'000'000ULL);
+    REQUIRE(latency.PercentileUpperBoundNs(99) >= 128'000'000ULL);
+    REQUIRE(latency.max_ns == 128'000'000ULL);
 }

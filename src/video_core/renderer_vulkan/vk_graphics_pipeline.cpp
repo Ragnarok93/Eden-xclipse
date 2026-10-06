@@ -313,18 +313,22 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
 
-    auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics] {
+    const auto queued_at = std::chrono::steady_clock::now();
+    auto func{[this, shader_notify, &render_pass_cache, pipeline_statistics, queued_at] {
+        const auto worker_start = std::chrono::steady_clock::now();
+        device.GetXclipseTelemetry().RecordPipelineQueueResidence(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(worker_start - queued_at).count()));
         const VkRenderPass render_pass{render_pass_cache.Get(MakeRenderPassKey(key.state, device))};
         Validate();
-        const auto compile_start = std::chrono::steady_clock::now();
+        const auto build_start = std::chrono::steady_clock::now();
         try {
             MakePipeline(render_pass);
         } catch (const vk::Exception& exception) {
             const auto compile_ns = static_cast<u64>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::steady_clock::now() - compile_start)
+                    std::chrono::steady_clock::now() - build_start)
                     .count());
-            device.GetXclipseTelemetry().RecordPipelineCreate(true, compile_ns, false);
+            device.GetXclipseTelemetry().RecordPipelineBuild(compile_ns);
             LOG_CRITICAL(Render_Vulkan, "Graphics pipeline build failed: {}", exception.what());
             std::scoped_lock lock{build_mutex};
             is_built = true;
@@ -336,9 +340,9 @@ GraphicsPipeline::GraphicsPipeline(
         }
         const auto compile_ns = static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - compile_start)
+                std::chrono::steady_clock::now() - build_start)
                 .count());
-        device.GetXclipseTelemetry().RecordPipelineCreate(true, compile_ns, true);
+        device.GetXclipseTelemetry().RecordPipelineBuild(compile_ns);
         if (pipeline_statistics) {
             pipeline_statistics->Collect(device, *pipeline);
         }
@@ -618,7 +622,16 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
         // Wait for the pipeline to be built
         scheduler.Record([this](vk::CommandBuffer) {
             std::unique_lock lock{build_mutex};
-            build_condvar.wait(lock, [this] { return is_built.load(std::memory_order::relaxed); });
+            if (!is_built.load(std::memory_order::relaxed)) {
+                const auto wait_start = std::chrono::steady_clock::now();
+                build_condvar.wait(
+                    lock, [this] { return is_built.load(std::memory_order::relaxed); });
+                const auto wait_ns = static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - wait_start)
+                        .count());
+                device.GetXclipseTelemetry().RecordPipelineBlockingWait(wait_ns);
+            }
         });
     }
     const bool is_rescaling{texture_cache.IsRescaling()};
@@ -1133,7 +1146,18 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         }
     }
 
-    pipeline = device.GetLogical().CreateGraphicsPipeline(pipeline_ci, *pipeline_cache);
+    const auto create_start = std::chrono::steady_clock::now();
+    try {
+        pipeline = device.GetLogical().CreateGraphicsPipeline(pipeline_ci, *pipeline_cache);
+    } catch (...) {
+        const auto create_ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - create_start).count());
+        device.GetXclipseTelemetry().RecordPipelineCreate(true, create_ns, false);
+        throw;
+    }
+    const auto create_ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - create_start).count());
+    device.GetXclipseTelemetry().RecordPipelineCreate(true, create_ns, true);
 
     // Log graphics pipeline creation
     if (GPU::Logging::IsActive()) {

@@ -3,7 +3,69 @@
 
 #include "video_core/vulkan_common/xclipse_telemetry.h"
 
+#include <algorithm>
+#include <bit>
+#include <limits>
+
 namespace Vulkan {
+namespace {
+std::size_t LatencyBucket(u64 duration_ns) noexcept {
+    if (duration_ns == 0) {
+        return 0;
+    }
+    return (std::min)(static_cast<std::size_t>(std::bit_width(duration_ns)),
+                      XCLIPSE_LATENCY_BUCKET_COUNT - 1);
+}
+
+u64 BucketUpperBoundNs(std::size_t bucket) noexcept {
+    if (bucket == 0) {
+        return 0;
+    }
+    if (bucket >= 63) {
+        return (std::numeric_limits<u64>::max)();
+    }
+    return (u64{1} << bucket) - 1;
+}
+} // namespace
+
+u64 XclipseLatencySnapshot::PercentileUpperBoundNs(u32 percentile) const noexcept {
+    if (count == 0 || percentile == 0) {
+        return 0;
+    }
+    percentile = (std::min)(percentile, 100U);
+    const u64 target = (count * percentile + 99) / 100;
+    u64 cumulative = 0;
+    for (std::size_t index = 0; index < buckets.size(); ++index) {
+        cumulative += buckets[index];
+        if (cumulative >= target) {
+            return BucketUpperBoundNs(index);
+        }
+    }
+    return max_ns;
+}
+
+void XclipseLatencyAccumulator::Record(u64 duration_ns) noexcept {
+    count.fetch_add(1, std::memory_order_relaxed);
+    total_ns.fetch_add(duration_ns, std::memory_order_relaxed);
+    u64 current = max_ns.load(std::memory_order_relaxed);
+    while (current < duration_ns &&
+           !max_ns.compare_exchange_weak(current, duration_ns, std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {
+    }
+    buckets[LatencyBucket(duration_ns)].fetch_add(1, std::memory_order_relaxed);
+}
+
+XclipseLatencySnapshot XclipseLatencyAccumulator::Snapshot() const noexcept {
+    XclipseLatencySnapshot snapshot{
+        .count = count.load(std::memory_order_relaxed),
+        .total_ns = total_ns.load(std::memory_order_relaxed),
+        .max_ns = max_ns.load(std::memory_order_relaxed),
+    };
+    for (std::size_t index = 0; index < buckets.size(); ++index) {
+        snapshot.buckets[index] = buckets[index].load(std::memory_order_relaxed);
+    }
+    return snapshot;
+}
 
 void XclipseTelemetry::UpdateMax(std::atomic<u64>& target, u64 value) noexcept {
     u64 current = target.load(std::memory_order_relaxed);
@@ -13,14 +75,15 @@ void XclipseTelemetry::UpdateMax(std::atomic<u64>& target, u64 value) noexcept {
     }
 }
 
-void XclipseTelemetry::RecordPipelineCacheLookup(bool hit) noexcept {
+void XclipseTelemetry::RecordRuntimePipelineMapLookup(bool hit) noexcept {
     if (!Enabled()) {
         return;
     }
-    (hit ? pipeline_cache_hits : pipeline_cache_misses).fetch_add(1, std::memory_order_relaxed);
+    (hit ? runtime_pipeline_map_hits : runtime_pipeline_map_misses)
+        .fetch_add(1, std::memory_order_relaxed);
 }
 
-void XclipseTelemetry::RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept {
+void XclipseTelemetry::RecordPipelineCreate(bool graphics, u64 create_ns, bool success) noexcept {
     if (!Enabled()) {
         return;
     }
@@ -30,8 +93,25 @@ void XclipseTelemetry::RecordPipelineCreate(bool graphics, u64 compile_ns, bool 
     if (!success) {
         pipeline_failures.fetch_add(1, std::memory_order_relaxed);
     }
-    pipeline_compile_ns_total.fetch_add(compile_ns, std::memory_order_relaxed);
-    UpdateMax(pipeline_compile_ns_max, compile_ns);
+    vulkan_pipeline_create_latency.Record(create_ns);
+}
+
+void XclipseTelemetry::RecordPipelineBuild(u64 build_ns) noexcept {
+    if (Enabled()) {
+        pipeline_build_latency.Record(build_ns);
+    }
+}
+
+void XclipseTelemetry::RecordPipelineQueueResidence(u64 residence_ns) noexcept {
+    if (Enabled()) {
+        pipeline_queue_residence_latency.Record(residence_ns);
+    }
+}
+
+void XclipseTelemetry::RecordPipelineBlockingWait(u64 wait_ns) noexcept {
+    if (Enabled()) {
+        pipeline_blocking_latency.Record(wait_ns);
+    }
 }
 
 void XclipseTelemetry::RecordPipelinePolicyViolations(u64 count) noexcept {
@@ -56,7 +136,8 @@ void XclipseTelemetry::RecordQueueSubmit(u64 commands, bool sync2, bool has_uplo
     (has_upload ? upload_submits : non_upload_submits).fetch_add(1, std::memory_order_relaxed);
 }
 
-void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) noexcept {
+void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source,
+                                     u64 duration_ns) noexcept {
     if (!Enabled()) {
         return;
     }
@@ -64,6 +145,11 @@ void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) no
     if (timeline) {
         timeline_waits.fetch_add(1, std::memory_order_relaxed);
     }
+    const auto source_index = static_cast<std::size_t>(source);
+    const auto safe_index = source_index < XCLIPSE_WAIT_SOURCE_COUNT
+                                ? source_index
+                                : static_cast<std::size_t>(XclipseWaitSource::Unknown);
+    wait_latency[safe_index].Record(duration_ns);
     switch (source) {
     case XclipseWaitSource::BufferCache:
         wait_buffer_cache.fetch_add(1, std::memory_order_relaxed);
@@ -78,6 +164,15 @@ void XclipseTelemetry::RecordGpuWait(bool timeline, XclipseWaitSource source) no
         wait_staging_pressure.fetch_add(1, std::memory_order_relaxed);
         break;
     case XclipseWaitSource::Unknown:
+    case XclipseWaitSource::SchedulerFinish:
+    case XclipseWaitSource::ResourceHazard:
+    case XclipseWaitSource::UploadCompletion:
+    case XclipseWaitSource::DownloadReadback:
+    case XclipseWaitSource::QueueSynchronization:
+    case XclipseWaitSource::FramePresentation:
+    case XclipseWaitSource::Teardown:
+    case XclipseWaitSource::Other:
+    case XclipseWaitSource::Count:
     default:
         wait_unknown.fetch_add(1, std::memory_order_relaxed);
         break;
@@ -236,14 +331,15 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
             graphics_pipeline_creates.load(std::memory_order_relaxed),
         .compute_pipeline_creates =
             compute_pipeline_creates.load(std::memory_order_relaxed),
-        .pipeline_cache_hits = pipeline_cache_hits.load(std::memory_order_relaxed),
-        .pipeline_cache_misses = pipeline_cache_misses.load(std::memory_order_relaxed),
+        .runtime_pipeline_map_hits = runtime_pipeline_map_hits.load(std::memory_order_relaxed),
+        .runtime_pipeline_map_misses = runtime_pipeline_map_misses.load(std::memory_order_relaxed),
         .pipeline_failures = pipeline_failures.load(std::memory_order_relaxed),
         .pipeline_policy_violations =
             pipeline_policy_violations.load(std::memory_order_relaxed),
-        .pipeline_compile_ns_total =
-            pipeline_compile_ns_total.load(std::memory_order_relaxed),
-        .pipeline_compile_ns_max = pipeline_compile_ns_max.load(std::memory_order_relaxed),
+        .vulkan_pipeline_create_latency = vulkan_pipeline_create_latency.Snapshot(),
+        .pipeline_build_latency = pipeline_build_latency.Snapshot(),
+        .pipeline_queue_residence_latency = pipeline_queue_residence_latency.Snapshot(),
+        .pipeline_blocking_latency = pipeline_blocking_latency.Snapshot(),
         .queue_submits = queue_submits.load(std::memory_order_relaxed),
         .upload_submits = upload_submits.load(std::memory_order_relaxed),
         .non_upload_submits = non_upload_submits.load(std::memory_order_relaxed),
@@ -259,6 +355,13 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .wait_fence = wait_fence.load(std::memory_order_relaxed),
         .wait_descriptor_buffer = wait_descriptor_buffer.load(std::memory_order_relaxed),
         .wait_staging_pressure = wait_staging_pressure.load(std::memory_order_relaxed),
+        .wait_latency = [&] {
+            std::array<XclipseLatencySnapshot, XCLIPSE_WAIT_SOURCE_COUNT> result{};
+            for (std::size_t index = 0; index < result.size(); ++index) {
+                result[index] = wait_latency[index].Snapshot();
+            }
+            return result;
+        }(),
         .all_commands_barriers = all_commands_barriers.load(std::memory_order_relaxed),
         .transfer_consumer_barriers =
             transfer_consumer_barriers.load(std::memory_order_relaxed),

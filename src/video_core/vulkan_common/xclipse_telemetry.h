@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 
 #include "common/common_types.h"
 
@@ -15,6 +17,40 @@ enum class XclipseWaitSource : u8 {
     Fence,
     DescriptorBuffer,
     StagingPressure,
+    SchedulerFinish,
+    ResourceHazard,
+    UploadCompletion,
+    DownloadReadback,
+    QueueSynchronization,
+    FramePresentation,
+    Teardown,
+    Other,
+    Count,
+};
+
+inline constexpr std::size_t XCLIPSE_LATENCY_BUCKET_COUNT = 48;
+inline constexpr std::size_t XCLIPSE_WAIT_SOURCE_COUNT =
+    static_cast<std::size_t>(XclipseWaitSource::Count);
+
+struct XclipseLatencySnapshot {
+    u64 count{};
+    u64 total_ns{};
+    u64 max_ns{};
+    std::array<u64, XCLIPSE_LATENCY_BUCKET_COUNT> buckets{};
+
+    [[nodiscard]] u64 PercentileUpperBoundNs(u32 percentile) const noexcept;
+};
+
+class XclipseLatencyAccumulator {
+public:
+    void Record(u64 duration_ns) noexcept;
+    [[nodiscard]] XclipseLatencySnapshot Snapshot() const noexcept;
+
+private:
+    std::atomic<u64> count{};
+    std::atomic<u64> total_ns{};
+    std::atomic<u64> max_ns{};
+    std::array<std::atomic<u64>, XCLIPSE_LATENCY_BUCKET_COUNT> buckets{};
 };
 
 struct XclipseTelemetrySnapshot {
@@ -23,12 +59,14 @@ struct XclipseTelemetrySnapshot {
     u64 pipeline_creates{};
     u64 graphics_pipeline_creates{};
     u64 compute_pipeline_creates{};
-    u64 pipeline_cache_hits{};
-    u64 pipeline_cache_misses{};
+    u64 runtime_pipeline_map_hits{};
+    u64 runtime_pipeline_map_misses{};
     u64 pipeline_failures{};
     u64 pipeline_policy_violations{};
-    u64 pipeline_compile_ns_total{};
-    u64 pipeline_compile_ns_max{};
+    XclipseLatencySnapshot vulkan_pipeline_create_latency{};
+    XclipseLatencySnapshot pipeline_build_latency{};
+    XclipseLatencySnapshot pipeline_queue_residence_latency{};
+    XclipseLatencySnapshot pipeline_blocking_latency{};
 
     u64 queue_submits{};
     u64 upload_submits{};
@@ -45,6 +83,7 @@ struct XclipseTelemetrySnapshot {
     u64 wait_fence{};
     u64 wait_descriptor_buffer{};
     u64 wait_staging_pressure{};
+    std::array<XclipseLatencySnapshot, XCLIPSE_WAIT_SOURCE_COUNT> wait_latency{};
     u64 all_commands_barriers{};
     u64 transfer_consumer_barriers{};
     u64 compute_consumer_barriers{};
@@ -88,13 +127,16 @@ public:
         return enabled.load(std::memory_order_relaxed);
     }
 
-    void RecordPipelineCacheLookup(bool hit) noexcept;
-    void RecordPipelineCreate(bool graphics, u64 compile_ns, bool success) noexcept;
+    void RecordRuntimePipelineMapLookup(bool hit) noexcept;
+    void RecordPipelineCreate(bool graphics, u64 create_ns, bool success) noexcept;
+    void RecordPipelineBuild(u64 build_ns) noexcept;
+    void RecordPipelineQueueResidence(u64 residence_ns) noexcept;
+    void RecordPipelineBlockingWait(u64 wait_ns) noexcept;
     void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2, bool has_upload = false) noexcept;
     void RecordDispatchDeferral() noexcept;
-    void RecordGpuWait(bool timeline,
-                       XclipseWaitSource source = XclipseWaitSource::Unknown) noexcept;
+    void RecordGpuWait(bool timeline, XclipseWaitSource source = XclipseWaitSource::Unknown,
+                       u64 duration_ns = 0) noexcept;
     void RecordSchedulerFinish() noexcept;
     void RecordAllCommandsBarrier() noexcept;
     void RecordTransferConsumerBarrier() noexcept;
@@ -126,12 +168,14 @@ private:
     std::atomic<u64> pipeline_creates{};
     std::atomic<u64> graphics_pipeline_creates{};
     std::atomic<u64> compute_pipeline_creates{};
-    std::atomic<u64> pipeline_cache_hits{};
-    std::atomic<u64> pipeline_cache_misses{};
+    std::atomic<u64> runtime_pipeline_map_hits{};
+    std::atomic<u64> runtime_pipeline_map_misses{};
     std::atomic<u64> pipeline_failures{};
     std::atomic<u64> pipeline_policy_violations{};
-    std::atomic<u64> pipeline_compile_ns_total{};
-    std::atomic<u64> pipeline_compile_ns_max{};
+    XclipseLatencyAccumulator vulkan_pipeline_create_latency{};
+    XclipseLatencyAccumulator pipeline_build_latency{};
+    XclipseLatencyAccumulator pipeline_queue_residence_latency{};
+    XclipseLatencyAccumulator pipeline_blocking_latency{};
 
     std::atomic<u64> queue_submits{};
     std::atomic<u64> upload_submits{};
@@ -148,6 +192,7 @@ private:
     std::atomic<u64> wait_fence{};
     std::atomic<u64> wait_descriptor_buffer{};
     std::atomic<u64> wait_staging_pressure{};
+    std::array<XclipseLatencyAccumulator, XCLIPSE_WAIT_SOURCE_COUNT> wait_latency{};
     std::atomic<u64> all_commands_barriers{};
     std::atomic<u64> transfer_consumer_barriers{};
     std::atomic<u64> compute_consumer_barriers{};
