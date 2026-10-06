@@ -15,4 +15,8 @@ class Device;
 void RunXclipseOptimizationProbeSuite(const Device& device,
                                       XclipseOptimizationProbeResults& results);
 
+/// Executes Eden's production BC4/BC5 decoder shaders against storage images and validates
+/// readback. The result is fail-closed and is suitable for enabling the RGTC GPU decode path.
+[[nodiscard]] bool RunXclipseRgtcDecodeValidationProbe(const Device& device);
+
 } // namespace Vulkan
