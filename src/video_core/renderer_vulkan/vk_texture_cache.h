@@ -551,7 +551,8 @@ public:
         return base_ci.compareOp;
     }
 
-    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth,
+    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view,
+                                      Shader::DrefExecutionMode dref_mode,
                                       VkImageView descriptor_view);
 
 private:
@@ -578,7 +579,8 @@ private:
 
     static constexpr size_t MAX_VARIANTS = 32;
 
-    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth) const noexcept;
+    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view,
+                                     Shader::DrefExecutionMode dref_mode) const noexcept;
     [[nodiscard]] VkSampler Find(const VariantKey& key) const noexcept;
     VkSampler Emplace(VariantKey key);
 
