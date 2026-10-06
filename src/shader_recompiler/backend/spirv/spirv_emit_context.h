@@ -41,6 +41,7 @@ struct TextureDefinition {
     Id pointer_type;
     Id image_type;
     u32 count;
+    DrefExecutionMode dref_mode;
     bool is_multisample;
     bool is_integer;
 };
