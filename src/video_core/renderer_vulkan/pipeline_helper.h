@@ -23,6 +23,8 @@
 
 namespace Vulkan {
 
+using Shader::Backend::SPIRV::DREF_COMPARE_OPS_PER_WORD;
+using Shader::Backend::SPIRV::NUM_DREF_COMPARE_OP_WORDS;
 using Shader::Backend::SPIRV::NUM_TEXTURE_AND_IMAGE_SCALING_WORDS;
 
 [[nodiscard]] inline std::optional<PixelFormat> PixelFormatFromImageFormat(
@@ -307,6 +309,7 @@ public:
             texture_bit = 1u;
             ++texture_ptr;
         }
+        ++texture_index;
     }
 
     void PushImage(bool is_rescaled) noexcept {
@@ -319,14 +322,18 @@ public:
     }
 
     void SetDrefCompareOp(u32 compare_op) noexcept {
-        if (!dref_compare_op_set) {
-            dref_compare_op = compare_op;
-            dref_compare_op_set = true;
+        const u32 word_index{texture_index / DREF_COMPARE_OPS_PER_WORD};
+        if (word_index >= dref_compare_ops.size()) {
+            return;
         }
+        const u32 shift{(texture_index % DREF_COMPARE_OPS_PER_WORD) * 4};
+        const u32 mask{0xFu << shift};
+        dref_compare_ops[word_index] =
+            (dref_compare_ops[word_index] & ~mask) | ((compare_op & 0x7u) << shift);
     }
 
-    u32 DrefCompareOp() const noexcept {
-        return dref_compare_op;
+    const std::array<u32, NUM_DREF_COMPARE_OP_WORDS>& DrefCompareOps() const noexcept {
+        return dref_compare_ops;
     }
 
     const std::array<u32, NUM_TEXTURE_AND_IMAGE_SCALING_WORDS>& Data() const noexcept {
@@ -339,8 +346,8 @@ private:
     u32* image_ptr{words.data() + Shader::Backend::SPIRV::NUM_TEXTURE_SCALING_WORDS};
     u32 texture_bit{1u};
     u32 image_bit{1u};
-    u32 dref_compare_op{VK_COMPARE_OP_ALWAYS};
-    bool dref_compare_op_set{};
+    u32 texture_index{};
+    std::array<u32, NUM_DREF_COMPARE_OP_WORDS> dref_compare_ops{};
 };
 
 class RenderAreaPushConstant {
@@ -349,7 +356,7 @@ public:
     std::array<f32, 4> words{};
 };
 
-inline void PushImageDescriptors(TextureCache& texture_cache,
+[[nodiscard]] inline bool PushImageDescriptors(TextureCache& texture_cache,
                                  GuestDescriptorQueue& guest_descriptor_queue,
                                  const Shader::Info& info, RescalingPushConstant& rescaling,
                                  const VideoCommon::SamplerId*& samplers,
@@ -370,11 +377,14 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
                 if (null_image_view != VK_NULL_HANDLE) vk_image_view = null_image_view;
             }
             Sampler& sampler{texture_cache.GetSampler(sampler_id)};
-            if (sampler.CompareEnabled()) {
+            if (desc.dref_mode == Shader::DrefExecutionMode::SoftwareDref) {
                 rescaling.SetDrefCompareOp(static_cast<u32>(sampler.CompareOp()));
             }
             const VkSampler vk_sampler =
-                sampler.HandleFor(image_view, desc.is_depth, vk_image_view);
+                sampler.HandleFor(image_view, desc.dref_mode, vk_image_view);
+            if (vk_sampler == VK_NULL_HANDLE) {
+                return false;
+            }
             guest_descriptor_queue.AddSampledImage(vk_image_view, vk_sampler);
             const bool element_rescaled{texture_cache.IsRescaling(image_view)};
             is_rescaled |= element_rescaled;
@@ -395,6 +405,7 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
         }
         rescaling.PushImage(is_rescaled);
     }
+    return true;
 }
 
 } // namespace Vulkan
