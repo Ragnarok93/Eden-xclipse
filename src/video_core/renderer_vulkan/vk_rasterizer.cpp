@@ -38,6 +38,7 @@
 #include "video_core/renderer_vulkan/vk_state_tracker.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
+#include "video_core/renderer_vulkan/xclipse_image_diagnostics.h"
 #include "video_core/shader_cache.h"
 #include "video_core/texture_cache/texture_cache_base.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -1544,6 +1545,46 @@ void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
                 static_cast<double>(1ULL << (32 - 24)) / (static_cast<double>(0x1.ep+127));
             units = static_cast<float>(static_cast<double>(units) * rescale_factor);
         }
+    }
+
+    if (device.XclipseDetailedDiagnosticsEnabled() &&
+        (regs.polygon_offset_point_enable != 0 || regs.polygon_offset_line_enable != 0 ||
+         regs.polygon_offset_fill_enable != 0 || regs.depth_bias != 0 ||
+         regs.depth_bias_clamp != 0.0f || regs.slope_scale_depth_bias != 0.0f) &&
+        xclipse_dref_binding_diagnostic_budget.TryConsume(
+            XclipseImageDiagnosticCategory::DepthBias)) {
+        constexpr size_t POINT = 0;
+        constexpr size_t LINE = 1;
+        constexpr size_t POLYGON = 2;
+        static constexpr std::array POLYGON_OFFSET_ENABLE_LUT = {
+            POINT, LINE, LINE, LINE, POLYGON, POLYGON, POLYGON, POLYGON,
+            POLYGON, POLYGON, LINE, LINE, POLYGON, POLYGON, POLYGON,
+        };
+        const std::array enabled_lut{
+            regs.polygon_offset_point_enable,
+            regs.polygon_offset_line_enable,
+            regs.polygon_offset_fill_enable,
+        };
+        const u32 topology_index = u32(maxwell3d->draw_manager.draw_state.topology);
+        const bool effective_enable =
+            enabled_lut[POLYGON_OFFSET_ENABLE_LUT[topology_index]] != 0;
+        const GraphicsPipeline* const pipeline = pipeline_cache.CurrentGraphicsPipeline();
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE DEPTH BIAS [diag=depth-bias] frame={} pipeline={:016x} "
+                 "enabled={} point={} line={} fill={} topology={} "
+                 "guest_constant={} host_constant={} slope={} clamp={} zeta_fmt={} "
+                 "depth_compare={} dref_pipeline={} values_dynamic=1 enable_dynamic={} "
+                 "extended_dynamic_state={} depth_bias_control={}",
+                 device.GetXclipseTelemetry().FrameCount(),
+                 pipeline ? pipeline->DiagnosticHash() : 0, effective_enable,
+                 regs.polygon_offset_point_enable != 0, regs.polygon_offset_line_enable != 0,
+                 regs.polygon_offset_fill_enable != 0, topology_index, regs.depth_bias / 2.0f,
+                 units, regs.slope_scale_depth_bias, regs.depth_bias_clamp,
+                 static_cast<u32>(regs.zeta.format), static_cast<u32>(regs.depth_test_func),
+                 pipeline ? pipeline->HasDrefDescriptors() : false,
+                 device.IsExtExtendedDynamicState2Supported(),
+                 pipeline ? pipeline->UsesExtendedDynamicState() : false,
+                 device.IsExtDepthBiasControlSupported());
     }
 
     scheduler.Record([constant = units, clamp = regs.depth_bias_clamp,
