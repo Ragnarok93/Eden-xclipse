@@ -73,6 +73,29 @@ enum class CompareFunction {
     Always,
 };
 
+[[nodiscard]] constexpr bool EvaluateDrefCompare(CompareFunction comparison, float reference,
+                                                  float sampled) noexcept {
+    switch (comparison) {
+    case CompareFunction::Never:
+        return false;
+    case CompareFunction::Less:
+        return reference < sampled;
+    case CompareFunction::Equal:
+        return reference == sampled;
+    case CompareFunction::LessThanEqual:
+        return reference <= sampled;
+    case CompareFunction::Greater:
+        return reference > sampled;
+    case CompareFunction::NotEqual:
+        return reference != sampled;
+    case CompareFunction::GreaterThanEqual:
+        return reference >= sampled;
+    case CompareFunction::Always:
+        return true;
+    }
+    return false;
+}
+
 enum class TessPrimitive {
     Isolines,
     Triangles,
