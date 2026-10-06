@@ -59,6 +59,7 @@ enum class XclipseImageWriter : std::uint8_t {
 
 struct XclipseImageProvenance {
     bool contents_defined{};
+    bool gpu_write_pending{};
     bool saw_undefined_transition{};
     XclipseImageWriter last_writer{XclipseImageWriter::None};
     std::uint64_t last_writer_tick{};

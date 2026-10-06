@@ -286,6 +286,12 @@ public:
     /// once it ends.
     void MarkResolveShadowsUpToDate() const;
 
+    /// Records an authoritative GPU writer after its command has been assembled.
+    void RecordProvenanceWrite(XclipseImageWriter writer) const noexcept;
+
+    /// Records only the render-target slots affected by a clear operation.
+    void RecordProvenanceWrite(u32 color_mask, bool depth_stencil) const noexcept;
+
 private:
     static constexpr size_t NUM_MEMOIZED_RENDER_PASS_VARIANTS = 8;
 
@@ -297,6 +303,7 @@ private:
     u32 num_images = 0;
     std::array<VkImage, 9> images{};
     std::array<VkImageSubresourceRange, 9> image_ranges{};
+    std::array<ImageView*, 9> image_views{};
     std::array<size_t, NUM_RT> rt_map{};
     bool has_depth{};
     bool has_stencil{};
@@ -363,7 +370,10 @@ public:
 
     void RecordProvenanceWrite(XclipseImageWriter writer) noexcept;
     void RecordGpuModification() noexcept {
-        RecordProvenanceWrite(XclipseImageWriter::GpuModification);
+        // Texture-cache preparation happens before the GPU command is known to be
+        // authoritative. Keep this separate from RecordProvenanceWrite so an
+        // aborted draw cannot make an undefined image look initialized.
+        xclipse_provenance.gpu_write_pending = true;
     }
     void RecordProvenanceTransition(VkImageLayout old_layout, VkImageLayout new_layout) noexcept;
 

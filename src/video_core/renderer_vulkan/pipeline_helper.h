@@ -348,7 +348,8 @@ struct DrefDiagnosticContext {
                          "image_id={} gpu={:#x} guest_fmt={} view_type={} "
                          "mip={} levels={} layer={} layers={} aspect=0x{:x} "
                          "compare_requested={} compare_op={} depth_compare_feature={} "
-                         "contents_defined={} initialized={} last_writer={} writer_tick={} "
+                         "contents_defined={} gpu_write_pending={} initialized={} "
+                         "last_writer={} writer_tick={} "
                          "last_layout={} transition_tick={} saw_undefined_transition={}",
                          device.GetXclipseTelemetry().FrameCount(),
                          diagnostic_context.pipeline_hash, diagnostic_context.shader_hash,
@@ -361,6 +362,7 @@ struct DrefDiagnosticContext {
                          source_image ? static_cast<u32>(source_image->AspectMask()) : 0u,
                          sampler.CompareEnabled(), static_cast<u32>(sampler.CompareOp()),
                          image_view.SupportsDepthComparison(), provenance.contents_defined,
+                         provenance.gpu_write_pending,
                          source_image ? source_image->IsInitialized() : false,
                          XclipseImageWriterName(provenance.last_writer),
                          provenance.last_writer_tick, provenance.last_layout,
@@ -374,7 +376,8 @@ struct DrefDiagnosticContext {
                             "XCLIPSE DREF undefined-read candidate [diag=undefined-sample] "
                             "frame={} pipeline={:016x} shader={:016x} stage={} descriptor={} "
                             "element={} image_id={} gpu={:#x} fmt={} mip={} layer={} "
-                            "last_writer={} writer_tick={} last_layout={} transition_tick={}",
+                            "last_writer={} writer_tick={} gpu_write_pending={} "
+                            "last_layout={} transition_tick={}",
                             device.GetXclipseTelemetry().FrameCount(),
                             diagnostic_context.pipeline_hash, diagnostic_context.shader_hash,
                             diagnostic_context.stage, descriptor_index, index,
@@ -382,7 +385,8 @@ struct DrefDiagnosticContext {
                             static_cast<u32>(image_view.format), image_view.range.base.level,
                             image_view.range.base.layer,
                             XclipseImageWriterName(provenance.last_writer),
-                            provenance.last_writer_tick, provenance.last_layout,
+                            provenance.last_writer_tick, provenance.gpu_write_pending,
+                            provenance.last_layout,
                             provenance.last_transition_tick);
             }
             const VkSampler vk_sampler =

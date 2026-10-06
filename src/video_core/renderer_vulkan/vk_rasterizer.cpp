@@ -276,6 +276,8 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
                             draw_params.base_vertex, draw_params.base_instance);
             }
         });
+        texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+            XclipseImageWriter::GpuModification);
 
         // Log draw call
         if (GPU::Logging::IsActive() &&
@@ -306,6 +308,8 @@ void RasterizerVulkan::DrawIndirect() {
                 cmdbuf.DrawIndirectByteCountEXT(1, 0, buffer_obj, offset, 0,
                                                 static_cast<u32>(stride));
             });
+            texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+                XclipseImageWriter::GpuModification);
             return;
         }
         if (params.include_count) {
@@ -325,6 +329,8 @@ void RasterizerVulkan::DrawIndirect() {
                                              static_cast<u32>(params.stride));
                 }
             });
+            texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+                XclipseImageWriter::GpuModification);
             return;
         }
         scheduler.Record([buffer_obj = buffer->Handle(), offset, params](vk::CommandBuffer cmdbuf) {
@@ -337,6 +343,8 @@ void RasterizerVulkan::DrawIndirect() {
                                     static_cast<u32>(params.stride));
             }
         });
+        texture_cache.GetFramebuffer()->RecordProvenanceWrite(
+            XclipseImageWriter::GpuModification);
 
         // Log indirect draw call
         if (GPU::Logging::IsActive() &&
@@ -399,6 +407,7 @@ void RasterizerVulkan::DrawTexture() {
         texture, Shader::DrefExecutionMode::NonDref, texture.RenderTarget());
     blit_image.BlitColor(framebuffer, texture.RenderTarget(), texture.ImageHandle(),
                          source_sampler, dst_region, src_region, src_size);
+    framebuffer->RecordProvenanceWrite(XclipseImageWriter::Blit);
 }
 
 void RasterizerVulkan::Clear(u32 layer_count) {
@@ -506,6 +515,9 @@ void RasterizerVulkan::Clear(u32 layer_count) {
     UpdateViewportsState(regs);
 
     const u32 color_attachment = regs.clear_surface.RT;
+    const auto record_color_clear = [&] {
+        framebuffer->RecordProvenanceWrite(1u << color_attachment, false);
+    };
     if (use_color && framebuffer->HasAspectColorBit(color_attachment)) {
         const auto format = VideoCore::Surface::PixelFormatFromRenderTargetFormat(regs.rt[color_attachment].format);
         bool is_integer = IsPixelFormatInteger(format);
@@ -534,6 +546,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
                     };
                     cmdbuf.ClearAttachments(attachment, clear_rect);
                 });
+                record_color_clear();
             }
         } else {
             u8 color_mask = u8(regs.clear_surface.R | regs.clear_surface.G << 1 | regs.clear_surface.B << 2 | regs.clear_surface.A << 3);
@@ -542,6 +555,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
                 Offset2D{.x = clear_rect.rect.offset.x + s32(clear_rect.rect.extent.width),
                          .y = clear_rect.rect.offset.y + s32(clear_rect.rect.extent.height)}};
             blit_image.ClearColor(framebuffer, color_mask, regs.clear_color, dst_region);
+            record_color_clear();
         }
     }
 
@@ -568,6 +582,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
         blit_image.ClearDepthStencil(framebuffer, use_depth, regs.clear_depth,
                                      u8(regs.stencil_front_mask), regs.clear_stencil,
                                      regs.stencil_front_func_mask, dst_region);
+        framebuffer->RecordProvenanceWrite(0, true);
     } else if (can_defer_clear) {
         VkClearValue ds_value{};
         ds_value.depthStencil.depth = regs.clear_depth;
@@ -583,6 +598,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
             attachment.clearValue.depthStencil.stencil = clear_stencil;
             cmdbuf.ClearAttachments(attachment, clear_rect);
         });
+        framebuffer->RecordProvenanceWrite(0, true);
     }
 }
 
@@ -2265,4 +2281,3 @@ void RasterizerVulkan::ReleaseChannel(s32 channel_id) {
 }
 
 } // namespace Vulkan
-

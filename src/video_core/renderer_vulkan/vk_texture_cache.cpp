@@ -2373,6 +2373,7 @@ Image::~Image() {
 
 void Image::RecordProvenanceWrite(XclipseImageWriter writer) noexcept {
     xclipse_provenance.contents_defined = true;
+    xclipse_provenance.gpu_write_pending = false;
     xclipse_provenance.last_writer = writer;
     xclipse_provenance.last_writer_tick = scheduler ? scheduler->CurrentTick() : 0;
 }
@@ -3623,7 +3624,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
     u32 width = (std::numeric_limits<u32>::max)();
     u32 height = (std::numeric_limits<u32>::max)();
     for (size_t index = 0; index < NUM_RT; ++index) {
-        const ImageView* const color_buffer = color_buffers[index];
+        ImageView* const color_buffer = color_buffers[index];
         if (!color_buffer) {
             renderpass_key.color_formats[index] = PixelFormat::Invalid;
             continue;
@@ -3636,6 +3637,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
         renderpass_key.color_formats[index] = color_buffer->format;
         num_layers = (std::max)(num_layers, color_buffer->range.extent.layers);
         images[num_images] = color_buffer->ImageHandle();
+        image_views[num_images] = color_buffer;
         image_ranges[num_images] = MakeSubresourceRange(color_buffer);
         rt_map[index] = num_images;
         samples = color_buffer->Samples();
@@ -3653,6 +3655,7 @@ void Framebuffer::CreateFramebuffer(TextureCacheRuntime& runtime,
         renderpass_key.depth_format = depth_buffer->format;
         num_layers = (std::max)(num_layers, depth_buffer->range.extent.layers);
         images[num_images] = depth_buffer->ImageHandle();
+        image_views[num_images] = depth_buffer;
         const VkImageSubresourceRange subresource_range = MakeSubresourceRange(depth_buffer);
         image_ranges[num_images] = subresource_range;
         samples = depth_buffer->Samples();
@@ -3734,6 +3737,31 @@ void Framebuffer::MarkResolveShadowsUpToDate() const {
     }
     for (u32 index = 0; index < num_resolve_shadows; ++index) {
         runtime_ptr->MarkResolveShadowUpToDate(resolve_shadow_images[index]);
+    }
+}
+
+void Framebuffer::RecordProvenanceWrite(XclipseImageWriter writer) const noexcept {
+    for (u32 index = 0; index < num_images; ++index) {
+        if (image_views[index]) {
+            image_views[index]->RecordImageWrite(writer);
+        }
+    }
+}
+
+void Framebuffer::RecordProvenanceWrite(u32 color_mask, bool depth_stencil) const noexcept {
+    for (u32 slot = 0; slot < NUM_RT; ++slot) {
+        if ((color_mask & (1u << slot)) == 0 ||
+            render_pass_key.color_formats[slot] == PixelFormat::Invalid) {
+            continue;
+        }
+        const size_t image_index = rt_map[slot];
+        if (image_index < num_images && image_views[image_index]) {
+            image_views[image_index]->RecordImageWrite(XclipseImageWriter::GpuModification);
+        }
+    }
+    if (depth_stencil && render_pass_key.depth_format != PixelFormat::Invalid &&
+        num_color_buffers < num_images && image_views[num_color_buffers]) {
+        image_views[num_color_buffers]->RecordImageWrite(XclipseImageWriter::GpuModification);
     }
 }
 
