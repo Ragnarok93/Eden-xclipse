@@ -531,26 +531,11 @@ std::vector<u32> EmitSPIRV(const Profile& profile, const RuntimeInfo& runtime_in
                 switch (inst.GetOpcode()) {
                 case IR::Opcode::ImageSampleDrefImplicitLod:
                 case IR::Opcode::ImageSampleDrefExplicitLod:
-                case IR::Opcode::ImageGatherDref: {
-                    auto flags = inst.Flags<IR::TextureInstInfo>();
-                    const size_t descriptor_index = flags.descriptor_index;
-                    if (descriptor_index >= program.info.texture_descriptors.size()) {
-                        break;
+                case IR::Opcode::ImageGatherDref:
+                    if (inst.Flags<IR::TextureInstInfo>().is_depth == 0) {
+                        program.info.uses_xclipse_r32_dref_emulation = true;
                     }
-                    auto& descriptor = program.info.texture_descriptors[descriptor_index];
-                    if (!descriptor.is_r32_dref_candidate) {
-                        break;
-                    }
-                    // R32_FLOAT is a color format on Vulkan. Switch only the validated,
-                    // statically-R32 descriptor to a non-comparison sampled image and let
-                    // emit_spirv_image perform the guest comparison in software.
-                    flags.is_depth.Assign(0);
-                    inst.SetFlags(flags);
-                    descriptor.is_depth = false;
-                    descriptor.xclipse_software_dref = true;
-                    program.info.uses_xclipse_r32_dref_emulation = true;
                     break;
-                }
                 default:
                     break;
                 }

@@ -3306,18 +3306,18 @@ Sampler::Sampler(TextureCacheRuntime& runtime, const Tegra::Texture::TSCEntry& t
     Emplace(VariantKey{});
 }
 
-Sampler::VariantKey Sampler::MakeKey(const ImageView& image_view, bool is_depth,
-                                     bool software_dref) const noexcept {
+Sampler::VariantKey Sampler::MakeKey(const ImageView& image_view, bool is_depth) const noexcept {
     VariantKey key{};
     key.reduce_anisotropy = has_added_anisotropy && !image_view.SupportsAnisotropy();
     key.force_nearest =
         has_linear_filtering &&
         (IsPixelFormatInteger(image_view.format) || !image_view.SupportsLinearFilter());
-    // Vulkan forbids comparison sampling when the view lacks depth-comparison support.
-    // The validated R32 software-DREF path additionally requires a raw, non-comparison
-    // sampler even if a future driver advertises broader comparison support.
+    // Vulkan forbids a comparison-enabled sampler with a view whose format lacks
+    // depth-comparison sampling support, even when the shader performs an ordinary
+    // non-Dref sample. Genuine Dref descriptors already pass is_depth=true, so removing
+    // the is_depth gate only sanitizes the previously-illegal non-Dref pairing.
     key.drop_depth_comparison =
-        has_depth_comparison && (software_dref || !image_view.SupportsDepthComparison());
+        has_depth_comparison && !image_view.SupportsDepthComparison();
     key.drop_reduction = has_minmax_reduction && !image_view.SupportsMinmaxFilter();
     key.drop_custom_border = has_custom_border_colors && image_view.RequiresBorderColorFormat();
     key.srgb_border = has_srgb_border_color && IsPixelFormatSRGB(image_view.format);
@@ -3409,9 +3409,8 @@ VkSampler Sampler::Emplace(VariantKey key) {
 }
 
 VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
-                             VkImageView descriptor_view, bool software_dref,
-                             u8 dref_opcode_mask, u64 shader_hash, u32 descriptor_index) {
-    VariantKey key = MakeKey(image_view, is_depth, software_dref);
+                             VkImageView descriptor_view) {
+    VariantKey key = MakeKey(image_view, is_depth);
     if (variants.size() >= MAX_VARIANTS) {
         key.srgb_border = false;
         key.swizzle = {};
@@ -3420,11 +3419,6 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
     const VkSampler existing = Find(key);
     const bool create_variant = existing == VK_NULL_HANDLE;
     const VkSampler sampler_handle = create_variant ? Emplace(key) : existing;
-    const bool shader_dref = is_depth || software_dref;
-    if (shader_dref) {
-        device_ptr->GetXclipseTelemetry().RecordDrefBinding(
-            key.drop_depth_comparison, software_dref);
-    }
     if (key.drop_depth_comparison && device_ptr->XclipseDrefDiagnosticsEnabled() &&
         xclipse_image_diagnostic_budget.HasRemaining(
             XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
@@ -3446,21 +3440,15 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
                      "XCLIPSE IMAGE SAMPLER depth-compare [diag=depth-compare] "
                      "image_id={} gpu={:#x} descriptor_view={:#x} sampler={:#x} "
                      "guest_fmt={} backing_vk_format={} "
-                     "shader_dref={} native_dref={} software_dref={} dref_opcode_mask=0x{:x} "
-                     "xclipse_r32_dref_emulation={} compare_requested={} "
-                     "depth_compare_feature={} compare_dropped={} effective_compare_enable={} "
-                     "guest_compare_op={} software_compare_op={} shader={:016x} descriptor={}",
+                     "shader_dref={} compare_requested={} depth_compare_feature={} "
+                     "compare_dropped={} effective_compare_enable={} compare_op={}",
                      image_view.image_id.Value(), image_view.GpuAddr(),
                      VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle),
                      static_cast<u32>(image_view.format),
-                     static_cast<u32>(backing_vk_format), shader_dref,
-                     shader_dref && !software_dref && effective_compare_enable,
-                     software_dref, dref_opcode_mask,
-                     device_ptr->UseXclipseR32DrefEmulation(), has_depth_comparison,
-                     image_view.SupportsDepthComparison(), key.drop_depth_comparison,
-                     effective_compare_enable, static_cast<u32>(base_ci.compareOp),
-                     software_dref ? static_cast<u32>(base_ci.compareOp) : 0U,
-                     shader_hash, descriptor_index);
+                     static_cast<u32>(backing_vk_format), is_depth,
+                     has_depth_comparison, image_view.SupportsDepthComparison(),
+                     key.drop_depth_comparison, effective_compare_enable,
+                     static_cast<u32>(base_ci.compareOp));
         }
     }
     if (create_variant && key.force_nearest &&

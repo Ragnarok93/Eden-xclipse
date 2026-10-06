@@ -1039,7 +1039,6 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
             device.GetXclipseTelemetry().RecordShaderTranslation(
                 translate_timing.decode_ns, translate_timing.optimization_ns);
         }
-        programs[index].info.xclipse_shader_hash = key.unique_hashes[index];
 
         if (Settings::values.dump_guest_shaders) {
             env.Dump(hash, key.unique_hashes[index]);
@@ -1219,7 +1218,6 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
         device.GetXclipseTelemetry().RecordShaderTranslation(
             translate_timing.decode_ns, translate_timing.optimization_ns);
     }
-    program.info.xclipse_shader_hash = key.unique_hash;
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool needs_shared_mem_clamp =
         driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
