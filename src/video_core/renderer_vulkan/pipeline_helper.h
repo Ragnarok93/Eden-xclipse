@@ -363,7 +363,8 @@ struct DrefDiagnosticContext {
     u32 stage{};
 };
 
-[[nodiscard]] inline bool PushImageDescriptors(TextureCache& texture_cache,
+[[nodiscard]] inline bool PushImageDescriptors(const Device& device,
+                                 TextureCache& texture_cache,
                                  GuestDescriptorQueue& guest_descriptor_queue,
                                  const Shader::Info& info, RescalingPushConstant& rescaling,
                                  const VideoCommon::SamplerId*& samplers,
@@ -390,7 +391,6 @@ struct DrefDiagnosticContext {
                 rescaling.SetDrefCompareOp(static_cast<u32>(sampler.CompareOp()));
             }
             const bool is_dref{Shader::IsDref(desc.dref_mode)};
-            const Device& device{texture_cache.runtime.device};
             const Image* const source_image{image_view.SourceImage()};
             const XclipseImageProvenance provenance =
                 source_image ? source_image->Provenance() : XclipseImageProvenance{};
