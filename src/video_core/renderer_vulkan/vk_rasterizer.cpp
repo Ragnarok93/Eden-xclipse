@@ -611,8 +611,9 @@ void RasterizerVulkan::DispatchCompute() {
         return;
     }
     std::scoped_lock lock{texture_cache.mutex, buffer_cache.mutex};
+    boost::container::small_vector<VideoCommon::ImageViewId, 64> written_image_views;
     if (!pipeline->Configure(*kepler_compute, *gpu_memory, scheduler, buffer_cache,
-                             texture_cache)) {
+                             texture_cache, written_image_views)) {
         return;
     }
 
@@ -632,6 +633,10 @@ void RasterizerVulkan::DispatchCompute() {
             }
             cmdbuf.DispatchIndirect(indirect_buffer, indirect_offset);
         });
+        for (const VideoCommon::ImageViewId image_view_id : written_image_views) {
+            texture_cache.GetImageView(image_view_id).RecordImageWrite(
+                XclipseImageWriter::GpuModification);
+        }
         return;
     }
     const std::array<u32, 3> dim{qmd.grid_dim_x, qmd.grid_dim_y, qmd.grid_dim_z};
@@ -654,6 +659,10 @@ void RasterizerVulkan::DispatchCompute() {
         }
         cmdbuf.Dispatch(dim[0], dim[1], dim[2]);
     });
+    for (const VideoCommon::ImageViewId image_view_id : written_image_views) {
+        texture_cache.GetImageView(image_view_id).RecordImageWrite(
+            XclipseImageWriter::GpuModification);
+    }
 
     // Log compute dispatch
     if (GPU::Logging::IsActive() &&

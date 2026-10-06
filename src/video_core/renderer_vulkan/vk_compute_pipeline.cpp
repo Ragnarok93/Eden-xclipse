@@ -170,7 +170,10 @@ ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk
 
 bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
-                                BufferCache& buffer_cache, TextureCache& texture_cache) {
+                                BufferCache& buffer_cache, TextureCache& texture_cache,
+                                boost::container::small_vector<VideoCommon::ImageViewId, 64>&
+                                    written_image_views) {
+    written_image_views.clear();
     guest_descriptor_queue.Acquire(scheduler, num_descriptor_entries, uses_descriptor_buffer);
 
     buffer_cache.SetComputeUniformBufferState(info.constant_buffer_mask, &uniform_buffer_sizes);
@@ -235,10 +238,20 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             samplers.push_back(sampler);
         }
     }
+    const size_t storage_image_view_start = views.size();
     for (const auto& desc : info.image_descriptors) {
         add_image(desc, desc.is_written);
     }
     texture_cache.FillImageViews(std::span(views.data(), views.size()), true);
+    size_t storage_image_view = storage_image_view_start;
+    for (const auto& desc : info.image_descriptors) {
+        for (u32 index = 0; index < desc.count; ++index) {
+            if (desc.is_written) {
+                written_image_views.push_back(views[storage_image_view].id);
+            }
+            ++storage_image_view;
+        }
+    }
 
     buffer_cache.UnbindComputeTextureBuffers();
     size_t index{};
