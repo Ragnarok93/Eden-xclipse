@@ -20,6 +20,7 @@ enum class XclipseImageDiagnosticCategory : std::size_t {
     SamplerDepthComparison,
     DrefBinding,
     UndefinedSampleRead,
+    DepthBias,
     Count,
 };
 
