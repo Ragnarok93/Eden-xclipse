@@ -548,7 +548,7 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
             .shader_hash = key.unique_hashes[stage + 1],
             .stage = static_cast<u32>(stage),
         };
-        if (!PushImageDescriptors(texture_cache, guest_descriptor_queue, stage_infos[stage],
+        if (!PushImageDescriptors(device, texture_cache, guest_descriptor_queue, stage_infos[stage],
                                   rescaling, samplers_it, views_it, dref_context)) {
             return false;
         }
