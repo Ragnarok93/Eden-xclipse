@@ -62,6 +62,18 @@ enum class XclipseWaitSource : u8 {
     return "invalid";
 }
 
+enum class XclipseDrefPath : u8 {
+    Native,
+    Software,
+    Unresolved,
+};
+
+enum class XclipseDrefFormat : u8 {
+    Other,
+    R32,
+    D32,
+};
+
 enum class XclipseBcnFormat : u8 {
     BC1,
     BC2,
@@ -241,8 +253,13 @@ struct XclipseTelemetrySnapshot {
     u64 dref_shader_bindings{};
     u64 dref_native_bindings{};
     u64 dref_software_bindings{};
+    u64 dref_unresolved_bindings{};
     u64 dref_compare_drops{};
+    u64 dref_emulated_drops{};
     u64 dref_unemulated_drops{};
+    u64 dref_r32_bindings{};
+    u64 dref_d32_bindings{};
+    u64 dref_dynamic_unknown_bindings{};
 
     u64 bcn_gpu_decode_dispatches{};
     u64 bcn_gpu_decode_bytes{};
@@ -311,7 +328,8 @@ public:
     void RecordDescriptorBufferUse(bool reused) noexcept;
     void RecordDescriptorBufferWrap(bool stalled) noexcept;
     void RecordDescriptorFrameWaitRequest() noexcept;
-    void RecordDrefBinding(bool compare_dropped, bool software_emulated) noexcept;
+    void RecordDrefBinding(XclipseDrefPath path, XclipseDrefFormat format,
+                           bool compare_dropped, bool dynamic_unknown = false) noexcept;
     void RecordBcnNativePath(XclipseBcnFormat format) noexcept;
     void RecordBcnGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept;
     void RecordBptcGpuDecode(XclipseBcnFormat format, u64 bytes) noexcept;
@@ -398,8 +416,13 @@ private:
     std::atomic<u64> dref_shader_bindings{};
     std::atomic<u64> dref_native_bindings{};
     std::atomic<u64> dref_software_bindings{};
+    std::atomic<u64> dref_unresolved_bindings{};
     std::atomic<u64> dref_compare_drops{};
+    std::atomic<u64> dref_emulated_drops{};
     std::atomic<u64> dref_unemulated_drops{};
+    std::atomic<u64> dref_r32_bindings{};
+    std::atomic<u64> dref_d32_bindings{};
+    std::atomic<u64> dref_dynamic_unknown_bindings{};
 
     std::atomic<u64> bcn_gpu_decode_dispatches{};
     std::atomic<u64> bcn_gpu_decode_bytes{};
