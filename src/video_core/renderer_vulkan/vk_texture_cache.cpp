@@ -3425,13 +3425,6 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
         device_ptr->GetXclipseTelemetry().RecordDrefBinding(
             key.drop_depth_comparison, software_dref);
     }
-    if (shader_dref && key.drop_depth_comparison && !software_dref) {
-        LOG_ERROR(Render_Vulkan,
-                  "XCLIPSE DREF INVARIANT dropped comparison without software emulation "
-                  "shader={:016x} descriptor={} guest_fmt={} sampler={:#x}",
-                  shader_hash, descriptor_index, static_cast<u32>(image_view.format),
-                  VulkanHandleValue(sampler_handle));
-    }
     if (key.drop_depth_comparison && device_ptr->XclipseDrefDiagnosticsEnabled() &&
         xclipse_image_diagnostic_budget.HasRemaining(
             XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
@@ -3461,7 +3454,8 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
                      VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle),
                      static_cast<u32>(image_view.format),
                      static_cast<u32>(backing_vk_format), shader_dref,
-                     shader_dref && !software_dref, software_dref, dref_opcode_mask,
+                     shader_dref && !software_dref && effective_compare_enable,
+                     software_dref, dref_opcode_mask,
                      device_ptr->UseXclipseR32DrefEmulation(), has_depth_comparison,
                      image_view.SupportsDepthComparison(), key.drop_depth_comparison,
                      effective_compare_enable, static_cast<u32>(base_ci.compareOp),
