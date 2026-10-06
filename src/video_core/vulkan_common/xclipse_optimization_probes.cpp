@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include <bc_decoder.h>
 
@@ -19,6 +20,8 @@
 #include "video_core/host_shaders/bcn_decoder_r8_snorm_comp_spv.h"
 #include "video_core/host_shaders/bcn_decoder_rg8_comp_spv.h"
 #include "video_core/host_shaders/bcn_decoder_rg8_snorm_comp_spv.h"
+#include "video_core/host_shaders/bcn_bptc_decoder_rgba16f_comp_spv.h"
+#include "video_core/host_shaders/bcn_bptc_decoder_rgba8_comp_spv.h"
 #include "common/logging.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -750,22 +753,38 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     return std::memcmp(bytes.data(), expected.data(), required) == 0;
 }
 
-[[nodiscard]] bool RunRgtcDecodeCase(const Device& device, const RgtcProbeCase& probe) {
-    constexpr u32 Width = 8;
-    constexpr u32 Height = 4;
-    constexpr VkDeviceSize InputBytes = 64;
-    const VkDeviceSize output_bytes =
-        static_cast<VkDeviceSize>(Width) * Height * probe.bytes_per_pixel;
+
+struct BlockDecodeProbeCase {
+    const char* name{};
+    u32 format{};
+    VkFormat output_format{};
+    const u32* code{};
+    size_t code_size{};
+    u32 width{};
+    u32 height{};
+    u32 bytes_per_pixel{};
+    u32 dispatch_x{};
+    std::span<const u8> input{};
+    std::span<const u8> expected{};
+};
+
+[[nodiscard]] bool RunBlockDecodeProbe(const Device& device, const BlockDecodeProbeCase& probe) {
+    const VkDeviceSize input_bytes = probe.input.size_bytes();
+    const VkDeviceSize output_bytes = probe.expected.size_bytes();
     const auto& dld = device.GetDispatchLoader();
     const VkDevice raw_device = *device.GetLogical();
     const auto memory_properties = device.GetPhysical().GetMemoryProperties().memoryProperties;
     const auto fail = [&](std::string_view stage, VkResult result = VK_ERROR_UNKNOWN) {
         LOG_WARNING(Render_Vulkan,
-                    "XCLIPSE RGTC PROBE format={} stage={} result={}",
+                    "XCLIPSE BCN DECODE PROBE format={} stage={} result={}",
                     probe.name, stage, result);
         return false;
     };
 
+    if (input_bytes == 0 || output_bytes == 0 || probe.width == 0 || probe.height == 0 ||
+        probe.dispatch_x == 0) {
+        return fail("invalid-probe");
+    }
     if (!device.IsFormatSupported(probe.output_format,
                                   VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
                                       VK_FORMAT_FEATURE_TRANSFER_SRC_BIT,
@@ -777,7 +796,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     BufferResource readback{dld, raw_device};
     constexpr VkMemoryPropertyFlags HostProbeMemory =
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    if (!CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, InputBytes,
+    if (!CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, input_bytes,
                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, HostProbeMemory, 0, input, true)) {
         return fail("input-buffer");
     }
@@ -786,10 +805,8 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback, true)) {
         return fail("readback-buffer");
     }
-
-    WriteRgtcProbeInput(
-        probe, std::span<u8>{static_cast<u8*>(input.mapped), static_cast<size_t>(InputBytes)});
-    std::memset(readback.mapped, 0xcd, static_cast<size_t>(output_bytes));
+    std::memcpy(input.mapped, probe.input.data(), probe.input.size_bytes());
+    std::memset(readback.mapped, 0xcd, probe.expected.size_bytes());
 
     const VkImageCreateInfo image_ci{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -797,7 +814,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
         .flags = 0,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = probe.output_format,
-        .extent = {Width, Height, 1},
+        .extent = {probe.width, probe.height, 1},
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -828,13 +845,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
             VK_COMPONENT_SWIZZLE_IDENTITY,
             VK_COMPONENT_SWIZZLE_IDENTITY,
         },
-        .subresourceRange{
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0,
-            1,
-            0,
-            1,
-        },
+        .subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
     };
     VkResult result =
         dld.vkCreateImageView(raw_device, &view_ci, nullptr, &objects.image_view);
@@ -960,7 +971,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     const VkDescriptorBufferInfo input_info{
         .buffer = input.buffer,
         .offset = 0,
-        .range = InputBytes,
+        .range = input_bytes,
     };
     const VkDescriptorImageInfo output_info{
         .sampler = VK_NULL_HANDLE,
@@ -1029,7 +1040,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .buffer = input.buffer,
         .offset = 0,
-        .size = InputBytes,
+        .size = input_bytes,
     };
     const VkImageMemoryBarrier to_general{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1052,7 +1063,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
                                 objects.pipeline_layout, 0, 1, &objects.descriptor_set, 0, nullptr);
     const RgtcProbePushConstants push{
         .format = probe.format,
-        .layer_stride = 512,
+        .layer_stride = 4096,
         .block_size = 512,
         .x_shift = 9,
         .block_height = 0,
@@ -1060,7 +1071,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     };
     dld.vkCmdPushConstants(command_buffer, objects.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                            sizeof(push), &push);
-    dld.vkCmdDispatch(command_buffer, 1, 1, 1);
+    dld.vkCmdDispatch(command_buffer, probe.dispatch_x, 1, 1);
 
     const VkImageMemoryBarrier to_transfer{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1084,7 +1095,7 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
         .bufferImageHeight = 0,
         .imageSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
         .imageOffset = {0, 0, 0},
-        .imageExtent = {Width, Height, 1},
+        .imageExtent = {probe.width, probe.height, 1},
     };
     dld.vkCmdCopyImageToBuffer(command_buffer, image.image,
                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &copy);
@@ -1111,15 +1122,147 @@ void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
     if (!SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer)) {
         return fail("submit-readback");
     }
-
-    const bool valid = ValidateRgtcProbeReadback(
-        probe, std::span<const u8>{static_cast<const u8*>(readback.mapped),
-                                   static_cast<size_t>(output_bytes)});
-    if (!valid) {
-        return fail("readback-mismatch");
+    if (std::memcmp(readback.mapped, probe.expected.data(), probe.expected.size_bytes()) != 0) {
+        return fail("cpu-reference-mismatch");
     }
-    LOG_INFO(Render_Vulkan, "XCLIPSE RGTC PROBE format={} result=validated", probe.name);
+    LOG_INFO(Render_Vulkan, "XCLIPSE BCN DECODE PROBE format={} result=validated", probe.name);
     return true;
+}
+
+[[nodiscard]] bool RunRgtcDecodeCase(const Device& device, const RgtcProbeCase& probe) {
+    constexpr u32 Width = 8;
+    constexpr u32 Height = 4;
+    std::array<u8, 64> input{};
+    WriteRgtcProbeInput(probe, input);
+
+    std::array<u8, Width * Height * 2> expected{};
+    std::array<u8, 16> left_block{};
+    std::array<u8, 16> right_block{};
+    WriteBc4ProbeBlock(left_block.data(), probe.left_r);
+    WriteBc4ProbeBlock(right_block.data(), probe.right_r);
+    if (probe.is_bc5) {
+        WriteBc4ProbeBlock(left_block.data() + 8, probe.left_g);
+        WriteBc4ProbeBlock(right_block.data() + 8, probe.right_g);
+        bcn::DecodeBc5(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
+        bcn::DecodeBc5(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
+    } else {
+        bcn::DecodeBc4(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
+        bcn::DecodeBc4(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
+    }
+    const size_t expected_size = Width * Height * probe.bytes_per_pixel;
+    return RunBlockDecodeProbe(
+        device,
+        BlockDecodeProbeCase{
+            .name = probe.name,
+            .format = probe.format,
+            .output_format = probe.output_format,
+            .code = probe.code,
+            .code_size = probe.code_size,
+            .width = Width,
+            .height = Height,
+            .bytes_per_pixel = probe.bytes_per_pixel,
+            .dispatch_x = 1,
+            .input = input,
+            .expected = std::span<const u8>{expected.data(), expected_size},
+        });
+}
+
+[[nodiscard]] u32 ProbeBlockLinearOffset(u32 block_index) {
+    const u32 x = block_index << 4;
+    const u32 swizzle =
+        ((x & 32u) << 3u) | ((x & 16u) << 1u) | (x & 15u);
+    return ((x >> 6u) << 9u) + swizzle;
+}
+
+[[nodiscard]] std::array<u8, 16> MakeBc7ProbeBlock(u32 mode) {
+    std::array<u8, 16> block{};
+    for (u32 index = 0; index < block.size(); ++index) {
+        block[index] = static_cast<u8>((0x53u + mode * 29u + index * 17u) & 0xffu);
+    }
+    const u32 prefix_mask = mode == 7 ? 0xffu : ((1u << (mode + 1u)) - 1u);
+    block[0] = static_cast<u8>((block[0] & ~prefix_mask) | (1u << mode));
+    return block;
+}
+
+[[nodiscard]] std::array<u8, 16> MakeBc6ProbeBlock(u32 mode) {
+    std::array<u8, 16> block{};
+    for (u32 index = 0; index < block.size(); ++index) {
+        block[index] = static_cast<u8>((0x31u + mode * 37u + index * 23u) & 0xffu);
+    }
+    if (mode < 2) {
+        block[0] = static_cast<u8>((block[0] & ~0x3u) | mode);
+    } else {
+        const u32 encoded = mode - 2u;
+        const u32 selector = 0x2u | (encoded & 0x1u) | ((encoded & 0xeu) << 1u);
+        block[0] = static_cast<u8>((block[0] & 0xe0u) | selector);
+    }
+    return block;
+}
+
+[[nodiscard]] bool RunBc7DecodeProbe(const Device& device) {
+    constexpr std::array<u32, 8> Modes{0, 1, 2, 3, 4, 5, 6, 7};
+    constexpr u32 Height = 4;
+    const u32 width = static_cast<u32>(Modes.size()) * 4;
+    std::vector<u8> input(1024);
+    std::vector<u8> expected(static_cast<size_t>(width) * Height * 4);
+
+    for (u32 index = 0; index < Modes.size(); ++index) {
+        const auto block = MakeBc7ProbeBlock(Modes[index]);
+        const u32 offset = ProbeBlockLinearOffset(index);
+        if (offset + block.size() > input.size()) {
+            return false;
+        }
+        std::memcpy(input.data() + offset, block.data(), block.size());
+        bcn::DecodeBc7(block.data(), expected.data(), index * 4, 0, width, Height);
+    }
+    return RunBlockDecodeProbe(
+        device,
+        BlockDecodeProbeCase{
+            .name = "BC7",
+            .format = 6,
+            .output_format = VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+            .code = BCN_BPTC_DECODER_RGBA8_COMP_SPV,
+            .code_size = sizeof(BCN_BPTC_DECODER_RGBA8_COMP_SPV),
+            .width = width,
+            .height = Height,
+            .bytes_per_pixel = 4,
+            .dispatch_x = static_cast<u32>((Modes.size() + 7) / 8),
+            .input = input,
+            .expected = expected,
+        });
+}
+
+[[nodiscard]] bool RunBc6DecodeProbe(const Device& device, bool is_signed) {
+    constexpr std::array<u32, 14> Modes{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16};
+    constexpr u32 Height = 4;
+    const u32 width = static_cast<u32>(Modes.size()) * 4;
+    std::vector<u8> input(2048);
+    std::vector<u8> expected(static_cast<size_t>(width) * Height * 8);
+
+    for (u32 index = 0; index < Modes.size(); ++index) {
+        const auto block = MakeBc6ProbeBlock(Modes[index]);
+        const u32 offset = ProbeBlockLinearOffset(index);
+        if (offset + block.size() > input.size()) {
+            return false;
+        }
+        std::memcpy(input.data() + offset, block.data(), block.size());
+        bcn::DecodeBc6(block.data(), expected.data(), index * 4, 0, width, Height, is_signed);
+    }
+    return RunBlockDecodeProbe(
+        device,
+        BlockDecodeProbeCase{
+            .name = is_signed ? "BC6H_SFLOAT" : "BC6H_UFLOAT",
+            .format = is_signed ? 5u : 4u,
+            .output_format = VK_FORMAT_R16G16B16A16_SFLOAT,
+            .code = BCN_BPTC_DECODER_RGBA16F_COMP_SPV,
+            .code_size = sizeof(BCN_BPTC_DECODER_RGBA16F_COMP_SPV),
+            .width = width,
+            .height = Height,
+            .bytes_per_pixel = 8,
+            .dispatch_x = static_cast<u32>((Modes.size() + 7) / 8),
+            .input = input,
+            .expected = expected,
+        });
 }
 
 void CaptureStaticProfile(const Device& device, XclipseOptimizationProbeResults& results) {
@@ -1267,6 +1410,24 @@ bool RunXclipseRgtcDecodeValidationProbe(const Device& device) {
     LOG_INFO(Render_Vulkan, "XCLIPSE RGTC PROBES cases={} failures={} validated={}",
              probes.size(), failures, failures == 0);
     return failures == 0;
+}
+
+
+XclipseBptcDecodeValidation RunXclipseBptcDecodeValidationProbe(const Device& device) {
+    XclipseBptcDecodeValidation result{};
+    if (!device.IsXclipse() || device.HasBrokenCompute()) {
+        return result;
+    }
+
+    const bool bc6_unsigned = RunBc6DecodeProbe(device, false);
+    const bool bc6_signed = RunBc6DecodeProbe(device, true);
+    result.bc6 = bc6_unsigned && bc6_signed;
+    result.bc7 = RunBc7DecodeProbe(device);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE BPTC PROBES bc6_unsigned={} bc6_signed={} bc6_validated={} "
+             "bc7_validated={}",
+             bc6_unsigned, bc6_signed, result.bc6, result.bc7);
+    return result;
 }
 
 void RunXclipseOptimizationProbeSuite(const Device& device,
