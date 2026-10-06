@@ -1457,7 +1457,7 @@ XclipseBptcDecodeValidation RunXclipseBptcDecodeValidationProbe(const Device& de
         VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
     const bool bc7_capable = device.IsFormatSupported(
         VK_FORMAT_A8B8G8R8_UNORM_PACK32, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
-    const auto run = [&device](const char* name, auto&& probe) {
+    const auto run = [](const char* name, auto&& probe) {
         try {
             return probe();
         } catch (const vk::Exception& exception) {
