@@ -3773,20 +3773,23 @@ void TextureCacheRuntime::AccelerateImageUpload(
     u32 z_start, u32 z_count) {
 
     if (IsPixelFormatASTC(image.info.format)) {
+        astc_decoder_pass->Assemble(image, map, swizzles);
         image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
-        return astc_decoder_pass->Assemble(image, map, swizzles);
+        return;
     }
 
     if (BCDecoderPass* pass = BcnDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
+        pass->Assemble(image, map, swizzles);
         image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
-        return pass->Assemble(image, map, swizzles);
+        return;
     }
 
     if (BPTCDecoderPass* pass = BptcDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
+        pass->Assemble(image, map, swizzles);
         image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
-        return pass->Assemble(image, map, swizzles);
+        return;
     }
 
     if (!Settings::values.gpu_unswizzle_enabled.GetValue() || !bl3d_unswizzle_pass) {
