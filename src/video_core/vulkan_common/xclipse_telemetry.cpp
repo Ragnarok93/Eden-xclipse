@@ -114,6 +114,15 @@ void XclipseTelemetry::RecordPipelineBlockingWait(u64 wait_ns) noexcept {
     }
 }
 
+void XclipseTelemetry::RecordStagingPressureReallocation(u64 bytes, u64 elapsed_ns) noexcept {
+    if (!Enabled()) {
+        return;
+    }
+    staging_pressure_reallocations.fetch_add(1, std::memory_order_relaxed);
+    staging_pressure_reallocated_bytes.fetch_add(bytes, std::memory_order_relaxed);
+    staging_pressure_reallocation_latency.Record(elapsed_ns);
+}
+
 void XclipseTelemetry::RecordPipelinePolicyViolations(u64 count) noexcept {
     if (Enabled() && count != 0) {
         pipeline_policy_violations.fetch_add(count, std::memory_order_relaxed);
@@ -376,6 +385,12 @@ XclipseTelemetrySnapshot XclipseTelemetry::Snapshot() const noexcept {
         .pipeline_build_latency = pipeline_build_latency.Snapshot(),
         .pipeline_queue_residence_latency = pipeline_queue_residence_latency.Snapshot(),
         .pipeline_blocking_latency = pipeline_blocking_latency.Snapshot(),
+        .staging_pressure_reallocations =
+            staging_pressure_reallocations.load(std::memory_order_relaxed),
+        .staging_pressure_reallocated_bytes =
+            staging_pressure_reallocated_bytes.load(std::memory_order_relaxed),
+        .staging_pressure_reallocation_latency =
+            staging_pressure_reallocation_latency.Snapshot(),
         .queue_submits = queue_submits.load(std::memory_order_relaxed),
         .upload_submits = upload_submits.load(std::memory_order_relaxed),
         .non_upload_submits = non_upload_submits.load(std::memory_order_relaxed),

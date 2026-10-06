@@ -216,6 +216,17 @@ StagingBufferPoolStats StagingBufferPool::Stats() const {
     accumulate_activity(upload_cache);
     accumulate_activity(download_cache);
 
+    const auto accumulate_pending_pressure = [&stats](const PressureReleaseBuckets& buckets) {
+        for (size_t log2 = 0; log2 < buckets.size(); ++log2) {
+            const u64 count = buckets[log2].pending_count;
+            stats.pressure_pending_releases += count;
+            stats.pressure_pending_release_bytes += count * (u64{1} << log2);
+        }
+    };
+    accumulate_pending_pressure(device_local_pressure_releases);
+    accumulate_pending_pressure(upload_pressure_releases);
+    accumulate_pending_pressure(download_pressure_releases);
+
     for (size_t log2 = 0; log2 < upload_cache.size(); ++log2) {
         const auto& entries = upload_cache[log2].entries;
         if (entries.empty()) {
@@ -435,7 +446,7 @@ StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage
         .tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick(),
         .deferred = deferred,
     });
-    AccountAllocation(usage, u64{1} << log2_size);
+    AccountAllocation(usage, u64{1} << log2_size, log2_size);
     return entry.Ref();
 }
 
@@ -475,7 +486,7 @@ void StagingBufferPool::ReleaseAllFree(MemoryUsage usage) {
         std::erase_if(entries, is_deletable);
         const u64 removed = static_cast<u64>(old_size - entries.size());
         if (removed != 0) {
-            AccountRelease(usage, removed * (u64{1} << log2), removed, true);
+            AccountRelease(usage, removed * (u64{1} << log2), removed, true, log2);
         }
         staging.delete_index = 0;
         if (staging.iterate_index > entries.size()) {
@@ -506,7 +517,7 @@ void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, MemoryUsage usa
     const u64 removed = static_cast<u64>(std::distance(new_end, end));
     entries.erase(new_end, end);
     if (removed != 0) {
-        AccountRelease(usage, removed * (u64{1} << log2), removed, false);
+        AccountRelease(usage, removed * (u64{1} << log2), removed, false, log2);
     }
 
     const size_t new_size = entries.size();
@@ -519,7 +530,7 @@ void StagingBufferPool::ReleaseLevel(StagingBuffersCache& cache, MemoryUsage usa
     }
 }
 
-void StagingBufferPool::AccountAllocation(MemoryUsage usage, u64 bytes) {
+void StagingBufferPool::AccountAllocation(MemoryUsage usage, u64 bytes, size_t log2) {
     switch (usage) {
     case MemoryUsage::DeviceLocal:
         cached_device_local_bytes += bytes;
@@ -535,11 +546,13 @@ void StagingBufferPool::AccountAllocation(MemoryUsage usage, u64 bytes) {
         return;
     }
     ++allocation_count;
+    TrackPressureReallocation(usage, log2, bytes);
     peak_total_bytes =
         (std::max)(peak_total_bytes, static_cast<u64>(stream_buffer_size) + CachedBytes());
 }
 
-void StagingBufferPool::AccountRelease(MemoryUsage usage, u64 bytes, u64 count, bool pressure) {
+void StagingBufferPool::AccountRelease(MemoryUsage usage, u64 bytes, u64 count, bool pressure,
+                                       size_t log2) {
     u64* cached_bytes{};
     switch (usage) {
     case MemoryUsage::DeviceLocal:
@@ -562,7 +575,66 @@ void StagingBufferPool::AccountRelease(MemoryUsage usage, u64 bytes, u64 count, 
     if (pressure) {
         pressure_release_count += count;
         pressure_released_bytes += bytes;
+        TrackPressureRelease(usage, log2, count);
     }
+}
+
+StagingBufferPool::PressureReleaseBuckets& StagingBufferPool::PressureBuckets(MemoryUsage usage) {
+    switch (usage) {
+    case MemoryUsage::DeviceLocal:
+        return device_local_pressure_releases;
+    case MemoryUsage::Upload:
+        return upload_pressure_releases;
+    case MemoryUsage::Download:
+        return download_pressure_releases;
+    default:
+        ASSERT_MSG(false, "Invalid staging memory usage={}", usage);
+        return upload_pressure_releases;
+    }
+}
+
+const StagingBufferPool::PressureReleaseBuckets& StagingBufferPool::PressureBuckets(
+    MemoryUsage usage) const {
+    switch (usage) {
+    case MemoryUsage::DeviceLocal:
+        return device_local_pressure_releases;
+    case MemoryUsage::Upload:
+        return upload_pressure_releases;
+    case MemoryUsage::Download:
+        return download_pressure_releases;
+    default:
+        ASSERT_MSG(false, "Invalid staging memory usage={}", usage);
+        return upload_pressure_releases;
+    }
+}
+
+void StagingBufferPool::TrackPressureRelease(MemoryUsage usage, size_t log2, u64 count) {
+    if (!device.IsXclipse() || count == 0 || log2 >= NUM_LEVELS) {
+        return;
+    }
+    auto& bucket = PressureBuckets(usage)[log2];
+    if (bucket.pending_count == 0) {
+        bucket.first_release = std::chrono::steady_clock::now();
+    }
+    bucket.pending_count += count;
+}
+
+void StagingBufferPool::TrackPressureReallocation(MemoryUsage usage, size_t log2, u64 bytes) {
+    if (!device.IsXclipse() || log2 >= NUM_LEVELS) {
+        return;
+    }
+    auto& bucket = PressureBuckets(usage)[log2];
+    if (bucket.pending_count == 0) {
+        return;
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - bucket.first_release;
+    const u64 elapsed_ns = static_cast<u64>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+    --bucket.pending_count;
+    if (bucket.pending_count == 0) {
+        bucket.first_release = {};
+    }
+    device.GetXclipseTelemetry().RecordStagingPressureReallocation(bytes, elapsed_ns);
 }
 
 u64 StagingBufferPool::CachedBytes() const noexcept {

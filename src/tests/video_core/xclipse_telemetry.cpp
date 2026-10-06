@@ -9,6 +9,7 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     Vulkan::XclipseTelemetry telemetry;
     telemetry.RecordRuntimePipelineMapLookup(true);
     telemetry.RecordPipelineCreate(true, 100, false);
+    telemetry.RecordStagingPressureReallocation(4096, 500);
     telemetry.RecordQueueSubmit(4, true);
     telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache);
     telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::Fence);
@@ -32,6 +33,8 @@ TEST_CASE("XclipseTelemetry: disabled collector is inert", "[video_core]") {
     const auto snapshot = telemetry.Snapshot();
     REQUIRE_FALSE(snapshot.enabled);
     REQUIRE(snapshot.pipeline_creates == 0);
+    REQUIRE(snapshot.staging_pressure_reallocations == 0);
+    REQUIRE(snapshot.staging_pressure_reallocated_bytes == 0);
     REQUIRE(snapshot.queue_submits == 0);
     REQUIRE(snapshot.host_waits == 0);
     REQUIRE(snapshot.wait_unknown == 0);
@@ -66,6 +69,8 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     telemetry.RecordPipelineQueueResidence(750);
     telemetry.RecordPipelineBlockingWait(2'000'000);
     telemetry.RecordPipelinePolicyViolations(3);
+    telemetry.RecordStagingPressureReallocation(4096, 500);
+    telemetry.RecordStagingPressureReallocation(8192, 1500);
     telemetry.RecordQueueSubmit(7, true);
     telemetry.RecordQueueSubmit(3, false);
     telemetry.RecordGpuWait(true, Vulkan::XclipseWaitSource::BufferCache, 1'000'000);
@@ -115,6 +120,11 @@ TEST_CASE("XclipseTelemetry: records pipeline sync and descriptor counters", "[v
     REQUIRE(snapshot.vulkan_pipeline_create_latency.count == 2);
     REQUIRE(snapshot.vulkan_pipeline_create_latency.total_ns == 350);
     REQUIRE(snapshot.vulkan_pipeline_create_latency.max_ns == 250);
+    REQUIRE(snapshot.staging_pressure_reallocations == 2);
+    REQUIRE(snapshot.staging_pressure_reallocated_bytes == 12288);
+    REQUIRE(snapshot.staging_pressure_reallocation_latency.count == 2);
+    REQUIRE(snapshot.staging_pressure_reallocation_latency.total_ns == 2000);
+    REQUIRE(snapshot.staging_pressure_reallocation_latency.max_ns == 1500);
     REQUIRE(snapshot.queue_submits == 2);
     REQUIRE(snapshot.commands_submitted == 10);
     REQUIRE(snapshot.sync2_submits == 1);

@@ -2751,6 +2751,17 @@ void Device::LogXclipseTelemetry() const {
              ns_to_ms(blocking.PercentileUpperBoundNs(90)),
              ns_to_ms(blocking.PercentileUpperBoundNs(95)),
              ns_to_ms(blocking.PercentileUpperBoundNs(99)), ns_to_ms(blocking.max_ns));
+    const auto& staging_realloc = t.staging_pressure_reallocation_latency;
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE STAGING CHURN reallocations={} reallocated_bytes={} total_ms={:.3f} "
+             "p50_ms={:.3f} p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f}",
+             t.staging_pressure_reallocations, t.staging_pressure_reallocated_bytes,
+             ns_to_ms(staging_realloc.total_ns),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(50)),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(90)),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(95)),
+             ns_to_ms(staging_realloc.PercentileUpperBoundNs(99)),
+             ns_to_ms(staging_realloc.max_ns));
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} upload_submits={} "
              "non_upload_submits={} dispatch_deferrals={} sync2_submits={} legacy_submits={} "

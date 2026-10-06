@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <climits>
 #include <optional>
 #include <vector>
@@ -56,6 +57,8 @@ struct StagingBufferPoolStats {
     u64 pressure_released_bytes{};
     u64 pressure_waits{};
     u64 pressure_wait_reused_bytes{};
+    u64 pressure_pending_releases{};
+    u64 pressure_pending_release_bytes{};
     u64 cache_limit_hits{};
     u64 over_limit_allocations{};
     u64 cache_limit_bytes{};
@@ -133,6 +136,12 @@ private:
     static constexpr size_t NUM_LEVELS = sizeof(size_t) * CHAR_BIT;
     using StagingBuffersCache = std::array<StagingBuffers, NUM_LEVELS>;
 
+    struct PressureReleaseBucket {
+        u64 pending_count{};
+        std::chrono::steady_clock::time_point first_release{};
+    };
+    using PressureReleaseBuckets = std::array<PressureReleaseBucket, NUM_LEVELS>;
+
     StagingBufferRef GetStreamBuffer(size_t size);
     void AccountStreamFallback(size_t size, bool ring_conflict) noexcept;
 
@@ -153,8 +162,12 @@ private:
     void ReleaseAllFree(MemoryUsage usage);
 
     void ReleaseLevel(StagingBuffersCache& cache, MemoryUsage usage, size_t log2);
-    void AccountAllocation(MemoryUsage usage, u64 bytes);
-    void AccountRelease(MemoryUsage usage, u64 bytes, u64 count, bool pressure);
+    void AccountAllocation(MemoryUsage usage, u64 bytes, size_t log2);
+    void AccountRelease(MemoryUsage usage, u64 bytes, u64 count, bool pressure, size_t log2);
+    void TrackPressureRelease(MemoryUsage usage, size_t log2, u64 count);
+    void TrackPressureReallocation(MemoryUsage usage, size_t log2, u64 bytes);
+    PressureReleaseBuckets& PressureBuckets(MemoryUsage usage);
+    const PressureReleaseBuckets& PressureBuckets(MemoryUsage usage) const;
     [[nodiscard]] u64 CachedBytes() const noexcept;
     size_t Region(size_t iter) const noexcept {
         return iter / region_size;
@@ -178,6 +191,9 @@ private:
     StagingBuffersCache device_local_cache;
     StagingBuffersCache upload_cache;
     StagingBuffersCache download_cache;
+    PressureReleaseBuckets device_local_pressure_releases;
+    PressureReleaseBuckets upload_pressure_releases;
+    PressureReleaseBuckets download_pressure_releases;
 
     size_t current_delete_level = 0;
     u64 buffer_index = 0;

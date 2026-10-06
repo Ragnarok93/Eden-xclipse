@@ -915,7 +915,8 @@ void RasterizerVulkan::TickFrame() {
         // telemetry or allocations can obscure the actual returned footprint.
         const auto staging_reclaim =
             staging_pool.ApplyMemoryPressure(pressure_update.pressure);
-        if (pressure_update.changed || staging_reclaim.released_bytes != 0) {
+        if ((pressure_update.changed || staging_reclaim.released_bytes != 0) &&
+            Settings::values.xclipse_diagnostic_logging.GetValue()) {
             const auto staging_after = staging_pool.Stats();
             LOG_INFO(Render_Vulkan,
                      "XCLIPSE STAGING RECLAIM pressure={} cached_before={} cached_after={} "
@@ -933,7 +934,8 @@ void RasterizerVulkan::TickFrame() {
     // MADV_PAGEOUT over the entire live guest backing can evict hot pages on each
     // High/Critical transition and introduce swap faults in subsequent frames.
 
-    if (pressure_update.sampled && pressure_update.changed) {
+    if (pressure_update.sampled && pressure_update.changed &&
+        Settings::values.xclipse_diagnostic_logging.GetValue()) {
         const auto& sample = pressure_update.sample;
         const s32 budget_pct = sample.memory_budget_used_percent
                                    ? static_cast<s32>(*sample.memory_budget_used_percent)
@@ -987,7 +989,8 @@ void RasterizerVulkan::TickFrame() {
                  pressure_update.psi_trending_up);
     }
 
-    if (telemetry.Enabled() && xclipse_runtime_frame_counter % 300 == 0) {
+    if (telemetry.Enabled() && Settings::values.xclipse_diagnostic_logging.GetValue() &&
+        xclipse_runtime_frame_counter % 300 == 0) {
         const auto snapshot = telemetry.Snapshot();
         const auto& create_latency = snapshot.vulkan_pipeline_create_latency;
         const double compile_avg_ms = create_latency.count != 0
@@ -1090,9 +1093,12 @@ void RasterizerVulkan::TickFrame() {
                  "deferred_cached_bytes={} "
                  "total_bytes={} peak_total_bytes={} cache_limit_bytes={} allocations={} reuses={} "
                  "releases={} released_bytes={} pressure_releases={} pressure_released_bytes={} "
-                 "pressure_waits={} pressure_wait_reused_bytes={} cache_limit_hits={} "
-                 "over_limit_allocations={} largest_upload_bucket={} largest_free_upload_bucket={} "
-                 "largest_active_upload_bucket={}",
+                 "pressure_waits={} pressure_wait_reused_bytes={} pressure_pending_releases={} "
+                 "pressure_pending_release_bytes={} pressure_reallocations={} "
+                 "pressure_reallocated_bytes={} pressure_realloc_p50_ms={:.3f} "
+                 "pressure_realloc_p95_ms={:.3f} pressure_realloc_max_ms={:.3f} "
+                 "cache_limit_hits={} over_limit_allocations={} largest_upload_bucket={} "
+                 "largest_free_upload_bucket={} largest_active_upload_bucket={}",
                  staging.stream_bytes, staging.stream_upload_requests,
                  staging.stream_upload_request_bytes, staging.stream_size_bypasses,
                  staging.stream_size_bypass_bytes, staging.stream_ring_conflicts,
@@ -1104,6 +1110,17 @@ void RasterizerVulkan::TickFrame() {
                  staging.allocations, staging.reuses, staging.releases, staging.released_bytes,
                  staging.pressure_releases, staging.pressure_released_bytes,
                  staging.pressure_waits, staging.pressure_wait_reused_bytes,
+                 staging.pressure_pending_releases, staging.pressure_pending_release_bytes,
+                 snapshot.staging_pressure_reallocations,
+                 snapshot.staging_pressure_reallocated_bytes,
+                 static_cast<double>(
+                     snapshot.staging_pressure_reallocation_latency.PercentileUpperBoundNs(50)) /
+                     1'000'000.0,
+                 static_cast<double>(
+                     snapshot.staging_pressure_reallocation_latency.PercentileUpperBoundNs(95)) /
+                     1'000'000.0,
+                 static_cast<double>(snapshot.staging_pressure_reallocation_latency.max_ns) /
+                     1'000'000.0,
                  staging.cache_limit_hits, staging.over_limit_allocations,
                  staging.largest_upload_bucket_bytes, staging.largest_free_upload_bucket_bytes,
                  staging.largest_active_upload_bucket_bytes);

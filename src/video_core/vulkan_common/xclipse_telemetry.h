@@ -184,6 +184,9 @@ struct XclipseTelemetrySnapshot {
     XclipseLatencySnapshot pipeline_build_latency{};
     XclipseLatencySnapshot pipeline_queue_residence_latency{};
     XclipseLatencySnapshot pipeline_blocking_latency{};
+    u64 staging_pressure_reallocations{};
+    u64 staging_pressure_reallocated_bytes{};
+    XclipseLatencySnapshot staging_pressure_reallocation_latency{};
 
     u64 queue_submits{};
     u64 upload_submits{};
@@ -255,6 +258,7 @@ public:
     void RecordPipelineBuild(u64 build_ns) noexcept;
     void RecordPipelineQueueResidence(u64 residence_ns) noexcept;
     void RecordPipelineBlockingWait(u64 wait_ns) noexcept;
+    void RecordStagingPressureReallocation(u64 bytes, u64 elapsed_ns) noexcept;
     void RecordPipelinePolicyViolations(u64 count) noexcept;
     void RecordQueueSubmit(u64 commands, bool sync2, bool has_upload = false) noexcept;
     void RecordDispatchDeferral() noexcept;
@@ -301,6 +305,9 @@ private:
     XclipseLatencyAccumulator pipeline_build_latency{};
     XclipseLatencyAccumulator pipeline_queue_residence_latency{};
     XclipseLatencyAccumulator pipeline_blocking_latency{};
+    std::atomic<u64> staging_pressure_reallocations{};
+    std::atomic<u64> staging_pressure_reallocated_bytes{};
+    XclipseLatencyAccumulator staging_pressure_reallocation_latency{};
 
     std::atomic<u64> queue_submits{};
     std::atomic<u64> upload_submits{};
