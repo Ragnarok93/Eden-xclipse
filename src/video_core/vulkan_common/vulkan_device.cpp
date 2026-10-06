@@ -2369,6 +2369,15 @@ void Device::RunXclipseValidationProbes() {
     }
 
     try {
+        device_policy.xclipse.rgtc_gpu_decode_validated =
+            RunXclipseRgtcDecodeValidationProbe(*this);
+    } catch (const vk::Exception& exception) {
+        device_policy.xclipse.rgtc_gpu_decode_validated = false;
+        LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE RGTC decode validation exception: {}",
+                    exception.what());
+    }
+
+    try {
         RunXclipseDepthComparisonProbes(*this, device_policy.optimization_probes);
     } catch (const vk::Exception& exception) {
         LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE depth comparison exception: {}",
