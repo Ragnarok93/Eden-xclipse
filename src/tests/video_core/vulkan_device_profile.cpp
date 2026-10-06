@@ -111,6 +111,11 @@ TEST_CASE("VulkanDeviceProfile: Xclipse subgroup control requires exact wave32 v
     REQUIRE(Vulkan::IsXclipseSubgroupSizeValidated(policy, 64));
 
     policy.xclipse.wave32_validated = true;
+    // Validating both waves does not override the neutral near-tie policy.
+    Vulkan::UpdateXclipseSubgroupSizePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_subgroup_size_control);
+
+    policy.xclipse.preferred_compute_wave = 32;
     Vulkan::UpdateXclipseSubgroupSizePolicy(policy, true);
     REQUIRE(policy.use_xclipse_subgroup_size_control);
     REQUIRE(Vulkan::CanRequireXclipseSubgroupSize(policy, 32, true, 0x21U, 0x01U));
@@ -120,4 +125,36 @@ TEST_CASE("VulkanDeviceProfile: Xclipse subgroup control requires exact wave32 v
     Vulkan::UpdateXclipseSubgroupSizePolicy(policy, false);
     REQUIRE_FALSE(policy.use_xclipse_subgroup_size_control);
     REQUIRE_FALSE(Vulkan::CanRequireXclipseSubgroupSize(policy, 32, true, 0x21U, 0x01U));
+}
+
+TEST_CASE("VulkanDeviceProfile: effective subgroup and descriptor policies invalidate caches",
+          "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy baseline{};
+    baseline.xclipse.detected = true;
+    baseline.xclipse.wave32_validated = true;
+    baseline.xclipse.wave64_validated = true;
+    baseline.xclipse.allowed_wave_mask = 3;
+    baseline.xclipse.preferred_compute_wave = 32;
+    baseline.xclipse.descriptor_buffer_validated = true;
+    Vulkan::UpdateXclipseSubgroupSizePolicy(baseline, true);
+    const auto hash = Vulkan::ComputeVulkanPolicyHash(baseline);
+
+    for (const auto preference : {0U, 64U}) {
+        auto changed = baseline;
+        changed.xclipse.preferred_compute_wave = preference;
+        Vulkan::UpdateXclipseSubgroupSizePolicy(changed, true);
+        REQUIRE(Vulkan::ComputeVulkanPolicyHash(changed) != hash);
+        REQUIRE(changed.use_xclipse_subgroup_size_control == (preference == 64U));
+    }
+
+    auto descriptor_changed = baseline;
+    descriptor_changed.xclipse.descriptor_buffer_validated = false;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(descriptor_changed) != hash);
+
+    auto validation_changed = baseline;
+    validation_changed.xclipse.wave32_validated = false;
+    validation_changed.xclipse.allowed_wave_mask = 2;
+    Vulkan::UpdateXclipseSubgroupSizePolicy(validation_changed, true);
+    REQUIRE_FALSE(validation_changed.use_xclipse_subgroup_size_control);
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(validation_changed) != hash);
 }

@@ -118,6 +118,7 @@ TEST_CASE("Xclipse pipeline policy validates the requested subgroup size exactly
              static_cast<u32>(Vulkan::PipelinePolicyIssue::RequiredSubgroupUnvalidated)) != 0);
 
     policy.xclipse.wave32_validated = true;
+    policy.xclipse.preferred_compute_wave = 32;
     Vulkan::UpdateXclipseSubgroupSizePolicy(policy, true);
     const auto validated_report = Vulkan::InspectGraphicsPipeline(policy, pipeline_ci);
     REQUIRE(validated_report.Clean());
