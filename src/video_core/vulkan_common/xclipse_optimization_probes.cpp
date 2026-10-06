@@ -707,21 +707,43 @@ struct RgtcProbeCase {
     return static_cast<u8>(value & 0xff);
 }
 
-void WriteBc4ProbeBlock(u8* dst, s32 endpoint0, s32 endpoint1 = 0) {
-    std::memset(dst, 0, 8);
-    dst[0] = EncodeProbeChannel(endpoint0);
-    dst[1] = EncodeProbeChannel(endpoint1);
+void WriteBc4ProbeBlock(u8* dst, s32 endpoint0, s32 endpoint1, u32 selector_phase) {
+    u64 packed = static_cast<u64>(EncodeProbeChannel(endpoint0)) |
+                 (static_cast<u64>(EncodeProbeChannel(endpoint1)) << 8);
+    for (u32 texel = 0; texel < 16; ++texel) {
+        const u64 selector = static_cast<u64>((texel + selector_phase) & 7u);
+        packed |= selector << (16u + texel * 3u);
+    }
+    for (u32 byte = 0; byte < 8; ++byte) {
+        dst[byte] = static_cast<u8>((packed >> (byte * 8u)) & 0xffu);
+    }
 }
 
-void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
-    std::ranges::fill(bytes, u8{0});
-    const size_t second_offset = probe.is_bc5 ? 32 : 8;
-    WriteBc4ProbeBlock(bytes.data(), probe.left_r);
-    WriteBc4ProbeBlock(bytes.data() + second_offset, probe.right_r);
+[[nodiscard]] u32 RgtcProbeBlockLinearOffset(const RgtcProbeCase& probe, u32 block_x,
+                                             u32 block_y) {
+    const u32 bytes_per_block_log2 = probe.is_bc5 ? 4u : 3u;
+    const u32 x = block_x << bytes_per_block_log2;
+    const u32 gob_y = block_y >> 3u;
+    const u32 swizzle =
+        ((x & 32u) << 3u) | ((block_y & 6u) << 5u) | ((x & 16u) << 1u) |
+        ((block_y & 1u) << 4u) | (x & 15u);
+    return (gob_y << 9u) + ((x >> 6u) << 9u) + swizzle;
+}
+
+[[nodiscard]] std::array<u8, 16> MakeRgtcProbeBlock(const RgtcProbeCase& probe, u32 block_x,
+                                                     u32 block_y) {
+    std::array<u8, 16> block{};
+    const bool reverse = ((block_x + block_y) & 1u) != 0;
+    const s32 red0 = reverse ? probe.right_r : probe.left_r;
+    const s32 red1 = reverse ? probe.left_r : probe.right_r;
+    WriteBc4ProbeBlock(block.data(), red0, red1, block_x * 3u + block_y * 5u);
     if (probe.is_bc5) {
-        WriteBc4ProbeBlock(bytes.data() + 8, probe.left_g);
-        WriteBc4ProbeBlock(bytes.data() + second_offset + 8, probe.right_g);
+        const s32 green0 = reverse ? probe.right_g : probe.left_g;
+        const s32 green1 = reverse ? probe.left_g : probe.right_g;
+        WriteBc4ProbeBlock(block.data() + 8, green0, green1,
+                           block_x * 5u + block_y * 3u + 2u);
     }
+    return block;
 }
 
 struct BlockDecodeProbeCase {
@@ -734,6 +756,7 @@ struct BlockDecodeProbeCase {
     u32 height{};
     u32 bytes_per_pixel{};
     u32 dispatch_x{};
+    u32 dispatch_y{1};
     std::span<const u8> input{};
     std::span<const u8> expected{};
 };
@@ -746,13 +769,13 @@ struct BlockDecodeProbeCase {
     const auto memory_properties = device.GetPhysical().GetMemoryProperties().memoryProperties;
     const auto fail = [&](std::string_view stage, VkResult result = VK_ERROR_UNKNOWN) {
         LOG_WARNING(Render_Vulkan,
-                    "XCLIPSE BCN DECODE PROBE format={} stage={} result={}",
-                    probe.name, stage, result);
+                    "XCLIPSE BCN DECODE PROBE format={} extent={}x{} stage={} result={}",
+                    probe.name, probe.width, probe.height, stage, result);
         return false;
     };
 
     if (input_bytes == 0 || output_bytes == 0 || probe.width == 0 || probe.height == 0 ||
-        probe.dispatch_x == 0) {
+        probe.dispatch_x == 0 || probe.dispatch_y == 0) {
         return fail("invalid-probe");
     }
     if (!device.IsFormatSupported(probe.output_format,
@@ -1041,7 +1064,7 @@ struct BlockDecodeProbeCase {
     };
     dld.vkCmdPushConstants(command_buffer, objects.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                            sizeof(push), &push);
-    dld.vkCmdDispatch(command_buffer, probe.dispatch_x, 1, 1);
+    dld.vkCmdDispatch(command_buffer, probe.dispatch_x, probe.dispatch_y, 1);
 
     const VkImageMemoryBarrier to_transfer{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1095,31 +1118,47 @@ struct BlockDecodeProbeCase {
     if (std::memcmp(readback.mapped, probe.expected.data(), probe.expected.size_bytes()) != 0) {
         return fail("cpu-reference-mismatch");
     }
-    LOG_INFO(Render_Vulkan, "XCLIPSE BCN DECODE PROBE format={} result=validated", probe.name);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE BCN DECODE PROBE format={} extent={}x{} result=validated",
+             probe.name, probe.width, probe.height);
     return true;
 }
 
-[[nodiscard]] bool RunRgtcDecodeCase(const Device& device, const RgtcProbeCase& probe) {
-    constexpr u32 Width = 8;
-    constexpr u32 Height = 4;
-    std::array<u8, 64> input{};
-    WriteRgtcProbeInput(probe, input);
+[[nodiscard]] bool RunRgtcGeometryCase(const Device& device, const RgtcProbeCase& probe,
+                                        u32 width, u32 height) {
+    const u32 blocks_x = (width + 3u) / 4u;
+    const u32 blocks_y = (height + 3u) / 4u;
+    const u32 bytes_per_block = probe.is_bc5 ? 16u : 8u;
 
-    std::array<u8, Width * Height * 2> expected{};
-    std::array<u8, 16> left_block{};
-    std::array<u8, 16> right_block{};
-    WriteBc4ProbeBlock(left_block.data(), probe.left_r);
-    WriteBc4ProbeBlock(right_block.data(), probe.right_r);
-    if (probe.is_bc5) {
-        WriteBc4ProbeBlock(left_block.data() + 8, probe.left_g);
-        WriteBc4ProbeBlock(right_block.data() + 8, probe.right_g);
-        bcn::DecodeBc5(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
-        bcn::DecodeBc5(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
-    } else {
-        bcn::DecodeBc4(left_block.data(), expected.data(), 0, 0, Width, Height, probe.is_signed);
-        bcn::DecodeBc4(right_block.data(), expected.data(), 4, 0, Width, Height, probe.is_signed);
+    u32 input_bytes = 0;
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            input_bytes =
+                std::max(input_bytes,
+                         RgtcProbeBlockLinearOffset(probe, block_x, block_y) + bytes_per_block);
+        }
     }
-    const size_t expected_size = Width * Height * probe.bytes_per_pixel;
+
+    std::vector<u8> input(input_bytes);
+    std::vector<u8> expected(static_cast<size_t>(width) * height * probe.bytes_per_pixel);
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            const auto block = MakeRgtcProbeBlock(probe, block_x, block_y);
+            const u32 input_offset = RgtcProbeBlockLinearOffset(probe, block_x, block_y);
+            std::memcpy(input.data() + input_offset, block.data(), bytes_per_block);
+
+            const size_t x = static_cast<size_t>(block_x) * 4;
+            const size_t y = static_cast<size_t>(block_y) * 4;
+            if (probe.is_bc5) {
+                bcn::DecodeBc5(block.data(), expected.data(), x, y, width, height,
+                               probe.is_signed);
+            } else {
+                bcn::DecodeBc4(block.data(), expected.data(), x, y, width, height,
+                               probe.is_signed);
+            }
+        }
+    }
+
     return RunBlockDecodeProbe(
         device,
         BlockDecodeProbeCase{
@@ -1128,13 +1167,22 @@ struct BlockDecodeProbeCase {
             .output_format = probe.output_format,
             .code = probe.code,
             .code_size = probe.code_size,
-            .width = Width,
-            .height = Height,
+            .width = width,
+            .height = height,
             .bytes_per_pixel = probe.bytes_per_pixel,
-            .dispatch_x = 1,
+            .dispatch_x = (blocks_x + 7u) / 8u,
+            .dispatch_y = (blocks_y + 7u) / 8u,
             .input = input,
-            .expected = std::span<const u8>{expected.data(), expected_size},
+            .expected = expected,
         });
+}
+
+[[nodiscard]] bool RunRgtcDecodeCase(const Device& device, const RgtcProbeCase& probe) {
+    // A narrow partial block validates bounds handling. The larger case crosses both X and Y
+    // GOB boundaries, exercises partial edge blocks, and varies endpoints/selectors so both
+    // BC4/BC5 interpolation branches are compared against Eden's CPU reference.
+    return RunRgtcGeometryCase(device, probe, 3, 3) &&
+           RunRgtcGeometryCase(device, probe, 35, 33);
 }
 
 [[nodiscard]] u32 ProbeBlockLinearOffset(u32 block_index) {
