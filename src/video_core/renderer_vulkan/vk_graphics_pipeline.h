@@ -99,6 +99,10 @@ public:
         return key.state.extended_dynamic_state != 0;
     }
 
+    bool UsesExtendedDynamicState2() const noexcept {
+        return key.state.extended_dynamic_state_2 != 0;
+    }
+
     [[nodiscard]] bool HasDrefDescriptors() const noexcept {
         return std::ranges::any_of(stage_infos, [](const Shader::Info& info) {
             return std::ranges::any_of(info.texture_descriptors, [](const auto& desc) {
