@@ -154,6 +154,13 @@ void UpdateXclipseSynchronizationPolicy(VulkanDevicePolicy& policy,
                                      policy.xclipse.synchronization2_validated;
 }
 
+bool CanUseXclipseR32DrefEmulation(const VulkanDevicePolicy& policy) noexcept {
+    const auto& probes = policy.optimization_probes;
+    return policy.xclipse.detected &&
+           probes.r32_sampled_image == CapabilityState::Validated &&
+           probes.r32_dref_sample == CapabilityState::Validated;
+}
+
 void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
     policy.use_xclipse_bcn_gpu_decode =
         policy.xclipse.detected && setting_enabled && policy.xclipse.rgtc_gpu_decode_validated;

@@ -207,3 +207,43 @@ TEST_CASE("VulkanDeviceProfile: effective subgroup and descriptor policies inval
     REQUIRE_FALSE(validation_changed.use_xclipse_subgroup_size_control);
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(validation_changed) != hash);
 }
+
+
+TEST_CASE("VulkanDeviceProfile: R32 software DREF does not depend on native D32 DREF",
+          "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.optimization_probes.r32_sampled_image = Vulkan::CapabilityState::Validated;
+    policy.optimization_probes.r32_dref_sample = Vulkan::CapabilityState::Validated;
+    policy.optimization_probes.d32_compare_dref = Vulkan::CapabilityState::Advertised;
+    REQUIRE(Vulkan::CanUseXclipseR32DrefEmulation(policy));
+
+    policy.optimization_probes.r32_dref_sample = Vulkan::CapabilityState::Advertised;
+    REQUIRE_FALSE(Vulkan::CanUseXclipseR32DrefEmulation(policy));
+}
+
+TEST_CASE("VulkanDeviceProfile: 25.3.3 query-only properties do not churn policy identity",
+          "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.identity.device_name = "Samsung Xclipse 940";
+    policy.identity.driver_name = "Samsung SPAL";
+    policy.identity.pipeline_cache_uuid[0] = 0x5b;
+    policy.capabilities.alpha_to_one = false;
+    const auto baseline = Vulkan::ComputeVulkanPolicyHash(policy);
+
+    auto query_only = policy;
+    query_only.capabilities.residency_non_resident_strict = true;
+    query_only.capabilities.sparse_address_space_size = 1;
+    query_only.capabilities.buffer_capture_replay_descriptor_size = 4;
+    query_only.capabilities.image_capture_replay_descriptor_size = 4;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(query_only) == baseline);
+
+    auto alpha_changed = policy;
+    alpha_changed.capabilities.alpha_to_one = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(alpha_changed) != baseline);
+
+    auto uuid_changed = policy;
+    uuid_changed.identity.pipeline_cache_uuid[0] ^= 0xff;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(uuid_changed) != baseline);
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(policy) == baseline);
+}

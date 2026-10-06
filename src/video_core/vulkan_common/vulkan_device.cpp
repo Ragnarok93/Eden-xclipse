@@ -2718,18 +2718,38 @@ void Device::LogXclipseTelemetry() const {
         t.queue_submits != 0 ? static_cast<double>(t.commands_submitted) /
                                   static_cast<double>(t.queue_submits)
                             : 0.0;
-    const double average_compile_ms =
-        t.pipeline_creates != 0
-            ? static_cast<double>(t.pipeline_compile_ns_total) /
-                  static_cast<double>(t.pipeline_creates) / 1'000'000.0
-            : 0.0;
+    const auto ns_to_ms = [](u64 ns) { return static_cast<double>(ns) / 1'000'000.0; };
+    const auto average_ms = [&ns_to_ms](const XclipseLatencySnapshot& latency) {
+        return latency.count != 0 ? ns_to_ms(latency.total_ns) / static_cast<double>(latency.count)
+                                  : 0.0;
+    };
+    const auto& create = t.vulkan_pipeline_create_latency;
+    const auto& build = t.pipeline_build_latency;
+    const auto& queue = t.pipeline_queue_residence_latency;
+    const auto& blocking = t.pipeline_blocking_latency;
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE PIPELINE creates={} graphics={} compute={} cache_hits={} cache_misses={} "
-             "failures={} policy_violations={} compile_avg_ms={:.3f} compile_max_ms={:.3f}",
+             "XCLIPSE PIPELINE creates={} graphics={} compute={} runtime_map_hits={} "
+             "runtime_map_misses={} failures={} policy_violations={}",
              t.pipeline_creates, t.graphics_pipeline_creates, t.compute_pipeline_creates,
-             t.pipeline_cache_hits, t.pipeline_cache_misses, t.pipeline_failures,
-             t.pipeline_policy_violations, average_compile_ms,
-             static_cast<double>(t.pipeline_compile_ns_max) / 1'000'000.0);
+             t.runtime_pipeline_map_hits, t.runtime_pipeline_map_misses, t.pipeline_failures,
+             t.pipeline_policy_violations);
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE PIPELINE LATENCY vk_create_count={} avg_ms={:.3f} p50_ms={:.3f} "
+             "p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f} "
+             "build_count={} build_avg_ms={:.3f} queue_count={} queue_avg_ms={:.3f} "
+             "foreground_block_count={} foreground_block_total_ms={:.3f} "
+             "foreground_block_p50_ms={:.3f} foreground_block_p90_ms={:.3f} "
+             "foreground_block_p95_ms={:.3f} foreground_block_p99_ms={:.3f} "
+             "foreground_block_max_ms={:.3f}",
+             create.count, average_ms(create), ns_to_ms(create.PercentileUpperBoundNs(50)),
+             ns_to_ms(create.PercentileUpperBoundNs(90)),
+             ns_to_ms(create.PercentileUpperBoundNs(95)),
+             ns_to_ms(create.PercentileUpperBoundNs(99)), ns_to_ms(create.max_ns),
+             build.count, average_ms(build), queue.count, average_ms(queue), blocking.count,
+             ns_to_ms(blocking.total_ns), ns_to_ms(blocking.PercentileUpperBoundNs(50)),
+             ns_to_ms(blocking.PercentileUpperBoundNs(90)),
+             ns_to_ms(blocking.PercentileUpperBoundNs(95)),
+             ns_to_ms(blocking.PercentileUpperBoundNs(99)), ns_to_ms(blocking.max_ns));
     LOG_INFO(Render_Vulkan,
              "XCLIPSE SYNC submits={} commands_per_submit={:.2f} upload_submits={} "
              "non_upload_submits={} dispatch_deferrals={} sync2_submits={} legacy_submits={} "
@@ -2743,6 +2763,21 @@ void Device::LogXclipseTelemetry() const {
              t.wait_descriptor_buffer, t.wait_staging_pressure, t.scheduler_finishes,
              t.all_commands_barriers,
              t.transfer_consumer_barriers, t.compute_consumer_barriers);
+    for (std::size_t index = 0; index < t.wait_latency.size(); ++index) {
+        const auto& wait = t.wait_latency[index];
+        if (wait.count == 0) {
+            continue;
+        }
+        const auto source = static_cast<XclipseWaitSource>(index);
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE WAIT reason={} count={} total_ms={:.3f} p50_ms={:.3f} "
+                 "p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f}",
+                 XclipseWaitSourceName(source), wait.count, ns_to_ms(wait.total_ns),
+                 ns_to_ms(wait.PercentileUpperBoundNs(50)),
+                 ns_to_ms(wait.PercentileUpperBoundNs(90)),
+                 ns_to_ms(wait.PercentileUpperBoundNs(95)),
+                 ns_to_ms(wait.PercentileUpperBoundNs(99)), ns_to_ms(wait.max_ns));
+    }
     const double descriptor_buffer_reuse_rate =
         t.descriptor_buffer_uses != 0
             ? static_cast<double>(t.descriptor_buffer_reuses) /

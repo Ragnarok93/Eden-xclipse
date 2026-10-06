@@ -28,6 +28,40 @@ enum class XclipseWaitSource : u8 {
     Count,
 };
 
+[[nodiscard]] constexpr const char* XclipseWaitSourceName(XclipseWaitSource source) noexcept {
+    switch (source) {
+    case XclipseWaitSource::Unknown:
+        return "unknown";
+    case XclipseWaitSource::BufferCache:
+        return "buffer-cache";
+    case XclipseWaitSource::Fence:
+        return "fence";
+    case XclipseWaitSource::DescriptorBuffer:
+        return "descriptor-buffer";
+    case XclipseWaitSource::StagingPressure:
+        return "staging-pressure";
+    case XclipseWaitSource::SchedulerFinish:
+        return "scheduler-finish";
+    case XclipseWaitSource::ResourceHazard:
+        return "resource-hazard";
+    case XclipseWaitSource::UploadCompletion:
+        return "upload-completion";
+    case XclipseWaitSource::DownloadReadback:
+        return "download-readback";
+    case XclipseWaitSource::QueueSynchronization:
+        return "queue-synchronization";
+    case XclipseWaitSource::FramePresentation:
+        return "frame-presentation";
+    case XclipseWaitSource::Teardown:
+        return "teardown";
+    case XclipseWaitSource::Other:
+        return "other";
+    case XclipseWaitSource::Count:
+        break;
+    }
+    return "invalid";
+}
+
 inline constexpr std::size_t XCLIPSE_LATENCY_BUCKET_COUNT = 48;
 inline constexpr std::size_t XCLIPSE_WAIT_SOURCE_COUNT =
     static_cast<std::size_t>(XclipseWaitSource::Count);

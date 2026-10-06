@@ -315,11 +315,7 @@ public:
     }
 
     bool UseXclipseR32DrefEmulation() const noexcept {
-        const auto& probes = device_policy.optimization_probes;
-        return device_policy.xclipse.detected &&
-               probes.r32_sampled_image == CapabilityState::Validated &&
-               probes.r32_dref_sample == CapabilityState::Validated &&
-               probes.d32_compare_dref == CapabilityState::Validated;
+        return CanUseXclipseR32DrefEmulation(device_policy);
     }
 
 
