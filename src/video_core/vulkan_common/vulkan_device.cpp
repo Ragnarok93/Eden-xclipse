@@ -2610,7 +2610,7 @@ void Device::LogDevicePolicy() const {
     LOG_INFO(Render_Vulkan,
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
-             "sync2={} timeline={} descriptor_buffer={} sparse={} sync_policy={} "
+             "sync2={} timeline={} descriptor_buffer={} descriptor_image={} sparse={} sync_policy={} "
              "rgtc_gpu_decode={} bptc_gpu_decode={} subgroup32_policy={} "
              "wave32_probe_ns={} wave64_probe_ns={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
@@ -2650,11 +2650,13 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(caps.subgroup_arithmetic),
              CapabilityStateName(caps.subgroup_quad));
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE DREF r32_sample={} r32_dref={} r32_compare={} d32_dref={} mutable_r32_d32={} "
+             "XCLIPSE DREF r32_sample={} r32_dref={} r32_compare_non_dref={} "
+             "r32_compare_dref={} d32_dref={} mutable_r32_d32={} "
              "cases={} failures={}",
              CapabilityStateName(probes.r32_sampled_image),
              CapabilityStateName(probes.r32_dref_sample),
              CapabilityStateName(probes.r32_compare_non_dref),
+             CapabilityStateName(probes.r32_compare_dref),
              CapabilityStateName(probes.d32_compare_dref),
              CapabilityStateName(probes.mutable_r32_d32_view), probes.depth_compare_probe_cases,
              probes.depth_compare_probe_failures);
@@ -2677,6 +2679,37 @@ void Device::LogDevicePolicy() const {
              CapabilityStateName(probes.storage_image_create), probes.non_coherent_atom_size,
              probes.buffer_image_granularity, probes.optimal_buffer_copy_offset_alignment,
              probes.optimal_buffer_copy_row_pitch_alignment);
+    // Advertised cached masks are distinct from execution-probe results.
+    // Legacy masks do not establish FeatureFlags2 depth-comparison support.
+    constexpr std::array diagnostic_formats{
+        std::pair{VK_FORMAT_R32_SFLOAT, "R32_SFLOAT"},
+        std::pair{VK_FORMAT_D16_UNORM, "D16_UNORM"},
+        std::pair{VK_FORMAT_D24_UNORM_S8_UINT, "D24_UNORM_S8_UINT"},
+        std::pair{VK_FORMAT_D32_SFLOAT, "D32_SFLOAT"},
+        std::pair{VK_FORMAT_D32_SFLOAT_S8_UINT, "D32_SFLOAT_S8_UINT"}};
+    for (const auto& [format, name] : diagnostic_formats) {
+        const auto it = format_properties.find(format);
+        if (it != format_properties.end()) {
+            const auto& features = it->second;
+            LOG_INFO(Render_Vulkan,
+                     "XCLIPSE FORMAT format={} vk_format={} legacy_optimal_features=0x{:x} "
+                     "legacy_linear_features=0x{:x} legacy_buffer_features=0x{:x} "
+                     "optimal_sampled={} optimal_linear_filter={}",
+                     name, static_cast<u32>(format), features.optimalTilingFeatures,
+                     features.linearTilingFeatures, features.bufferFeatures,
+                     (features.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0,
+                     (features.optimalTilingFeatures &
+                      VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0);
+        }
+    }
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE OPT LIMITS max_allocations={} max_compute_invocations={} max_image_2d={} "
+             "empty_submit_capability={} buffer_transfer_capability={} timestamp_timing_validated={} "
+             "descriptor_buffer_validated={} descriptor_image_validated={}",
+             probes.max_memory_allocation_count, probes.max_compute_workgroup_invocations,
+             probes.max_image_dimension_2d, CapabilityStateName(probes.empty_queue_submit),
+             CapabilityStateName(probes.buffer_transfer), probes.timestamp_timing_validated,
+             xclipse.descriptor_buffer_validated, xclipse.descriptor_buffer_image_validated);
 }
 
 void Device::LogXclipseTelemetry() const {
