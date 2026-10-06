@@ -138,6 +138,8 @@ struct XclipseHardwareProfile {
     bool synchronization2_validated{};
     bool rgtc_gpu_decode_validated{};
     bool bptc_gpu_decode_capable{};
+    bool bc6_gpu_decode_validated{};
+    bool bc7_gpu_decode_validated{};
 };
 
 struct XclipseOptimizationProbeResults {
