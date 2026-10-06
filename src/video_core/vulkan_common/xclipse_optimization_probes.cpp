@@ -9,8 +9,14 @@
 #include <cmath>
 #include <cstring>
 #include <optional>
+#include <span>
+#include <string_view>
 
 #include "common/common_types.h"
+#include "video_core/host_shaders/bcn_decoder_r8_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_r8_snorm_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_rg8_comp_spv.h"
+#include "video_core/host_shaders/bcn_decoder_rg8_snorm_comp_spv.h"
 #include "common/logging.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -629,6 +635,487 @@ struct FenceResource {
     return true;
 }
 
+
+struct RgtcProbeObjects {
+    const vk::DeviceDispatch& dld;
+    VkDevice device{};
+    VkShaderModule shader{};
+    VkDescriptorSetLayout descriptor_layout{};
+    VkPipelineLayout pipeline_layout{};
+    VkPipeline pipeline{};
+    VkDescriptorPool descriptor_pool{};
+    VkDescriptorSet descriptor_set{};
+    VkImageView image_view{};
+    VkCommandPool command_pool{};
+
+    ~RgtcProbeObjects() {
+        if (command_pool) {
+            dld.vkDestroyCommandPool(device, command_pool, nullptr);
+        }
+        if (descriptor_pool) {
+            dld.vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+        }
+        if (pipeline) {
+            dld.vkDestroyPipeline(device, pipeline, nullptr);
+        }
+        if (pipeline_layout) {
+            dld.vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+        }
+        if (descriptor_layout) {
+            dld.vkDestroyDescriptorSetLayout(device, descriptor_layout, nullptr);
+        }
+        if (shader) {
+            dld.vkDestroyShaderModule(device, shader, nullptr);
+        }
+        if (image_view) {
+            dld.vkDestroyImageView(device, image_view, nullptr);
+        }
+    }
+};
+
+struct RgtcProbePushConstants {
+    u32 format{};
+    u32 layer_stride{};
+    u32 block_size{};
+    u32 x_shift{};
+    u32 block_height{};
+    u32 block_height_mask{};
+};
+static_assert(sizeof(RgtcProbePushConstants) == 24);
+
+struct RgtcProbeCase {
+    const char* name{};
+    u32 format{};
+    VkFormat output_format{};
+    const u32* code{};
+    size_t code_size{};
+    u32 bytes_per_pixel{};
+    bool is_bc5{};
+    bool is_signed{};
+    s32 left_r{};
+    s32 left_g{};
+    s32 right_r{};
+    s32 right_g{};
+};
+
+[[nodiscard]] u8 EncodeProbeChannel(s32 value) {
+    return static_cast<u8>(value & 0xff);
+}
+
+void WriteBc4ProbeBlock(u8* dst, s32 endpoint0, s32 endpoint1 = 0) {
+    std::memset(dst, 0, 8);
+    dst[0] = EncodeProbeChannel(endpoint0);
+    dst[1] = EncodeProbeChannel(endpoint1);
+}
+
+void WriteRgtcProbeInput(const RgtcProbeCase& probe, std::span<u8> bytes) {
+    std::ranges::fill(bytes, u8{0});
+    const size_t second_offset = probe.is_bc5 ? 32 : 8;
+    WriteBc4ProbeBlock(bytes.data(), probe.left_r);
+    WriteBc4ProbeBlock(bytes.data() + second_offset, probe.right_r);
+    if (probe.is_bc5) {
+        WriteBc4ProbeBlock(bytes.data() + 8, probe.left_g);
+        WriteBc4ProbeBlock(bytes.data() + second_offset + 8, probe.right_g);
+    }
+}
+
+[[nodiscard]] bool ValidateRgtcProbeReadback(const RgtcProbeCase& probe,
+                                             std::span<const u8> bytes) {
+    constexpr u32 Width = 8;
+    constexpr u32 Height = 4;
+    const size_t required = Width * Height * probe.bytes_per_pixel;
+    if (bytes.size() < required) {
+        return false;
+    }
+    for (u32 y = 0; y < Height; ++y) {
+        for (u32 x = 0; x < Width; ++x) {
+            const bool right = x >= 4;
+            const s32 expected_r = right ? probe.right_r : probe.left_r;
+            const s32 expected_g = right ? probe.right_g : probe.left_g;
+            const size_t offset = (static_cast<size_t>(y) * Width + x) * probe.bytes_per_pixel;
+            if (bytes[offset] != EncodeProbeChannel(expected_r)) {
+                return false;
+            }
+            if (probe.is_bc5 && bytes[offset + 1] != EncodeProbeChannel(expected_g)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool RunRgtcDecodeCase(const Device& device, const RgtcProbeCase& probe) {
+    constexpr u32 Width = 8;
+    constexpr u32 Height = 4;
+    constexpr VkDeviceSize InputBytes = 64;
+    const VkDeviceSize output_bytes =
+        static_cast<VkDeviceSize>(Width) * Height * probe.bytes_per_pixel;
+    const auto& dld = device.GetDispatchLoader();
+    const VkDevice raw_device = *device.GetLogical();
+    const auto memory_properties = device.GetPhysical().GetMemoryProperties().memoryProperties;
+    const auto fail = [&](std::string_view stage, VkResult result = VK_ERROR_UNKNOWN) {
+        LOG_WARNING(Render_Vulkan,
+                    "XCLIPSE RGTC PROBE format={} stage={} result={}",
+                    probe.name, stage, result);
+        return false;
+    };
+
+    if (!device.IsFormatSupported(probe.output_format,
+                                  VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+                                      VK_FORMAT_FEATURE_TRANSFER_SRC_BIT,
+                                  FormatType::Optimal)) {
+        return fail("output-format-unsupported");
+    }
+
+    BufferResource input{dld, raw_device};
+    BufferResource readback{dld, raw_device};
+    constexpr VkMemoryPropertyFlags HostProbeMemory =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (!CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, InputBytes,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, HostProbeMemory, 0, input, true)) {
+        return fail("input-buffer");
+    }
+    if (!CreateBuffer(dld, device.GetLogical(), raw_device, memory_properties, output_bytes,
+                      VK_BUFFER_USAGE_TRANSFER_DST_BIT, HostProbeMemory,
+                      VK_MEMORY_PROPERTY_HOST_CACHED_BIT, readback, true)) {
+        return fail("readback-buffer");
+    }
+
+    WriteRgtcProbeInput(
+        probe, std::span<u8>{static_cast<u8*>(input.mapped), static_cast<size_t>(InputBytes)});
+    std::memset(readback.mapped, 0xcd, static_cast<size_t>(output_bytes));
+
+    const VkImageCreateInfo image_ci{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = probe.output_format,
+        .extent = {Width, Height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    ImageResource image{dld, raw_device};
+    if (!AllocateAndBindImage(dld, raw_device, memory_properties, image_ci,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, image)) {
+        return fail("output-image");
+    }
+
+    RgtcProbeObjects objects{dld, raw_device};
+    const VkImageViewCreateInfo view_ci{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .image = image.image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+        .format = probe.output_format,
+        .components{
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange{
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            1,
+            0,
+            1,
+        },
+    };
+    VkResult result =
+        dld.vkCreateImageView(raw_device, &view_ci, nullptr, &objects.image_view);
+    if (result != VK_SUCCESS) {
+        return fail("image-view", result);
+    }
+
+    const VkShaderModuleCreateInfo shader_ci{
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = probe.code_size,
+        .pCode = probe.code,
+    };
+    result = dld.vkCreateShaderModule(raw_device, &shader_ci, nullptr, &objects.shader);
+    if (result != VK_SUCCESS) {
+        return fail("shader-module", result);
+    }
+
+    const std::array<VkDescriptorSetLayoutBinding, 2> bindings{{
+        {
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            .pImmutableSamplers = nullptr,
+        },
+        {
+            .binding = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            .pImmutableSamplers = nullptr,
+        },
+    }};
+    const VkDescriptorSetLayoutCreateInfo descriptor_layout_ci{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .bindingCount = static_cast<u32>(bindings.size()),
+        .pBindings = bindings.data(),
+    };
+    result = dld.vkCreateDescriptorSetLayout(raw_device, &descriptor_layout_ci, nullptr,
+                                             &objects.descriptor_layout);
+    if (result != VK_SUCCESS) {
+        return fail("descriptor-layout", result);
+    }
+
+    const VkPushConstantRange push_range{
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 0,
+        .size = sizeof(RgtcProbePushConstants),
+    };
+    const VkPipelineLayoutCreateInfo pipeline_layout_ci{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .setLayoutCount = 1,
+        .pSetLayouts = &objects.descriptor_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_range,
+    };
+    result = dld.vkCreatePipelineLayout(raw_device, &pipeline_layout_ci, nullptr,
+                                        &objects.pipeline_layout);
+    if (result != VK_SUCCESS) {
+        return fail("pipeline-layout", result);
+    }
+
+    const VkPipelineShaderStageCreateInfo stage_ci{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = objects.shader,
+        .pName = "main",
+        .pSpecializationInfo = nullptr,
+    };
+    const VkComputePipelineCreateInfo pipeline_ci{
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .stage = stage_ci,
+        .layout = objects.pipeline_layout,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = -1,
+    };
+    result = dld.vkCreateComputePipelines(raw_device, device.StaticPipelineCache(), 1,
+                                          &pipeline_ci, nullptr, &objects.pipeline);
+    if (result != VK_SUCCESS) {
+        return fail("compute-pipeline", result);
+    }
+
+    const std::array<VkDescriptorPoolSize, 2> pool_sizes{{
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1},
+    }};
+    const VkDescriptorPoolCreateInfo descriptor_pool_ci{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .maxSets = 1,
+        .poolSizeCount = static_cast<u32>(pool_sizes.size()),
+        .pPoolSizes = pool_sizes.data(),
+    };
+    result = dld.vkCreateDescriptorPool(raw_device, &descriptor_pool_ci, nullptr,
+                                        &objects.descriptor_pool);
+    if (result != VK_SUCCESS) {
+        return fail("descriptor-pool", result);
+    }
+    const VkDescriptorSetAllocateInfo descriptor_alloc{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .descriptorPool = objects.descriptor_pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &objects.descriptor_layout,
+    };
+    result =
+        dld.vkAllocateDescriptorSets(raw_device, &descriptor_alloc, &objects.descriptor_set);
+    if (result != VK_SUCCESS) {
+        return fail("descriptor-set", result);
+    }
+
+    const VkDescriptorBufferInfo input_info{
+        .buffer = input.buffer,
+        .offset = 0,
+        .range = InputBytes,
+    };
+    const VkDescriptorImageInfo output_info{
+        .sampler = VK_NULL_HANDLE,
+        .imageView = objects.image_view,
+        .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+    };
+    const std::array<VkWriteDescriptorSet, 2> writes{{
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = objects.descriptor_set,
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pImageInfo = nullptr,
+            .pBufferInfo = &input_info,
+            .pTexelBufferView = nullptr,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = objects.descriptor_set,
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .pImageInfo = &output_info,
+            .pBufferInfo = nullptr,
+            .pTexelBufferView = nullptr,
+        },
+    }};
+    dld.vkUpdateDescriptorSets(raw_device, static_cast<u32>(writes.size()), writes.data(), 0,
+                               nullptr);
+
+    const VkCommandPoolCreateInfo command_pool_ci{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = device.GetGraphicsFamily(),
+    };
+    result = dld.vkCreateCommandPool(raw_device, &command_pool_ci, nullptr,
+                                     &objects.command_pool);
+    if (result != VK_SUCCESS) {
+        return fail("command-pool", result);
+    }
+    VkCommandBuffer command_buffer{};
+    const VkCommandBufferAllocateInfo command_alloc{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .commandPool = objects.command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    result = dld.vkAllocateCommandBuffers(raw_device, &command_alloc, &command_buffer);
+    if (result != VK_SUCCESS || !BeginCommandBuffer(dld, command_buffer)) {
+        return fail("command-buffer", result);
+    }
+
+    const VkBufferMemoryBarrier host_to_compute{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = input.buffer,
+        .offset = 0,
+        .size = InputBytes,
+    };
+    const VkImageMemoryBarrier to_general{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_NONE,
+        .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image.image,
+        .subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    };
+    dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_HOST_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 1,
+                             &host_to_compute, 1, &to_general);
+
+    dld.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, objects.pipeline);
+    dld.vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                objects.pipeline_layout, 0, 1, &objects.descriptor_set, 0, nullptr);
+    const RgtcProbePushConstants push{
+        .format = probe.format,
+        .layer_stride = 512,
+        .block_size = 512,
+        .x_shift = 9,
+        .block_height = 0,
+        .block_height_mask = 0,
+    };
+    dld.vkCmdPushConstants(command_buffer, objects.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                           sizeof(push), &push);
+    dld.vkCmdDispatch(command_buffer, 1, 1, 1);
+
+    const VkImageMemoryBarrier to_transfer{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image.image,
+        .subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+    };
+    dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &to_transfer);
+
+    const VkBufferImageCopy copy{
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {Width, Height, 1},
+    };
+    dld.vkCmdCopyImageToBuffer(command_buffer, image.image,
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1, &copy);
+
+    const VkBufferMemoryBarrier transfer_to_host{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = readback.buffer,
+        .offset = 0,
+        .size = output_bytes,
+    };
+    dld.vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+                             &transfer_to_host, 0, nullptr);
+
+    result = dld.vkEndCommandBuffer(command_buffer);
+    if (result != VK_SUCCESS) {
+        return fail("command-end", result);
+    }
+    if (!SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer)) {
+        return fail("submit-readback");
+    }
+
+    const bool valid = ValidateRgtcProbeReadback(
+        probe, std::span<const u8>{static_cast<const u8*>(readback.mapped),
+                                   static_cast<size_t>(output_bytes)});
+    if (!valid) {
+        return fail("readback-mismatch");
+    }
+    LOG_INFO(Render_Vulkan, "XCLIPSE RGTC PROBE format={} result=validated", probe.name);
+    return true;
+}
+
 void CaptureStaticProfile(const Device& device, XclipseOptimizationProbeResults& results) {
     const auto queue_properties = device.GetPhysical().GetQueueFamilyProperties();
     results.queue_family_count = static_cast<u32>(queue_properties.size());
@@ -699,6 +1186,82 @@ void CaptureStaticProfile(const Device& device, XclipseOptimizationProbeResults&
 }
 
 } // namespace
+
+
+bool RunXclipseRgtcDecodeValidationProbe(const Device& device) {
+    if (!device.IsXclipse() || device.HasBrokenCompute()) {
+        return false;
+    }
+
+    const std::array probes{
+        RgtcProbeCase{
+            .name = "BC4_UNORM",
+            .format = 0,
+            .output_format = VK_FORMAT_R8_UNORM,
+            .code = BCN_DECODER_R8_COMP_SPV,
+            .code_size = sizeof(BCN_DECODER_R8_COMP_SPV),
+            .bytes_per_pixel = 1,
+            .is_bc5 = false,
+            .is_signed = false,
+            .left_r = 255,
+            .left_g = 0,
+            .right_r = 64,
+            .right_g = 0,
+        },
+        RgtcProbeCase{
+            .name = "BC4_SNORM",
+            .format = 1,
+            .output_format = VK_FORMAT_R8_SNORM,
+            .code = BCN_DECODER_R8_SNORM_COMP_SPV,
+            .code_size = sizeof(BCN_DECODER_R8_SNORM_COMP_SPV),
+            .bytes_per_pixel = 1,
+            .is_bc5 = false,
+            .is_signed = true,
+            .left_r = 64,
+            .left_g = 0,
+            .right_r = -64,
+            .right_g = 0,
+        },
+        RgtcProbeCase{
+            .name = "BC5_UNORM",
+            .format = 2,
+            .output_format = VK_FORMAT_R8G8_UNORM,
+            .code = BCN_DECODER_RG8_COMP_SPV,
+            .code_size = sizeof(BCN_DECODER_RG8_COMP_SPV),
+            .bytes_per_pixel = 2,
+            .is_bc5 = true,
+            .is_signed = false,
+            .left_r = 255,
+            .left_g = 32,
+            .right_r = 64,
+            .right_g = 200,
+        },
+        RgtcProbeCase{
+            .name = "BC5_SNORM",
+            .format = 3,
+            .output_format = VK_FORMAT_R8G8_SNORM,
+            .code = BCN_DECODER_RG8_SNORM_COMP_SPV,
+            .code_size = sizeof(BCN_DECODER_RG8_SNORM_COMP_SPV),
+            .bytes_per_pixel = 2,
+            .is_bc5 = true,
+            .is_signed = true,
+            .left_r = 64,
+            .left_g = -64,
+            .right_r = -32,
+            .right_g = 32,
+        },
+    };
+
+    u32 failures{};
+    for (const auto& probe : probes) {
+        if (!RunRgtcDecodeCase(device, probe)) {
+            ++failures;
+        }
+    }
+    LOG_INFO(Render_Vulkan, "XCLIPSE RGTC PROBES cases={} failures={} validated={}",
+             probes.size(), failures, failures == 0);
+    return failures == 0;
+}
 
 void RunXclipseOptimizationProbeSuite(const Device& device,
                                       XclipseOptimizationProbeResults& results) {
