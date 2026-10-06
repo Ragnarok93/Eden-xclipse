@@ -1545,14 +1545,24 @@ class SettingsFragmentPresenter(
             add(IntSetting.RENDERER_BACKEND.key)
             add(BooleanSetting.RENDERER_DEBUG.key)
             add(BooleanSetting.RENDERER_PATCH_OLD_QCOM_DRIVERS.key)
-            add(BooleanSetting.XCLIPSE_VALIDATION_PROBES.key)
-            add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
+            add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
+
+            add(HeaderSetting(R.string.xclipse_runtime_header))
             add(BooleanSetting.XCLIPSE_MEMORY_PRESSURE_MONITOR.key)
             add(BooleanSetting.XCLIPSE_GPU_BCN_DECODE.key)
-            add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
+            add(BooleanSetting.XCLIPSE_GPU_BPTC_DECODE.key)
             add(BooleanSetting.XCLIPSE_SYNC_POLICY.key)
+            add(BooleanSetting.XCLIPSE_SUBMISSION_BATCHING.key)
             add(BooleanSetting.XCLIPSE_SUBGROUP_SIZE_CONTROL.key)
-            add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
+
+            add(HeaderSetting(R.string.xclipse_validation_header))
+            add(BooleanSetting.XCLIPSE_VALIDATION_PROBES.key)
+            add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
+
+            add(HeaderSetting(R.string.xclipse_diagnostics_header))
+            add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
+            add(BooleanSetting.XCLIPSE_DIAGNOSTIC_LOGGING.key)
+            add(BooleanSetting.XCLIPSE_DREF_DIAGNOSTICS.key)
 
             add(HeaderSetting(R.string.cpu))
 

@@ -79,7 +79,7 @@ XclipseImageDiagnosticBudget xclipse_image_diagnostic_budget;
 
 [[nodiscard]] bool ShouldLogXclipseImageDiagnostic(
     const Device& device, XclipseImageDiagnosticCategory category) {
-    if (!device.IsXclipse() || !device.GetXclipseTelemetry().Enabled()) {
+    if (!device.XclipseDetailedDiagnosticsEnabled()) {
         return false;
     }
     return xclipse_image_diagnostic_budget.TryConsume(category);
@@ -3332,8 +3332,7 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
     const VkSampler existing = Find(key);
     const bool create_variant = existing == VK_NULL_HANDLE;
     const VkSampler sampler_handle = create_variant ? Emplace(key) : existing;
-    if (key.drop_depth_comparison && device_ptr->IsXclipse() &&
-        device_ptr->GetXclipseTelemetry().Enabled() &&
+    if (key.drop_depth_comparison && device_ptr->XclipseDrefDiagnosticsEnabled() &&
         xclipse_image_diagnostic_budget.HasRemaining(
             XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
         if (!depth_compare_diagnostic_bindings) {
@@ -3342,8 +3341,8 @@ VkSampler Sampler::HandleFor(const ImageView& image_view, bool is_depth,
         }
         if (depth_compare_diagnostic_bindings->TryRemember(
                 VulkanHandleValue(descriptor_view), VulkanHandleValue(sampler_handle)) &&
-            ShouldLogXclipseImageDiagnostic(
-                *device_ptr, XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
+            xclipse_image_diagnostic_budget.TryConsume(
+                XclipseImageDiagnosticCategory::SamplerDepthComparison)) {
             const VkFormat backing_vk_format =
                 MaxwellToVK::SurfaceFormat(*device_ptr, FormatType::Optimal, true,
                                            image_view.format)

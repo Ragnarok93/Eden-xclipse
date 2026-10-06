@@ -288,6 +288,14 @@ public:
         return device_policy.xclipse.detected;
     }
 
+    bool XclipseDetailedDiagnosticsEnabled() const noexcept {
+        return IsXclipse() && Settings::values.xclipse_diagnostic_logging.GetValue();
+    }
+
+    bool XclipseDrefDiagnosticsEnabled() const noexcept {
+        return IsXclipse() && Settings::values.xclipse_dref_diagnostics.GetValue();
+    }
+
     bool UseXclipseSyncPolicy() const noexcept {
         return device_policy.xclipse.detected && device_policy.use_xclipse_sync_policy;
     }

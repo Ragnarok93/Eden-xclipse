@@ -309,7 +309,7 @@ void LogXclipseFragmentOutputDiagnostics(const GraphicsPipelineCacheKey& key,
                                         const Shader::IR::Program& program,
                                         const Shader::Profile& profile, const Device& device) {
     static XclipseFragmentOutputDiagnosticBudget budget;
-    if (!device.IsXclipse() || !device.GetXclipseTelemetry().Enabled()) {
+    if (!device.XclipseDetailedDiagnosticsEnabled()) {
         return;
     }
 

@@ -712,6 +712,11 @@ struct Values {
                                              Category::RendererDebug};
     Setting<bool> xclipse_runtime_telemetry{linkage, true, "xclipse_runtime_telemetry",
                                             Category::RendererDebug};
+    // Observability-only controls. These must never participate in renderer/device policy.
+    Setting<bool> xclipse_diagnostic_logging{linkage, false, "xclipse_diagnostic_logging",
+                                             Category::RendererDebug};
+    Setting<bool> xclipse_dref_diagnostics{linkage, false, "xclipse_dref_diagnostics",
+                                           Category::RendererDebug};
     Setting<bool> xclipse_memory_pressure_monitor{linkage, true,
                                                   "xclipse_memory_pressure_monitor",
                                                   Category::RendererDebug};
