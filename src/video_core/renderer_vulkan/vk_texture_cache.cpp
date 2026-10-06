@@ -1534,6 +1534,7 @@ void TextureCacheRuntime::ReinterpretImage(Image& dst, Image& src,
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                        0, {}, {}, post_barriers);
     });
+    dst.RecordProvenanceWrite(XclipseImageWriter::Reinterpret);
 }
 
 void TextureCacheRuntime::BlitImage(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& src,
@@ -2009,6 +2010,7 @@ void TextureCacheRuntime::CopyImage(Image& dst, Image& src,
                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0, nullptr, nullptr, post_barriers);
     });
+    dst.RecordProvenanceWrite(XclipseImageWriter::Copy);
 }
 
 void TextureCacheRuntime::CopyImageMSAA(Image& dst, Image& src,
@@ -2458,6 +2460,7 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
                                                 {image_copies.data(), image_copies.size()}, false);
         }
         initialized = true;
+        RecordProvenanceWrite(XclipseImageWriter::Upload);
         runtime->ReleaseMsaaScratchImage(temp_vk_image);
 
         if (is_rescaled) {
@@ -2508,6 +2511,7 @@ void Image::UploadMemory(VkBuffer buffer, VkDeviceSize offset,
         CopyBufferToImage(cmdbuf, src_buffer, vk_image, vk_aspect_mask, was_initialized,
                           image_is_3d, VideoCommon::FixSmallVectorADL(vk_copies));
     });
+    RecordProvenanceWrite(XclipseImageWriter::Upload);
 
     if (is_rescaled) {
         ScaleUp();
@@ -3719,16 +3723,19 @@ void TextureCacheRuntime::AccelerateImageUpload(
     u32 z_start, u32 z_count) {
 
     if (IsPixelFormatASTC(image.info.format)) {
+        image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
         return astc_decoder_pass->Assemble(image, map, swizzles);
     }
 
     if (BCDecoderPass* pass = BcnDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
+        image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
         return pass->Assemble(image, map, swizzles);
     }
 
     if (BPTCDecoderPass* pass = BptcDecoderPassFor(image.info.format);
         pass && WillUseAcceleratedBcnDecode(device, image.info)) {
+        image.RecordProvenanceWrite(XclipseImageWriter::GpuDecode);
         return pass->Assemble(image, map, swizzles);
     }
 
