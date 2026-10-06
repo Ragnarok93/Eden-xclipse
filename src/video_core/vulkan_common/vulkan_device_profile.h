@@ -137,6 +137,8 @@ struct XclipseHardwareProfile {
     bool sparse_binding_validated{};
     bool synchronization2_validated{};
     bool rgtc_gpu_decode_validated{};
+    bool bc6_gpu_decode_capable{};
+    bool bc7_gpu_decode_capable{};
     bool bptc_gpu_decode_capable{};
     bool bc6_gpu_decode_validated{};
     bool bc7_gpu_decode_validated{};
@@ -218,6 +220,8 @@ struct VulkanDevicePolicy {
     bool use_xclipse_sync_policy{};
     bool use_xclipse_bcn_gpu_decode{};
     bool use_xclipse_bptc_gpu_decode{};
+    bool use_xclipse_bc6_gpu_decode{};
+    bool use_xclipse_bc7_gpu_decode{};
     bool use_xclipse_subgroup_size_control{};
     std::uint64_t policy_hash{};
 };

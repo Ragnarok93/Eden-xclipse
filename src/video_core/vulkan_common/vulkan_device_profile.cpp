@@ -167,9 +167,13 @@ void UpdateXclipseBcnDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabl
 }
 
 void UpdateXclipseBptcDecodePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
-    policy.use_xclipse_bptc_gpu_decode =
-        policy.xclipse.detected && setting_enabled && policy.xclipse.bptc_gpu_decode_capable &&
-        (policy.xclipse.bc6_gpu_decode_validated || policy.xclipse.bc7_gpu_decode_validated);
+    const bool enabled = policy.xclipse.detected && setting_enabled;
+    policy.use_xclipse_bc6_gpu_decode = enabled && policy.xclipse.bc6_gpu_decode_capable &&
+                                        policy.xclipse.bc6_gpu_decode_validated;
+    policy.use_xclipse_bc7_gpu_decode = enabled && policy.xclipse.bc7_gpu_decode_capable &&
+                                        policy.xclipse.bc7_gpu_decode_validated;
+    policy.use_xclipse_bptc_gpu_decode = policy.use_xclipse_bc6_gpu_decode ||
+                                         policy.use_xclipse_bc7_gpu_decode;
 }
 
 void UpdateXclipseSubgroupSizePolicy(VulkanDevicePolicy& policy, bool setting_enabled) noexcept {
@@ -266,6 +270,8 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(xclipse.sparse_binding_validated);
     hash.AddIntegral(xclipse.synchronization2_validated);
     hash.AddIntegral(xclipse.rgtc_gpu_decode_validated);
+    hash.AddIntegral(xclipse.bc6_gpu_decode_capable);
+    hash.AddIntegral(xclipse.bc7_gpu_decode_capable);
     hash.AddIntegral(xclipse.bptc_gpu_decode_capable);
     hash.AddIntegral(xclipse.bc6_gpu_decode_validated);
     hash.AddIntegral(xclipse.bc7_gpu_decode_validated);
@@ -306,6 +312,8 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(policy.use_xclipse_sync_policy);
     hash.AddIntegral(policy.use_xclipse_bcn_gpu_decode);
     hash.AddIntegral(policy.use_xclipse_bptc_gpu_decode);
+    hash.AddIntegral(policy.use_xclipse_bc6_gpu_decode);
+    hash.AddIntegral(policy.use_xclipse_bc7_gpu_decode);
     hash.AddIntegral(policy.use_xclipse_subgroup_size_control);
 
     return hash.Value();

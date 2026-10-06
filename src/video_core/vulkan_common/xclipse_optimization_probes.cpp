@@ -1453,14 +1453,40 @@ XclipseBptcDecodeValidation RunXclipseBptcDecodeValidationProbe(const Device& de
         return result;
     }
 
-    const bool bc6_unsigned = RunBc6DecodeProbe(device, false);
-    const bool bc6_signed = RunBc6DecodeProbe(device, true);
-    result.bc6 = bc6_unsigned && bc6_signed;
-    result.bc7 = RunBc7DecodeProbe(device);
+    const bool bc6_capable = device.IsFormatSupported(
+        VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+    const bool bc7_capable = device.IsFormatSupported(
+        VK_FORMAT_A8B8G8R8_UNORM_PACK32, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+    const auto run = [&device](const char* name, auto&& probe) {
+        try {
+            return probe();
+        } catch (const vk::Exception& exception) {
+            LOG_WARNING(Render_Vulkan, "XCLIPSE PROBE {} decode validation exception: {}", name,
+                        exception.what());
+            return false;
+        }
+    };
+
+    bool bc6_unsigned{};
+    bool bc6_signed{};
+    if (bc6_capable) {
+        bc6_unsigned = run("BC6H unsigned", [&] { return RunBc6DecodeProbe(device, false); });
+        bc6_signed = run("BC6H signed", [&] { return RunBc6DecodeProbe(device, true); });
+        result.bc6 = bc6_unsigned && bc6_signed;
+    } else {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE BC6H decode skipped: RGBA16F storage images unsupported");
+    }
+    if (bc7_capable) {
+        result.bc7 = run("BC7", [&] { return RunBc7DecodeProbe(device); });
+    } else {
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PROBE BC7 decode skipped: RGBA8 storage images unsupported");
+    }
     LOG_INFO(Render_Vulkan,
-             "XCLIPSE BPTC PROBES bc6_unsigned={} bc6_signed={} bc6_validated={} "
-             "bc7_validated={}",
-             bc6_unsigned, bc6_signed, result.bc6, result.bc7);
+             "XCLIPSE BPTC PROBES bc6_capable={} bc6_unsigned={} bc6_signed={} "
+             "bc6_validated={} bc7_capable={} bc7_validated={}",
+             bc6_capable, bc6_unsigned, bc6_signed, result.bc6, bc7_capable, result.bc7);
     return result;
 }
 

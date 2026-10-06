@@ -309,11 +309,11 @@ public:
     }
 
     bool UseXclipseBc6GpuDecode() const noexcept {
-        return UseXclipseBptcGpuDecode() && device_policy.xclipse.bc6_gpu_decode_validated;
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bc6_gpu_decode;
     }
 
     bool UseXclipseBc7GpuDecode() const noexcept {
-        return UseXclipseBptcGpuDecode() && device_policy.xclipse.bc7_gpu_decode_validated;
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bc7_gpu_decode;
     }
 
     bool UseXclipseDescriptorBuffer() const noexcept {

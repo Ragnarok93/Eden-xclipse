@@ -610,11 +610,15 @@ void Device::BuildDevicePolicy() {
 
     device_policy.xclipse = DetectXclipseHardware(identity);
     if (device_policy.xclipse.detected && !HasBrokenCompute()) {
-        device_policy.xclipse.bptc_gpu_decode_capable =
+        device_policy.xclipse.bc6_gpu_decode_capable =
             IsFormatSupported(VK_FORMAT_R16G16B16A16_SFLOAT,
-                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal) &&
+                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+        device_policy.xclipse.bc7_gpu_decode_capable =
             IsFormatSupported(VK_FORMAT_A8B8G8R8_UNORM_PACK32,
                               VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
+        device_policy.xclipse.bptc_gpu_decode_capable =
+            device_policy.xclipse.bc6_gpu_decode_capable ||
+            device_policy.xclipse.bc7_gpu_decode_capable;
     }
     UpdateXclipseSynchronizationPolicy(device_policy,
                                        Settings::values.xclipse_sync_policy.GetValue());
@@ -2379,7 +2383,8 @@ void Device::RunXclipseValidationProbes() {
 
     device_policy.xclipse.bc6_gpu_decode_validated = false;
     device_policy.xclipse.bc7_gpu_decode_validated = false;
-    if (device_policy.xclipse.bptc_gpu_decode_capable) {
+    if (device_policy.xclipse.bc6_gpu_decode_capable ||
+        device_policy.xclipse.bc7_gpu_decode_capable) {
         try {
             const XclipseBptcDecodeValidation validation{
                 RunXclipseBptcDecodeValidationProbe(*this)};
@@ -2632,7 +2637,8 @@ void Device::LogDevicePolicy() const {
              "XCLIPSE FEATURES BC1={} BC2={} BC3={} BC4={} BC5={} BC6={} BC7={} "
              "wave32={} wave64={} allowed_wave_mask=0x{:x} preferred_compute_wave={} "
              "sync2={} timeline={} descriptor_buffer={} descriptor_image={} sparse={} sync_policy={} "
-             "rgtc_gpu_decode={} bptc_gpu_decode={} bc6_decode={} bc7_decode={} "
+             "rgtc_gpu_decode={} bptc_gpu_decode={} bc6_gpu_decode={} bc7_gpu_decode={} "
+             "bc6_capable={} bc7_capable={} bc6_validated={} bc7_validated={} "
              "subgroup32_policy={} wave32_probe_ns={} wave64_probe_ns={}",
              bcn_state({BcnFormat::BC1_RGB_UNORM, BcnFormat::BC1_RGB_SRGB,
                         BcnFormat::BC1_RGBA_UNORM, BcnFormat::BC1_RGBA_SRGB}),
@@ -2658,6 +2664,15 @@ void Device::LogDevicePolicy() const {
                  ? "validated-enabled"
                  : (xclipse.bptc_gpu_decode_capable ? "validation-fallback"
                                                      : "unsupported"),
+             device_policy.use_xclipse_bc6_gpu_decode ? "validated-enabled"
+                                                      : (xclipse.bc6_gpu_decode_capable
+                                                             ? "validation-fallback"
+                                                             : "unsupported"),
+             device_policy.use_xclipse_bc7_gpu_decode ? "validated-enabled"
+                                                      : (xclipse.bc7_gpu_decode_capable
+                                                             ? "validation-fallback"
+                                                             : "unsupported"),
+             xclipse.bc6_gpu_decode_capable, xclipse.bc7_gpu_decode_capable,
              xclipse.bc6_gpu_decode_validated ? "validated" : "fallback",
              xclipse.bc7_gpu_decode_validated ? "validated" : "fallback",
              device_policy.use_xclipse_subgroup_size_control ? "validated-enabled"
