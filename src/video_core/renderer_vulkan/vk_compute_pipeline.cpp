@@ -280,8 +280,8 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
         .shader_hash = shader_hash,
         .stage = static_cast<u32>(Shader::Stage::Compute),
     };
-    if (!PushImageDescriptors(texture_cache, guest_descriptor_queue, info, rescaling, samplers_it,
-                              views_it, dref_context)) {
+    if (!PushImageDescriptors(device, texture_cache, guest_descriptor_queue, info, rescaling,
+                              samplers_it, views_it, dref_context)) {
         return false;
     }
 
