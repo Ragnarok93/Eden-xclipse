@@ -571,6 +571,15 @@ void Device::BuildDevicePolicy() {
                    features.descriptor_buffer.descriptorBuffer != VK_FALSE);
     caps.sparse_binding =
         Advertised(features.features.sparseBinding != VK_FALSE && graphics_family_sparse_binding);
+    caps.alpha_to_one = features.features.alphaToOne != VK_FALSE;
+    caps.storage_push_constant_8 = features.bit8_storage.storagePushConstant8 != VK_FALSE;
+    caps.residency_non_resident_strict =
+        properties.properties.sparseProperties.residencyNonResidentStrict != VK_FALSE;
+    caps.sparse_address_space_size = properties.properties.limits.sparseAddressSpaceSize;
+    caps.buffer_capture_replay_descriptor_size =
+        static_cast<std::uint64_t>(properties.descriptor_buffer.bufferCaptureReplayDescriptorDataSize);
+    caps.image_capture_replay_descriptor_size =
+        static_cast<std::uint64_t>(properties.descriptor_buffer.imageCaptureReplayDescriptorDataSize);
 
     const VkSubgroupFeatureFlags subgroup_ops = properties.subgroup_properties.supportedOperations;
     caps.subgroup_ballot =
@@ -3747,9 +3756,10 @@ void Device::RemoveUnsuitableExtensions() {
         extensions.line_rasterization && features.line_rasterization.stippledRectangularLines;
     const bool supports_alpha_to_coverage =
         features.extended_dynamic_state3.extendedDynamicState3AlphaToCoverageEnable;
-    const bool supports_alpha_to_one =
-        features.extended_dynamic_state3.extendedDynamicState3AlphaToOneEnable &&
-        features.features.alphaToOne;
+    const bool supports_alpha_to_one = CanUseDynamicAlphaToOne(
+        extensions.extended_dynamic_state3,
+        features.extended_dynamic_state3.extendedDynamicState3AlphaToOneEnable,
+        features.features.alphaToOne);
 
     dynamic_state3_depth_clamp_enable = supports_depth_clamp_enable;
     dynamic_state3_logic_op_enable = supports_logic_op_enable;

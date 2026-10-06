@@ -19,6 +19,40 @@ namespace Vulkan {
            features.extendedDynamicState3ColorWriteMask;
 }
 
+[[nodiscard]] constexpr bool CanEnableAlphaToOne(bool base_feature, bool requested) noexcept {
+    return base_feature && requested;
+}
+
+[[nodiscard]] constexpr bool CanUseDynamicAlphaToOne(
+    bool extension, VkBool32 dynamic_feature, VkBool32 base_feature) noexcept {
+    return extension && dynamic_feature != VK_FALSE && base_feature != VK_FALSE;
+}
+
+[[nodiscard]] constexpr VkDeviceSize SelectDescriptorSize(
+    const VkPhysicalDeviceDescriptorBufferPropertiesEXT& props, VkDescriptorType type,
+    bool robust_buffer_access) noexcept {
+    switch (type) {
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+        return robust_buffer_access ? props.robustUniformBufferDescriptorSize
+                                    : props.uniformBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+        return robust_buffer_access ? props.robustStorageBufferDescriptorSize
+                                    : props.storageBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+        return robust_buffer_access ? props.robustUniformTexelBufferDescriptorSize
+                                    : props.uniformTexelBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+        return robust_buffer_access ? props.robustStorageTexelBufferDescriptorSize
+                                    : props.storageTexelBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+        return props.combinedImageSamplerDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+        return props.storageImageDescriptorSize;
+    default:
+        return 0;
+    }
+}
+
 [[nodiscard]] constexpr VkLineRasterizationModeEXT SelectLineRasterizationMode(
     bool smooth_requested, bool rectangular_supported, bool smooth_supported) noexcept {
     if (smooth_requested && smooth_supported) {

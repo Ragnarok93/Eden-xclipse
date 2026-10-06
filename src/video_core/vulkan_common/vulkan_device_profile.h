@@ -85,6 +85,15 @@ struct VulkanCapabilitySnapshot {
     CapabilityState descriptor_buffer{CapabilityState::Unsupported};
     CapabilityState sparse_binding{CapabilityState::Unsupported};
 
+    // Queried base/property facts used for regression evidence. Sparse strictness and
+    // capture/replay sizes are not renderer policy inputs unless a path actually depends on them.
+    bool alpha_to_one{};
+    bool storage_push_constant_8{};
+    bool residency_non_resident_strict{};
+    std::uint64_t sparse_address_space_size{};
+    std::uint64_t buffer_capture_replay_descriptor_size{};
+    std::uint64_t image_capture_replay_descriptor_size{};
+
     CapabilityState subgroup_ballot{CapabilityState::Unsupported};
     CapabilityState subgroup_shuffle{CapabilityState::Unsupported};
     CapabilityState subgroup_arithmetic{CapabilityState::Unsupported};

@@ -19,6 +19,7 @@
 #include "video_core/surface.h"
 #include "video_core/texture_cache/types.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vulkan_feature_policy.h"
 
 namespace Vulkan {
 
@@ -49,26 +50,8 @@ using Shader::Backend::SPIRV::NUM_TEXTURE_AND_IMAGE_SCALING_WORDS;
 
 [[nodiscard]] inline VkDeviceSize DescriptorSizeForType(const Device& device,
                                                         VkDescriptorType type) {
-    const auto& props = device.DescriptorBufferProperties();
-    const bool robust = device.IsRobustBufferAccessEnabled();
-    switch (type) {
-    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-        return robust ? props.robustUniformBufferDescriptorSize : props.uniformBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-        return robust ? props.robustStorageBufferDescriptorSize : props.storageBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-        return robust ? props.robustUniformTexelBufferDescriptorSize
-                      : props.uniformTexelBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-        return robust ? props.robustStorageTexelBufferDescriptorSize
-                      : props.storageTexelBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-        return props.combinedImageSamplerDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-        return props.storageImageDescriptorSize;
-    default:
-        return 0;
-    }
+    return SelectDescriptorSize(device.DescriptorBufferProperties(), type,
+                                device.IsRobustBufferAccessEnabled());
 }
 
 struct DescriptorBufferBinding {

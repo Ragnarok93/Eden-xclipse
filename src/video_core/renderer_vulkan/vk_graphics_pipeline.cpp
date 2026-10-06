@@ -914,8 +914,11 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .pSampleMask = nullptr,
         .alphaToCoverageEnable =
             supports_alpha_output && key.state.alpha_to_coverage_enabled != 0 ? VK_TRUE : VK_FALSE,
-        .alphaToOneEnable = supports_alpha_output && alpha_to_one_supported &&
-                           key.state.alpha_to_one_enabled != 0 ? VK_TRUE : VK_FALSE,
+        .alphaToOneEnable =
+            CanEnableAlphaToOne(alpha_to_one_supported,
+                                supports_alpha_output && key.state.alpha_to_one_enabled != 0)
+                ? VK_TRUE
+                : VK_FALSE,
     };
     const VkPipelineDepthStencilStateCreateInfo depth_stencil_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,

@@ -200,8 +200,10 @@ bool CanRequireXclipseSubgroupSize(const VulkanDevicePolicy& policy,
 
 std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept {
     StableHash hash;
-    // v9 uses post-workaround feature masks and recognizes core buffer device address.
-    hash.Add("eden-xclipse-policy-v9");
+    // v10 includes queried alpha-to-one support because it changes generated multisample state.
+    // Query-only sparse strictness and descriptor capture/replay sizes stay out of identity until
+    // an execution path actually consumes them.
+    hash.Add("eden-xclipse-policy-v10");
 
     const auto& identity = policy.identity;
     hash.Add(identity.device_name);
@@ -218,6 +220,7 @@ std::uint64_t ComputeVulkanPolicyHash(const VulkanDevicePolicy& policy) noexcept
     hash.AddIntegral(caps.synchronization2);
     hash.AddIntegral(caps.descriptor_buffer);
     hash.AddIntegral(caps.sparse_binding);
+    hash.AddIntegral(caps.alpha_to_one);
     hash.AddIntegral(caps.subgroup_ballot);
     hash.AddIntegral(caps.subgroup_shuffle);
     hash.AddIntegral(caps.subgroup_arithmetic);

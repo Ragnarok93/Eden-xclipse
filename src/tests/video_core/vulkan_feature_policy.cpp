@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <cstdint>
+
 #include <catch2/catch_test_macros.hpp>
 #include "video_core/vulkan_common/vulkan_feature_policy.h"
 
-// Fixture values extracted from vp_gpuinfo_samsung_sm_s731u_24_0_534_android_16_0.json.
-// SHA256: e78e75a1e58b1aad40a6cc5af9bd5bab0cf0b75b2a167b8b952f9e96881202bc
+// Fixture values extracted from vp_gpuinfo_samsung_sm_s731u_25_3_3_android_17_0.json.
+// SHA256: dbf90405585ecdbc3e3dfa1c82eafefcda2ae7121f268c0846783116860cdb31
 // This report is a test fixture, never a runtime capability override.
 namespace {
 constexpr VkPhysicalDeviceExtendedDynamicState3FeaturesEXT S25FeEds3{
@@ -54,7 +56,7 @@ constexpr VkPhysicalDeviceVulkan12Features S25FeCore12{
     .drawIndirectCount = VK_TRUE,
     .storageBuffer8BitAccess = VK_TRUE,
     .uniformAndStorageBuffer8BitAccess = VK_TRUE,
-    .storagePushConstant8 = VK_FALSE,
+    .storagePushConstant8 = VK_TRUE,
     .shaderBufferInt64Atomics = VK_TRUE,
     .shaderSharedInt64Atomics = VK_TRUE,
     .shaderFloat16 = VK_TRUE,
@@ -98,6 +100,23 @@ constexpr VkPhysicalDeviceVulkan12Features S25FeCore12{
     .shaderOutputLayer = VK_TRUE,
     .subgroupBroadcastDynamicId = VK_TRUE,
 };
+constexpr VkPhysicalDeviceFeatures S25FeBase{
+    .alphaToOne = VK_FALSE,
+    .textureCompressionBC = VK_FALSE,
+    .sparseBinding = VK_TRUE,
+};
+constexpr VkPhysicalDeviceDescriptorBufferPropertiesEXT S25FeDescriptorBuffer{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT,
+    .bufferCaptureReplayDescriptorDataSize = 8,
+    .imageCaptureReplayDescriptorDataSize = 8,
+    .storageBufferDescriptorSize = 32,
+};
+constexpr VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT S25FeSwapchainMaintenance{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT,
+    .swapchainMaintenance1 = VK_TRUE,
+};
+constexpr bool S25FeResidencyNonResidentStrict = false;
+constexpr std::uint64_t S25FeSparseAddressSpaceSize = 1069446856704ULL;
 } // namespace
 
 TEST_CASE("S25FE: core BDA requires the queried feature, not an extension name", "[video_core]") {
@@ -107,6 +126,36 @@ TEST_CASE("S25FE: core BDA requires the queried feature, not an extension name",
     REQUIRE_FALSE(Vulkan::CanUseBufferDeviceAddress(VK_API_VERSION_1_1, false, VK_TRUE));
     REQUIRE(Vulkan::CanUseBufferDeviceAddress(VK_API_VERSION_1_1, true, VK_TRUE));
     REQUIRE_FALSE(S25FeCore12.samplerFilterMinmax);
+}
+
+TEST_CASE("S25FE 25.3.3: alpha-to-one is gated by the base feature", "[video_core]") {
+    REQUIRE_FALSE(S25FeBase.alphaToOne);
+    REQUIRE_FALSE(Vulkan::CanEnableAlphaToOne(S25FeBase.alphaToOne != VK_FALSE, true));
+    REQUIRE_FALSE(Vulkan::CanUseDynamicAlphaToOne(true, VK_TRUE, S25FeBase.alphaToOne));
+    REQUIRE(S25FeCore12.storagePushConstant8);
+}
+
+TEST_CASE("S25FE 25.3.3: descriptor capture metadata does not define normal layout",
+          "[video_core]") {
+    REQUIRE(S25FeDescriptorBuffer.bufferCaptureReplayDescriptorDataSize == 8);
+    REQUIRE(S25FeDescriptorBuffer.imageCaptureReplayDescriptorDataSize == 8);
+    REQUIRE(Vulkan::SelectDescriptorSize(S25FeDescriptorBuffer,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, false) == 32);
+
+    auto old_capture_metadata = S25FeDescriptorBuffer;
+    old_capture_metadata.bufferCaptureReplayDescriptorDataSize = 4;
+    old_capture_metadata.imageCaptureReplayDescriptorDataSize = 4;
+    REQUIRE(Vulkan::SelectDescriptorSize(old_capture_metadata,
+                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, false) == 32);
+}
+
+TEST_CASE("S25FE 25.3.3: sparse strictness and optional swapchain feature stay explicit",
+          "[video_core]") {
+    REQUIRE_FALSE(S25FeResidencyNonResidentStrict);
+    REQUIRE(S25FeSparseAddressSpaceSize == 1069446856704ULL);
+    REQUIRE(S25FeBase.sparseBinding);
+    REQUIRE(S25FeSwapchainMaintenance.swapchainMaintenance1);
+    REQUIRE_FALSE(S25FeBase.textureCompressionBC);
 }
 
 TEST_CASE("S25FE: Samsung blend mask overrides advertised EDS3 support", "[video_core]") {
