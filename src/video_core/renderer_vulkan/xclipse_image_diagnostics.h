@@ -118,4 +118,6 @@ private:
     std::array<std::atomic<std::uint64_t>, CategoryCount> counters{};
 };
 
+inline XclipseImageDiagnosticBudget xclipse_dref_binding_diagnostic_budget;
+
 } // namespace Vulkan
