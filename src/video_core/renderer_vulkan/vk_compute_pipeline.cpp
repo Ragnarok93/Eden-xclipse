@@ -298,6 +298,12 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
         return false;
     }
 
+    // A completed asynchronous build with no pipeline is a hard failure. Do not leave writable
+    // image provenance pending or record a dispatch that the scheduler will skip.
+    if (is_built.load(std::memory_order::relaxed) && !pipeline) {
+        return false;
+    }
+
     if (!is_built.load(std::memory_order::relaxed)) {
         // Wait for the pipeline to be built
         scheduler.Record([this](vk::CommandBuffer) {

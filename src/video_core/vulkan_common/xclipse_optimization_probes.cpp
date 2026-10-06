@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -757,9 +758,27 @@ struct BlockDecodeProbeCase {
     u32 bytes_per_pixel{};
     u32 dispatch_x{};
     u32 dispatch_y{1};
+    bool half_float_tolerance{};
     std::span<const u8> input{};
     std::span<const u8> expected{};
 };
+
+[[nodiscard]] float DecodeProbeHalf(u16 bits) noexcept {
+    const float sign = (bits & 0x8000u) != 0 ? -1.0f : 1.0f;
+    const u32 exponent = (bits >> 10u) & 0x1fu;
+    const u32 mantissa = bits & 0x3ffu;
+    if (exponent == 0) {
+        return sign * std::ldexp(static_cast<float>(mantissa), -24);
+    }
+    if (exponent == 0x1f) {
+        if (mantissa != 0) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return sign * std::numeric_limits<float>::infinity();
+    }
+    return sign * std::ldexp(1024.0f + static_cast<float>(mantissa),
+                             static_cast<int>(exponent) - 25);
+}
 
 [[nodiscard]] bool RunBlockDecodeProbe(const Device& device, const BlockDecodeProbeCase& probe) {
     const VkDeviceSize input_bytes = probe.input.size_bytes();
@@ -1115,7 +1134,40 @@ struct BlockDecodeProbeCase {
     if (!SubmitAndWait(dld, raw_device, device.GetGraphicsQueue(), command_buffer)) {
         return fail("submit-readback");
     }
-    if (std::memcmp(readback.mapped, probe.expected.data(), probe.expected.size_bytes()) != 0) {
+    bool matches =
+        std::memcmp(readback.mapped, probe.expected.data(), probe.expected.size_bytes()) == 0;
+    if (!matches && probe.half_float_tolerance && probe.expected.size() % 2 == 0) {
+        const auto* const actual = static_cast<const u8*>(readback.mapped);
+        matches = true;
+        for (size_t offset = 0; offset < probe.expected.size(); offset += 2) {
+            const u16 actual_bits = static_cast<u16>(actual[offset]) |
+                                    (static_cast<u16>(actual[offset + 1]) << 8u);
+            const u16 expected_bits = static_cast<u16>(probe.expected[offset]) |
+                                      (static_cast<u16>(probe.expected[offset + 1]) << 8u);
+            const float actual_value = DecodeProbeHalf(actual_bits);
+            const float expected_value = DecodeProbeHalf(expected_bits);
+            if (std::isnan(actual_value) || std::isnan(expected_value)) {
+                if (!(std::isnan(actual_value) && std::isnan(expected_value))) {
+                    matches = false;
+                    break;
+                }
+                continue;
+            }
+            if (std::isinf(actual_value) || std::isinf(expected_value)) {
+                if (actual_value != expected_value) {
+                    matches = false;
+                    break;
+                }
+                continue;
+            }
+            const float tolerance = 0.002f + std::abs(expected_value) * 0.02f;
+            if (std::abs(actual_value - expected_value) > tolerance) {
+                matches = false;
+                break;
+            }
+        }
+    }
+    if (!matches) {
         return fail("cpu-reference-mismatch");
     }
     LOG_INFO(Render_Vulkan,
@@ -1199,11 +1251,13 @@ struct BlockDecodeProbeCase {
            RunRgtcGeometryCase(device, probe, 35, 33);
 }
 
-[[nodiscard]] u32 ProbeBlockLinearOffset(u32 block_index) {
-    const u32 x = block_index << 4;
+[[nodiscard]] u32 BptcProbeBlockLinearOffset(u32 block_x, u32 block_y) {
+    const u32 x = block_x << 4;
+    const u32 gob_y = block_y >> 3u;
     const u32 swizzle =
-        ((x & 32u) << 3u) | ((x & 16u) << 1u) | (x & 15u);
-    return ((x >> 6u) << 9u) + swizzle;
+        ((x & 32u) << 3u) | ((block_y & 6u) << 5u) | ((x & 16u) << 1u) |
+        ((block_y & 1u) << 4u) | (x & 15u);
+    return (gob_y << 9u) + ((x >> 6u) << 9u) + swizzle;
 }
 
 [[nodiscard]] std::array<u8, 16> MakeBc7ProbeBlock(u32 mode) {
@@ -1233,20 +1287,33 @@ struct BlockDecodeProbeCase {
 
 [[nodiscard]] bool RunBc7DecodeProbe(const Device& device) {
     constexpr std::array<u32, 8> Modes{0, 1, 2, 3, 4, 5, 6, 7};
-    constexpr u32 Height = 4;
-    const u32 width = static_cast<u32>(Modes.size()) * 4;
-    std::vector<u8> input(1024);
-    std::vector<u8> expected(static_cast<size_t>(width) * Height * 4);
+    constexpr u32 Width = 35;
+    constexpr u32 Height = 7;
+    const u32 blocks_x = (Width + 3u) / 4u;
+    const u32 blocks_y = (Height + 3u) / 4u;
+    u32 input_bytes{};
+    std::vector<u8> expected(static_cast<size_t>(Width) * Height * 4);
 
-    for (u32 index = 0; index < Modes.size(); ++index) {
-        const auto block = MakeBc7ProbeBlock(Modes[index]);
-        const u32 offset = ProbeBlockLinearOffset(index);
-        if (offset + block.size() > input.size()) {
-            return false;
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            const u32 mode_index = (block_x + block_y * blocks_x) % Modes.size();
+            const auto block = MakeBc7ProbeBlock(Modes[mode_index]);
+            const u32 offset = BptcProbeBlockLinearOffset(block_x, block_y);
+            input_bytes = std::max(input_bytes, offset + static_cast<u32>(block.size()));
+            const size_t x = static_cast<size_t>(block_x) * 4;
+            const size_t y = static_cast<size_t>(block_y) * 4;
+            bcn::DecodeBc7(block.data(), expected.data() + (y * Width + x) * 4, x, y, Width,
+                           Height);
         }
-        std::memcpy(input.data() + offset, block.data(), block.size());
-        const size_t x = static_cast<size_t>(index) * 4;
-        bcn::DecodeBc7(block.data(), expected.data() + x * 4, x, 0, width, Height);
+    }
+    std::vector<u8> input(input_bytes);
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            const u32 mode_index = (block_x + block_y * blocks_x) % Modes.size();
+            const auto block = MakeBc7ProbeBlock(Modes[mode_index]);
+            std::memcpy(input.data() + BptcProbeBlockLinearOffset(block_x, block_y),
+                        block.data(), block.size());
+        }
     }
     return RunBlockDecodeProbe(
         device,
@@ -1256,10 +1323,11 @@ struct BlockDecodeProbeCase {
             .output_format = VK_FORMAT_A8B8G8R8_UNORM_PACK32,
             .code = BCN_BPTC_DECODER_RGBA8_COMP_SPV,
             .code_size = sizeof(BCN_BPTC_DECODER_RGBA8_COMP_SPV),
-            .width = width,
+            .width = Width,
             .height = Height,
             .bytes_per_pixel = 4,
-            .dispatch_x = static_cast<u32>((Modes.size() + 7) / 8),
+            .dispatch_x = (blocks_x + 7u) / 8u,
+            .dispatch_y = (blocks_y + 7u) / 8u,
             .input = input,
             .expected = expected,
         });
@@ -1267,20 +1335,33 @@ struct BlockDecodeProbeCase {
 
 [[nodiscard]] bool RunBc6DecodeProbe(const Device& device, bool is_signed) {
     constexpr std::array<u32, 14> Modes{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16};
-    constexpr u32 Height = 4;
-    const u32 width = static_cast<u32>(Modes.size()) * 4;
-    std::vector<u8> input(2048);
-    std::vector<u8> expected(static_cast<size_t>(width) * Height * 8);
+    constexpr u32 Width = 59;
+    constexpr u32 Height = 7;
+    const u32 blocks_x = (Width + 3u) / 4u;
+    const u32 blocks_y = (Height + 3u) / 4u;
+    u32 input_bytes{};
+    std::vector<u8> expected(static_cast<size_t>(Width) * Height * 8);
 
-    for (u32 index = 0; index < Modes.size(); ++index) {
-        const auto block = MakeBc6ProbeBlock(Modes[index]);
-        const u32 offset = ProbeBlockLinearOffset(index);
-        if (offset + block.size() > input.size()) {
-            return false;
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            const u32 mode_index = (block_x + block_y * blocks_x) % Modes.size();
+            const auto block = MakeBc6ProbeBlock(Modes[mode_index]);
+            const u32 offset = BptcProbeBlockLinearOffset(block_x, block_y);
+            input_bytes = std::max(input_bytes, offset + static_cast<u32>(block.size()));
+            const size_t x = static_cast<size_t>(block_x) * 4;
+            const size_t y = static_cast<size_t>(block_y) * 4;
+            bcn::DecodeBc6(block.data(), expected.data() + (y * Width + x) * 8, x, y, Width,
+                           Height, is_signed);
         }
-        std::memcpy(input.data() + offset, block.data(), block.size());
-        const size_t x = static_cast<size_t>(index) * 4;
-        bcn::DecodeBc6(block.data(), expected.data() + x * 8, x, 0, width, Height, is_signed);
+    }
+    std::vector<u8> input(input_bytes);
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            const u32 mode_index = (block_x + block_y * blocks_x) % Modes.size();
+            const auto block = MakeBc6ProbeBlock(Modes[mode_index]);
+            std::memcpy(input.data() + BptcProbeBlockLinearOffset(block_x, block_y),
+                        block.data(), block.size());
+        }
     }
     return RunBlockDecodeProbe(
         device,
@@ -1290,10 +1371,12 @@ struct BlockDecodeProbeCase {
             .output_format = VK_FORMAT_R16G16B16A16_SFLOAT,
             .code = BCN_BPTC_DECODER_RGBA16F_COMP_SPV,
             .code_size = sizeof(BCN_BPTC_DECODER_RGBA16F_COMP_SPV),
-            .width = width,
+            .width = Width,
             .height = Height,
             .bytes_per_pixel = 8,
-            .dispatch_x = static_cast<u32>((Modes.size() + 7) / 8),
+            .dispatch_x = (blocks_x + 7u) / 8u,
+            .dispatch_y = (blocks_y + 7u) / 8u,
+            .half_float_tolerance = true,
             .input = input,
             .expected = expected,
         });

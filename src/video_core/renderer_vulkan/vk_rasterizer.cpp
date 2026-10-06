@@ -258,6 +258,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     HandleTransformFeedback();
     query_cache.CounterEnable(VideoCommon::QueryType::ZPassPixelCount64, maxwell3d->regs.zpass_pixel_count_enable);
     draw_func();
+    pipeline->RecordStorageImageWrites();
 }
 
 void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
@@ -1598,27 +1599,42 @@ void RasterizerVulkan::UpdateDepthBias(Tegra::Engines::Maxwell3D::Regs& regs) {
             VideoCore::Surface::PixelFormatFromDepthFormat(regs.zeta.format);
         const VkFormat host_depth_format =
             MaxwellToVK::SurfaceFormat(device, FormatType::Optimal, true, guest_depth_format).format;
-        const bool depth_bias_control = device.IsExtDepthBiasControlSupported();
+        const bool bias_enable_dynamic_cap = device.IsExtExtendedDynamicState2Supported();
+        const bool bias_enable_dynamic_used =
+            pipeline ? pipeline->UsesExtendedDynamicState2() : false;
+        const bool extended_dynamic_state_cap = device.IsExtExtendedDynamicStateSupported();
+        const bool extended_dynamic_state_used =
+            pipeline ? pipeline->UsesExtendedDynamicState() : false;
+        const bool depth_bias_control_cap = device.IsExtDepthBiasControlSupported();
+        // UpdateDepthBias attaches VkDepthBiasRepresentationInfoEXT whenever the extension is
+        // available. Exact representation is intentionally not requested by the renderer.
+        const bool depth_bias_control_used = depth_bias_control_cap;
+        const bool depth_bias_exact_cap = device.HasExactDepthBiasControl();
+        const bool depth_bias_exact_used = false;
+        const bool bias_values_dynamic = true; // VK_DYNAMIC_STATE_DEPTH_BIAS is always used.
+        const u32 host_depth_compare =
+            static_cast<u32>(MaxwellToVK::ComparisonOp(regs.depth_test_func));
         LOG_INFO(Render_Vulkan,
                  "XCLIPSE DEPTH BIAS [diag=depth-bias] frame={} pipeline={:016x} "
                  "enabled={} point={} line={} fill={} topology={} "
                  "guest_constant={} host_constant={} slope={} clamp={} zeta_fmt={} "
-                 "host_depth_fmt={} depth_compare={} dref_pipeline={} values_dynamic=1 "
-                 "enable_dynamic_cap={} enable_dynamic_used={} extended_dynamic_state={} "
+                 "host_depth_fmt={} guest_depth_compare={} host_depth_compare={} "
+                 "dref_pipeline={} bias_values_dynamic={} "
+                 "bias_enable_dynamic_cap={} bias_enable_dynamic_used={} "
+                 "extended_dynamic_state_cap={} extended_dynamic_state_used={} "
                  "depth_bias_control_cap={} depth_bias_control_used={} "
-                 "depth_bias_exact_cap={} depth_bias_exact_used=0",
+                 "depth_bias_exact_cap={} depth_bias_exact_used={}",
                  device.GetXclipseTelemetry().FrameCount(),
                  pipeline ? pipeline->DiagnosticHash() : 0, effective_enable,
                  regs.polygon_offset_point_enable != 0, regs.polygon_offset_line_enable != 0,
                  regs.polygon_offset_fill_enable != 0, topology_index, regs.depth_bias / 2.0f,
                  units, regs.slope_scale_depth_bias, regs.depth_bias_clamp,
                  static_cast<u32>(regs.zeta.format), static_cast<u32>(host_depth_format),
-                 static_cast<u32>(regs.depth_test_func),
-                 pipeline ? pipeline->HasDrefDescriptors() : false,
-                 device.IsExtExtendedDynamicState2Supported(),
-                 pipeline ? pipeline->UsesExtendedDynamicState2() : false,
-                 pipeline ? pipeline->UsesExtendedDynamicState() : false,
-                 depth_bias_control, depth_bias_control, device.HasExactDepthBiasControl());
+                 static_cast<u32>(regs.depth_test_func), host_depth_compare,
+                 pipeline ? pipeline->HasDrefDescriptors() : false, bias_values_dynamic,
+                 bias_enable_dynamic_cap, bias_enable_dynamic_used, extended_dynamic_state_cap,
+                 extended_dynamic_state_used, depth_bias_control_cap, depth_bias_control_used,
+                 depth_bias_exact_cap, depth_bias_exact_used);
     }
 
     scheduler.Record([constant = units, clamp = regs.depth_bias_clamp,

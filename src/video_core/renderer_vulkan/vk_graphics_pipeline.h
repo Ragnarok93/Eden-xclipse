@@ -14,6 +14,8 @@
 #include <type_traits>
 #include <vector>
 
+#include <boost/container/small_vector.hpp>
+
 #include "common/thread_worker.h"
 #include "shader_recompiler/shader_info.h"
 #include "video_core/engines/maxwell_3d.h"
@@ -150,6 +152,9 @@ public:
         gpu_memory = gpu_memory_;
     }
 
+    /// Records storage-image writes associated with the draw most recently configured.
+    void RecordStorageImageWrites() noexcept;
+
 private:
     template <typename Spec>
     bool ConfigureImpl(bool is_indexed);
@@ -182,6 +187,7 @@ private:
     std::array<Shader::Info, NUM_STAGES> stage_infos;
     std::array<u32, 5> enabled_uniform_buffer_masks{};
     VideoCommon::UniformBufferSizes uniform_buffer_sizes{};
+    boost::container::small_vector<VideoCommon::ImageViewId, 64> written_image_views;
     u32 num_descriptor_entries{};
     size_t num_image_elements{};
     u32 num_textures{};

@@ -371,8 +371,10 @@ template <typename Spec>
 bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     boost::container::small_vector<VideoCommon::ImageViewInOut, 64> views;
     boost::container::small_vector<VideoCommon::SamplerId, 64> samplers;
+    boost::container::small_vector<size_t, 64> writable_view_indices;
     views.reserve(num_image_elements);
     samplers.reserve(num_textures);
+    written_image_views.clear();
 
     texture_cache.SynchronizeDescriptors(false);
 
@@ -445,7 +447,13 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         }
         if constexpr (Spec::has_images) {
             for (const auto& desc : info.image_descriptors) {
+                const size_t view_start = views.size();
                 add_image(desc, desc.is_written);
+                if (desc.is_written) {
+                    for (u32 index = 0; index < desc.count; ++index) {
+                        writable_view_indices.push_back(view_start + index);
+                    }
+                }
             }
         }
 
@@ -469,6 +477,9 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
     ASSERT(views.size() == num_image_elements);
     ASSERT(samplers.size() == num_textures);
     texture_cache.FillImageViews(std::span(views.data(), views.size()), false, Spec::has_images);
+    for (const size_t view_index : writable_view_indices) {
+        written_image_views.push_back(views[view_index].id);
+    }
 
     VideoCommon::ImageViewInOut* texture_buffer_it{views.data()};
     const auto bind_stage_info{[&](size_t stage) LAMBDA_FORCEINLINE {
@@ -586,6 +597,14 @@ bool GraphicsPipeline::ConfigureImpl(bool is_indexed) {
         return false;
     }
     return ConfigureDraw(rescaling, render_area);
+}
+
+void GraphicsPipeline::RecordStorageImageWrites() noexcept {
+    for (const VideoCommon::ImageViewId image_view_id : written_image_views) {
+        texture_cache.GetImageView(image_view_id).RecordImageWrite(
+            XclipseImageWriter::GpuModification);
+    }
+    written_image_views.clear();
 }
 
 bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
@@ -1191,4 +1210,3 @@ void GraphicsPipeline::Validate() {
 }
 
 } // namespace Vulkan
-

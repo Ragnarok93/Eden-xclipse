@@ -8,6 +8,7 @@
 #include <limits>
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -213,7 +214,9 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
     }
     return Settings::values.astc_recompression.GetValue() ==
               Settings::AstcRecompression::Uncompressed &&
-          info.size.depth == 1;
+          info.size.depth == 1 &&
+          device.IsFormatSupported(VK_FORMAT_A8B8G8R8_UNORM_PACK32,
+                                   VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT, FormatType::Optimal);
 }
 
 std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
@@ -229,6 +232,16 @@ std::optional<std::size_t> BcnDecoderIndex(PixelFormat format) {
     default:
         return std::nullopt;
     }
+}
+
+[[nodiscard]] bool NeedsBcnDecoder(const Device& device,
+                                   std::initializer_list<PixelFormat> formats) noexcept {
+    return std::ranges::any_of(formats, [&device](const PixelFormat format) {
+        // Requiring transfer-source support here is conservative: it keeps the decoder available
+        // for images whose later lifetime requires readback, while avoiding construction when
+        // every format can remain native for all supported image operations.
+        return !MaxwellToVK::IsBcnNative(device, format, true, true);
+    });
 }
 
 VkFormat BcnDecodeStorageFormat(PixelFormat format) {
@@ -1204,19 +1217,22 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
       staging_buffer_pool{staging_buffer_pool_}, blit_image_helper{blit_image_helper_},
       render_pass_cache{render_pass_cache_}, resolution{Settings::values.resolution_info} {
     if (Settings::values.accelerate_astc.GetValue() == Settings::AstcDecodeMode::Gpu &&
+        Settings::values.astc_recompression.GetValue() == Settings::AstcRecompression::Uncompressed &&
         !device.IsOptimalAstcSupported()) {
         astc_decoder_pass.emplace(device, scheduler, descriptor_pool, staging_buffer_pool,
                                   compute_pass_descriptor_queue, memory_allocator);
     }
     if (!device.HasBrokenCompute()) {
-        if (device.UseXclipseBcnGpuDecode()) {
-            constexpr std::array formats{
-                PixelFormat::BC4_UNORM,
-                PixelFormat::BC4_SNORM,
-                PixelFormat::BC5_UNORM,
-                PixelFormat::BC5_SNORM,
-            };
-            for (const PixelFormat format : formats) {
+        constexpr std::array rgtc_formats{
+            PixelFormat::BC4_UNORM,
+            PixelFormat::BC4_SNORM,
+            PixelFormat::BC5_UNORM,
+            PixelFormat::BC5_SNORM,
+        };
+        if (device.UseXclipseBcnGpuDecode() &&
+            NeedsBcnDecoder(device, {PixelFormat::BC4_UNORM, PixelFormat::BC4_SNORM,
+                                     PixelFormat::BC5_UNORM, PixelFormat::BC5_SNORM})) {
+            for (const PixelFormat format : rgtc_formats) {
                 const auto index = BcnDecoderIndex(format);
                 ASSERT(index.has_value());
                 try {
@@ -1232,7 +1248,8 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
             }
         }
 
-        if (device.UseXclipseBc6GpuDecode()) {
+        if (device.UseXclipseBc6GpuDecode() &&
+            NeedsBcnDecoder(device, {PixelFormat::BC6H_UFLOAT, PixelFormat::BC6H_SFLOAT})) {
             try {
                 bptc_bc6_decoder_pass.emplace(device, scheduler, descriptor_pool,
                                               compute_pass_descriptor_queue,
@@ -1244,7 +1261,8 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, Scheduler& sched
                             exception.what());
             }
         }
-        if (device.UseXclipseBc7GpuDecode()) {
+        if (device.UseXclipseBc7GpuDecode() &&
+            NeedsBcnDecoder(device, {PixelFormat::BC7_UNORM, PixelFormat::BC7_SRGB})) {
             try {
                 bptc_bc7_decoder_pass.emplace(device, scheduler, descriptor_pool,
                                               compute_pass_descriptor_queue,
