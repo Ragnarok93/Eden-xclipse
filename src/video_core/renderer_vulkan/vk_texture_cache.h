@@ -361,6 +361,17 @@ public:
         return std::exchange(initialized, true);
     }
 
+    void RecordProvenanceWrite(XclipseImageWriter writer) noexcept;
+    void RecordProvenanceTransition(VkImageLayout old_layout, VkImageLayout new_layout) noexcept;
+
+    [[nodiscard]] const XclipseImageProvenance& Provenance() const noexcept {
+        return xclipse_provenance;
+    }
+
+    [[nodiscard]] bool IsInitialized() const noexcept {
+        return initialized;
+    }
+
     VkImageView StorageImageView(s32 level) noexcept;
 
     bool IsRescaled() const noexcept;
@@ -397,6 +408,7 @@ private:
     std::vector<vk::ImageView> storage_image_views;
     VkImageAspectFlags aspect_mask = 0;
     bool initialized = false;
+    XclipseImageProvenance xclipse_provenance{};
 
     std::optional<Framebuffer> scale_framebuffer;
     std::optional<Framebuffer> normal_framebuffer;
@@ -479,6 +491,10 @@ public:
     [[nodiscard]] u32 BufferSize() const noexcept {
         return buffer_size;
     }
+
+    [[nodiscard]] const Image* SourceImage() const noexcept;
+    [[nodiscard]] Image* SourceImage() noexcept;
+    void RecordImageWrite(XclipseImageWriter writer) noexcept;
 
 private:
     struct StorageViews {
