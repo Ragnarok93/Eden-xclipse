@@ -23,6 +23,7 @@
 
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/correctness_telemetry.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/literals.h"
@@ -2806,6 +2807,13 @@ void Device::LogXclipseTelemetry() const {
              t.depth_stencil_shader_blits, t.native_resolves, t.native_image_copies,
              t.reinterpret_copies, t.renderpass_undefined_initial_layouts,
              t.renderpass_dontcare_stores);
+    const auto correctness = Common::CorrectnessTelemetry::Get().Snapshot();
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE CORRECTNESS host_memory_bounds={} scheduler_context_guard_failures={} "
+             "unmapped_gpu_reads={} unmapped_gpu_writes={}",
+             correctness.host_memory_bounds_violations,
+             correctness.scheduler_context_guard_failures, correctness.unmapped_gpu_reads,
+             correctness.unmapped_gpu_writes);
     LOG_INFO(Render_Vulkan, "XCLIPSE MEMORY budget={} resident={}", device_access_memory,
              CanReportMemoryUsage() ? GetDeviceMemoryUsage() : 0);
 }
