@@ -137,6 +137,33 @@ TEST_CASE("Xclipse pipeline policy validates the requested subgroup size exactly
 }
 
 
+
+TEST_CASE("Xclipse BPTC policy requires per-format execution validation",
+          "[video_core][xclipse]") {
+    Vulkan::VulkanDevicePolicy policy{};
+    policy.xclipse.detected = true;
+    policy.xclipse.bptc_gpu_decode_capable = true;
+
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+
+    policy.xclipse.bc6_gpu_decode_validated = true;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE(policy.use_xclipse_bptc_gpu_decode);
+
+    policy.xclipse.bc6_gpu_decode_validated = false;
+    policy.xclipse.bc7_gpu_decode_validated = true;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE(policy.use_xclipse_bptc_gpu_decode);
+
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, false);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+
+    policy.xclipse.bptc_gpu_decode_capable = false;
+    Vulkan::UpdateXclipseBptcDecodePolicy(policy, true);
+    REQUIRE_FALSE(policy.use_xclipse_bptc_gpu_decode);
+}
+
 TEST_CASE("Xclipse policy hash is stable across diagnostic timing changes", "[video_core][xclipse]") {
     Vulkan::VulkanDevicePolicy baseline{};
     baseline.identity.device_name = "Xclipse 940";
@@ -184,4 +211,12 @@ TEST_CASE("Xclipse policy hash is stable across diagnostic timing changes", "[vi
     auto descriptor_image_changed = baseline;
     descriptor_image_changed.xclipse.descriptor_buffer_image_validated = true;
     REQUIRE(Vulkan::ComputeVulkanPolicyHash(descriptor_image_changed) != baseline_hash);
+
+    auto bc6_decode_changed = baseline;
+    bc6_decode_changed.xclipse.bc6_gpu_decode_validated = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(bc6_decode_changed) != baseline_hash);
+
+    auto bc7_decode_changed = baseline;
+    bc7_decode_changed.xclipse.bc7_gpu_decode_validated = true;
+    REQUIRE(Vulkan::ComputeVulkanPolicyHash(bc7_decode_changed) != baseline_hash);
 }
