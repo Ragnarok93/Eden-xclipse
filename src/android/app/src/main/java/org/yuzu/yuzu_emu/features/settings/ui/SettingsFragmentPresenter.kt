@@ -58,7 +58,10 @@ class SettingsFragmentPresenter(
 
     // Extension for altering settings list based on each setting's properties
     fun ArrayList<SettingsItem>.add(key: String) {
-        val item = SettingsItem.settingsItems[key]!!
+        // A missing registry entry must never crash the settings screen. Keep this null-safe even
+        // though every exposed key should have a SettingsItem below; it makes future debug-setting
+        // additions fail closed instead of taking down the Activity.
+        val item = SettingsItem.settingsItems[key] ?: return
         if (settingsViewModel.game != null && !item.setting.isSwitchable) {
             return
         }

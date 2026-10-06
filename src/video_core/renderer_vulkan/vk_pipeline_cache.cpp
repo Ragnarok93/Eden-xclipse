@@ -642,16 +642,19 @@ PipelineCache::~PipelineCache() {
 }
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
-    const bool telemetry_enabled = device.GetXclipseTelemetry().Enabled();
-    const auto key_start = telemetry_enabled ? std::chrono::steady_clock::now()
-                                             : std::chrono::steady_clock::time_point{};
+    // Key construction runs on the hottest graphics lookup path. Clock reads here materially
+    // perturb frame time, so collect this timing only for explicit detailed diagnostics.
+    const bool key_timing_enabled =
+        device.GetXclipseTelemetry().Enabled() && device.XclipseDetailedDiagnosticsEnabled();
+    const auto key_start = key_timing_enabled ? std::chrono::steady_clock::now()
+                                              : std::chrono::steady_clock::time_point{};
 
     if (!RefreshStages(graphics_key.unique_hashes)) {
         current_pipeline = nullptr;
         return nullptr;
     }
     graphics_key.state.Refresh(*maxwell3d, dynamic_features);
-    if (telemetry_enabled) {
+    if (key_timing_enabled) {
         device.GetXclipseTelemetry().RecordPipelineKeyGeneration(static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - key_start)
@@ -670,9 +673,10 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
 }
 
 ComputePipeline* PipelineCache::CurrentComputePipeline() {
-    const bool telemetry_enabled = device.GetXclipseTelemetry().Enabled();
-    const auto key_start = telemetry_enabled ? std::chrono::steady_clock::now()
-                                             : std::chrono::steady_clock::time_point{};
+    const bool key_timing_enabled =
+        device.GetXclipseTelemetry().Enabled() && device.XclipseDetailedDiagnosticsEnabled();
+    const auto key_start = key_timing_enabled ? std::chrono::steady_clock::now()
+                                              : std::chrono::steady_clock::time_point{};
 
     const ShaderInfo* const shader{ComputeShader()};
     if (!shader) {
@@ -684,7 +688,7 @@ ComputePipeline* PipelineCache::CurrentComputePipeline() {
         .shared_memory_size = qmd.shared_alloc,
         .workgroup_size{qmd.block_dim_x, qmd.block_dim_y, qmd.block_dim_z},
     };
-    if (telemetry_enabled) {
+    if (key_timing_enabled) {
         device.GetXclipseTelemetry().RecordPipelineKeyGeneration(static_cast<u64>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - key_start)
