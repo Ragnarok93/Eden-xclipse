@@ -2751,6 +2751,39 @@ void Device::LogXclipseTelemetry() const {
              ns_to_ms(blocking.PercentileUpperBoundNs(90)),
              ns_to_ms(blocking.PercentileUpperBoundNs(95)),
              ns_to_ms(blocking.PercentileUpperBoundNs(99)), ns_to_ms(blocking.max_ns));
+    const auto log_latency = [&ns_to_ms, &average_ms](
+                                 const char* name, const XclipseLatencySnapshot& latency) {
+        if (latency.count == 0) {
+            return;
+        }
+        LOG_INFO(Render_Vulkan,
+                 "XCLIPSE PIPELINE STAGE name={} count={} avg_ms={:.3f} p50_ms={:.3f} "
+                 "p90_ms={:.3f} p95_ms={:.3f} p99_ms={:.3f} max_ms={:.3f}",
+                 name, latency.count, average_ms(latency),
+                 ns_to_ms(latency.PercentileUpperBoundNs(50)),
+                 ns_to_ms(latency.PercentileUpperBoundNs(90)),
+                 ns_to_ms(latency.PercentileUpperBoundNs(95)),
+                 ns_to_ms(latency.PercentileUpperBoundNs(99)), ns_to_ms(latency.max_ns));
+    };
+    LOG_INFO(Render_Vulkan,
+             "XCLIPSE PIPELINE CACHE disk_lookup_hits={} disk_lookup_misses={} parsed={} "
+             "rejected={} reconstructed={} reconstruction_failures={} driver_hits={} "
+             "driver_misses={} driver_restored_bytes={}",
+             t.disk_shader_cache_lookup_hits, t.disk_shader_cache_lookup_misses,
+             t.disk_pipeline_entries_parsed, t.disk_pipeline_entries_rejected,
+             t.disk_pipeline_entries_reconstructed, t.disk_pipeline_reconstruction_failures,
+             t.driver_pipeline_cache_hits, t.driver_pipeline_cache_misses,
+             t.driver_pipeline_cache_restored_bytes);
+    log_latency("key-generation", t.pipeline_key_generation_latency);
+    log_latency("disk-cache-lookup", t.disk_shader_cache_lookup_latency);
+    log_latency("disk-cache-load", t.disk_shader_cache_load_latency);
+    log_latency("disk-deserialize", t.disk_shader_deserialize_latency);
+    log_latency("shader-decode", t.shader_decode_latency);
+    log_latency("ir-optimization", t.shader_ir_optimization_latency);
+    log_latency("spirv-generation", t.spirv_generation_latency);
+    log_latency("shader-module-create", t.shader_module_creation_latency);
+    log_latency("driver-cache-load", t.driver_pipeline_cache_load_latency);
+
     const auto& staging_realloc = t.staging_pressure_reallocation_latency;
     LOG_INFO(Render_Vulkan,
              "XCLIPSE STAGING CHURN reallocations={} reallocated_bytes={} total_ms={:.3f} "

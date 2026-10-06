@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <condition_variable>
 #include <cstddef>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <iostream>
@@ -640,12 +642,21 @@ PipelineCache::~PipelineCache() {
 }
 
 GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
+    const bool telemetry_enabled = device.GetXclipseTelemetry().Enabled();
+    const auto key_start = telemetry_enabled ? std::chrono::steady_clock::now()
+                                             : std::chrono::steady_clock::time_point{};
 
     if (!RefreshStages(graphics_key.unique_hashes)) {
         current_pipeline = nullptr;
         return nullptr;
     }
     graphics_key.state.Refresh(*maxwell3d, dynamic_features);
+    if (telemetry_enabled) {
+        device.GetXclipseTelemetry().RecordPipelineKeyGeneration(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - key_start)
+                .count()));
+    }
 
     if (current_pipeline) {
         GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
@@ -659,6 +670,9 @@ GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
 }
 
 ComputePipeline* PipelineCache::CurrentComputePipeline() {
+    const bool telemetry_enabled = device.GetXclipseTelemetry().Enabled();
+    const auto key_start = telemetry_enabled ? std::chrono::steady_clock::now()
+                                             : std::chrono::steady_clock::time_point{};
 
     const ShaderInfo* const shader{ComputeShader()};
     if (!shader) {
@@ -670,6 +684,12 @@ ComputePipeline* PipelineCache::CurrentComputePipeline() {
         .shared_memory_size = qmd.shared_alloc,
         .workgroup_size{qmd.block_dim_x, qmd.block_dim_y, qmd.block_dim_z},
     };
+    if (telemetry_enabled) {
+        device.GetXclipseTelemetry().RecordPipelineKeyGeneration(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - key_start)
+                .count()));
+    }
     const auto [pair, is_new]{compute_cache.try_emplace(key)};
     device.GetXclipseTelemetry().RecordRuntimePipelineMapLookup(!is_new);
     auto& pipeline{pair->second};
@@ -700,6 +720,17 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         return;
     }
     pipeline_cache_filename = base_dir / "vulkan.bin";
+
+    const bool telemetry_enabled = device.GetXclipseTelemetry().Enabled();
+    if (telemetry_enabled) {
+        const auto lookup_start = std::chrono::steady_clock::now();
+        const bool cache_present = std::filesystem::exists(pipeline_cache_filename);
+        device.GetXclipseTelemetry().RecordDiskShaderCacheLookup(
+            cache_present, static_cast<u64>(
+                               std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                   std::chrono::steady_clock::now() - lookup_start)
+                                   .count()));
+    }
 
     if (use_vulkan_pipeline_cache) {
         vulkan_pipeline_cache_filename = base_dir / "vulkan_pipelines.bin";
@@ -761,6 +792,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         state.statistics = std::make_unique<PipelineStatistics>(device);
     }
     const auto load_compute{[&](std::ifstream& file, FileEnvironment env) {
+        device.GetXclipseTelemetry().RecordDiskPipelineParsed();
+        device.GetXclipseTelemetry().RecordDiskShaderDeserialize(env.DeserializeDurationNs());
         ComputePipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
 
@@ -770,6 +803,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         workers.QueueWork([this, key, env_ = std::move(env), &state, &complete_load_slot]() mutable {
             ShaderPools pools;
             auto pipeline{CreateComputePipeline(pools, key, env_, state.statistics.get(), false)};
+            device.GetXclipseTelemetry().RecordDiskPipelineReconstruction(pipeline != nullptr);
             {
                 std::scoped_lock lock{state.mutex};
                 if (pipeline) {
@@ -780,6 +814,12 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         });
     }};
     const auto load_graphics{[&](std::ifstream& file, std::vector<FileEnvironment> envs) {
+        device.GetXclipseTelemetry().RecordDiskPipelineParsed();
+        u64 deserialize_ns{};
+        for (const auto& env : envs) {
+            deserialize_ns += env.DeserializeDurationNs();
+        }
+        device.GetXclipseTelemetry().RecordDiskShaderDeserialize(deserialize_ns);
         GraphicsPipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
 
@@ -797,17 +837,20 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
                 dynamic_features.has_color_write_enable ||
             (key.state.dynamic_vertex_input != 0) !=
                 dynamic_features.has_dynamic_vertex_input) {
+            device.GetXclipseTelemetry().RecordDiskPipelineRejected();
             return;
         }
 
         const bool key_requests_provoking_last = key.state.provoking_vertex_last != 0;
         if (key_requests_provoking_last && !dynamic_features.has_provoking_vertex_last_mode) {
+            device.GetXclipseTelemetry().RecordDiskPipelineRejected();
             return;
         }
 
         const bool key_uses_transform_feedback = key.state.xfb_enabled != 0;
         if (key_uses_transform_feedback && key_requests_provoking_last &&
             !dynamic_features.has_provoking_vertex_tf_preserve) {
+            device.GetXclipseTelemetry().RecordDiskPipelineRejected();
             return;
         }
 
@@ -823,6 +866,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
                 }
                 auto pipeline{CreateGraphicsPipeline(pools, key, MakeSpan(env_ptrs),
                                                      state.statistics.get(), false)};
+                device.GetXclipseTelemetry().RecordDiskPipelineReconstruction(pipeline != nullptr);
                 {
                     std::scoped_lock lock{state.mutex};
                     if (pipeline) {
@@ -832,8 +876,16 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
                 complete_load_slot();
             });
     }};
+    const auto disk_load_start = telemetry_enabled ? std::chrono::steady_clock::now()
+                                                   : std::chrono::steady_clock::time_point{};
     VideoCommon::LoadPipelines(stop_loading, pipeline_cache_filename, CACHE_VERSION, load_compute,
                                load_graphics);
+    if (telemetry_enabled) {
+        device.GetXclipseTelemetry().RecordDiskShaderCacheLoad(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - disk_load_start)
+                .count()));
+    }
 
     {
         std::unique_lock lock{state.mutex};
@@ -957,14 +1009,31 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
 
         const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
         Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
+        Shader::Maxwell::TranslateProgramTiming translate_timing{};
+        auto* const timing =
+            device.GetXclipseTelemetry().Enabled() ? &translate_timing : nullptr;
         if (!uses_vertex_a || index != 1) {
             // Normal path
-            programs[index] = TranslateProgram(pools.inst, pools.block, env, cfg, host_info);
+            programs[index] =
+                TranslateProgram(pools.inst, pools.block, env, cfg, host_info, timing);
         } else {
             // VertexB path when VertexA is present.
             auto& program_va{programs[0]};
-            auto program_vb{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+            auto program_vb =
+                TranslateProgram(pools.inst, pools.block, env, cfg, host_info, timing);
+            const auto merge_start = timing ? std::chrono::steady_clock::now()
+                                            : std::chrono::steady_clock::time_point{};
             programs[index] = MergeDualVertexPrograms(program_va, program_vb, env);
+            if (timing) {
+                translate_timing.optimization_ns += static_cast<u64>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - merge_start)
+                        .count());
+            }
+        }
+        if (timing) {
+            device.GetXclipseTelemetry().RecordShaderTranslation(
+                translate_timing.decode_ns, translate_timing.optimization_ns);
         }
 
         if (Settings::values.dump_guest_shaders) {
@@ -994,13 +1063,38 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         infos[stage_index] = &program.info;
 
         const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
+        const bool stage_telemetry = device.GetXclipseTelemetry().Enabled();
+        const auto legacy_start = stage_telemetry ? std::chrono::steady_clock::now()
+                                                  : std::chrono::steady_clock::time_point{};
         ConvertLegacyToGeneric(program, runtime_info);
+        if (stage_telemetry) {
+            device.GetXclipseTelemetry().RecordShaderTranslation(
+                0, static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now() - legacy_start)
+                                       .count()));
+        }
         if (program.stage == Shader::Stage::Fragment) {
             LogXclipseFragmentOutputDiagnostics(key, runtime_info, program, profile, device);
         }
+        const auto spirv_start = stage_telemetry ? std::chrono::steady_clock::now()
+                                                 : std::chrono::steady_clock::time_point{};
         const std::vector<u32> code{EmitSPIRV(profile, runtime_info, program, binding)};
+        if (stage_telemetry) {
+            device.GetXclipseTelemetry().RecordSpirvGeneration(static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - spirv_start)
+                    .count()));
+        }
         device.SaveShader(code);
+        const auto module_start = stage_telemetry ? std::chrono::steady_clock::now()
+                                                  : std::chrono::steady_clock::time_point{};
         modules[stage_index] = BuildShader(device, code);
+        if (stage_telemetry) {
+            device.GetXclipseTelemetry().RecordShaderModuleCreation(static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - module_start)
+                    .count()));
+        }
 
         // Text log + .spv dump. Text log is gated by gpu_log_level != Off; .spv dump
         // is independent and gated only by gpu_log_shader_dumps.
@@ -1112,7 +1206,14 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
         env.Dump(hash, key.unique_hash);
     }
 
-    auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+    Shader::Maxwell::TranslateProgramTiming translate_timing{};
+    auto* const timing =
+        device.GetXclipseTelemetry().Enabled() ? &translate_timing : nullptr;
+    auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info, timing)};
+    if (timing) {
+        device.GetXclipseTelemetry().RecordShaderTranslation(
+            translate_timing.decode_ns, translate_timing.optimization_ns);
+    }
     const VkDriverIdKHR driver_id = device.GetDriverID();
     const bool needs_shared_mem_clamp =
         driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
@@ -1126,9 +1227,26 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
                     max_shared_memory / 1024);
         program.shared_memory_size = max_shared_memory;
     }
+    const bool shader_telemetry = device.GetXclipseTelemetry().Enabled();
+    const auto spirv_start = shader_telemetry ? std::chrono::steady_clock::now()
+                                              : std::chrono::steady_clock::time_point{};
     const std::vector<u32> code{EmitSPIRV(profile, program)};
+    if (shader_telemetry) {
+        device.GetXclipseTelemetry().RecordSpirvGeneration(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - spirv_start)
+                .count()));
+    }
     device.SaveShader(code);
+    const auto module_start = shader_telemetry ? std::chrono::steady_clock::now()
+                                               : std::chrono::steady_clock::time_point{};
     vk::ShaderModule spv_module{BuildShader(device, code)};
+    if (shader_telemetry) {
+        device.GetXclipseTelemetry().RecordShaderModuleCreation(static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - module_start)
+                .count()));
+    }
 
     // Text log + .spv dump. Same split as the graphics path.
     const bool should_log = GPU::Logging::IsActive();
@@ -1199,6 +1317,19 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
 
 vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::path& filename,
                                                          u32 expected_cache_version) {
+    const bool telemetry_enabled = device.GetXclipseTelemetry().Enabled();
+    const auto load_start = telemetry_enabled ? std::chrono::steady_clock::now()
+                                              : std::chrono::steady_clock::time_point{};
+    const auto record_load = [&](bool hit, u64 bytes) {
+        if (!telemetry_enabled) {
+            return;
+        }
+        device.GetXclipseTelemetry().RecordDriverPipelineCacheLoad(
+            hit, bytes, static_cast<u64>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - load_start)
+                                .count()));
+    };
     const auto create_pipeline_cache = [this](size_t data_size, const void* data) {
         VkPipelineCacheCreateInfo pipeline_cache_ci = {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
@@ -1211,7 +1342,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
     try {
         std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file.is_open()) {
-            return create_pipeline_cache(0, nullptr);
+            auto cache = create_pipeline_cache(0, nullptr);
+            record_load(false, 0);
+            return cache;
         }
         file.exceptions(std::ifstream::failbit);
         const auto end{file.tellg()};
@@ -1225,7 +1358,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
         if (static_cast<size_t>(end) < header_size) {
             file.close();
             Common::FS::RemoveFile(filename);
-            return create_pipeline_cache(0, nullptr);
+            auto cache = create_pipeline_cache(0, nullptr);
+            record_load(false, 0);
+            return cache;
         }
         file.read(magic_number.data(), magic_number.size())
             .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version))
@@ -1253,7 +1388,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
                           "Invalid Vulkan pipeline cache file and failed to delete it in \"{}\"",
                           Common::FS::PathToUTF8String(filename));
             }
-            return create_pipeline_cache(0, nullptr);
+            auto cache = create_pipeline_cache(0, nullptr);
+            record_load(false, 0);
+            return cache;
         }
 
         const size_t cache_size = static_cast<size_t>(end) - header_size;
@@ -1261,6 +1398,7 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
         file.read(cache_data.data(), cache_size);
 
         auto cache = create_pipeline_cache(cache_size, cache_data.data());
+        record_load(true, cache_size);
         LOG_INFO(Render_Vulkan,
                  "Loaded Vulkan driver pipeline cache: {} bytes={} policy={:016x}",
                  Common::FS::PathToUTF8String(filename), cache_size, expected_policy_hash);
@@ -1273,7 +1411,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
                       Common::FS::PathToUTF8String(filename));
         }
 
-        return create_pipeline_cache(0, nullptr);
+        auto cache = create_pipeline_cache(0, nullptr);
+        record_load(false, 0);
+        return cache;
     }
 }
 
