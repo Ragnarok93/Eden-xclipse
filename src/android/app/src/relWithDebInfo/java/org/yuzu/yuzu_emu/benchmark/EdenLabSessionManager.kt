@@ -8,6 +8,7 @@ import android.util.AtomicFile
 import java.io.File
 import java.io.RandomAccessFile
 import java.security.MessageDigest
+import org.json.JSONArray
 import org.json.JSONObject
 import org.yuzu.yuzu_emu.NativeLibrary
 
@@ -81,7 +82,7 @@ object EdenLabSessionManager {
                         .put("android", Build.VERSION.RELEASE)
                         .put("recovery_pending", pending.exists())
                         .put("read_only", true)
-                        .put("session_frame_counts", NativeLibrary.getLabFrameCounts().toList())
+                        .put("session_frame_counts", JSONArray(NativeLibrary.getLabFrameCounts().toList()))
                     "sandbox-roundtrip" -> sandboxRoundtrip(root, request.getJSONObject("config"))
                     "recover" -> recover(root)
                     else -> error("Unsupported operation")
