@@ -1005,6 +1005,24 @@ jdoubleArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getPerfStats(JNIEnv* env, jcl
     return j_stats;
 }
 
+// This read-only lab sampler never consumes or resets the FPS overlay's counters.
+jlongArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getLabFrameCounts(JNIEnv* env, jclass clazz) {
+    auto* result = env->NewLongArray(2);
+    if (!result) {
+        return nullptr;
+    }
+    if (EmulationSession::GetInstance().IsRunning()) {
+        const auto& system = EmulationSession::GetInstance().System();
+        const auto snapshot = system.GetPerfStats().GetCumulativeFrameCounts();
+        const jlong frames[2] = {
+            static_cast<jlong>(snapshot.system_frames),
+            static_cast<jlong>(snapshot.game_frames),
+        };
+        env->SetLongArrayRegion(result, 0, 2, frames);
+    }
+    return result;
+}
+
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_getShadersBuilding(JNIEnv* env, jclass clazz) {
     jint j_shaders = 0;
 
