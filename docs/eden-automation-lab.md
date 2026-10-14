@@ -1,4 +1,4 @@
-# Eden-Xclipse automated device lab: Phase 1
+# Eden-Xclipse automated device lab: Phase 1 / Phase 2 passive telemetry
 
 Target: Galaxy S25 FE (SM-S731U), Exynos 2400 / Xclipse 940, Android 17,
 Samsung SPAL 25.3.3, Vulkan 1.3.304. These are **reference conditions**:
@@ -7,9 +7,11 @@ read the actual device and Vulkan driver before making compatibility claims.
 Source inspiration: the separately maintained GameNative
 `Codex-Automated-Testing` branch. This first slice implements only an
 instrumentation request bridge, sandbox-only configuration transaction,
-host-side ADB isolation/lease, and mockable unit tests. It does **not**
-launch games, tune Xclipse policies, alter production emulator settings,
-install APKs, capture frame metrics, or establish performance improvements.
+host-side ADB isolation/lease, and mockable unit tests. Phase 2 now adds
+passive native frame counters and Xclipse aggregate diagnostic snapshots.
+It does **not** launch games, tune Xclipse policies, alter production emulator
+settings, install APKs, record individual frame times, or establish actual
+performance improvements.
 
 ## Source locations
 
@@ -35,6 +37,19 @@ install APKs, capture frame metrics, or establish performance improvements.
   Android instrumentation entry; no exported production API.
 - `src/android/app/build.gradle.kts`: RelWithDebInfo test build selection
   and matching instrumentation runner/dependencies.
+- `src/video_core/renderer_base.h` and
+  `src/video_core/renderer_vulkan/renderer_vulkan.cpp`: virtual passive
+  renderer diagnostics snapshot mapped to existing Xclipse aggregate counters;
+  never calls Vulkan queue waits or resets a runtime cache.
+- `src/android/app/src/main/jni/native.cpp` and
+  `src/android/app/src/main/java/org/yuzu/yuzu_emu/NativeLibrary.kt`:
+  schema-v1 bounded JNI `getLabRendererCounters()` and non-destructive
+  `getLabFrameCounts()`.
+- `EdenLabRendererSnapshot.kt`: converts versioned JNI counters to named
+  fields, distinguishes unavailable from zero, and explicitly says the
+  p95 values are latency-histogram bucket *upper bounds*.
+- `.github/workflows/xclipse-lab-fast-checks.yml`: source-push host and
+  Vulkan policy gate. The expensive APK workflow is separate.
 
 ## Host validation
 
@@ -94,9 +109,17 @@ python3 tools/eden_lab.py --serial SERIAL recover
 
 The Phase 2 native groundwork exposes `NativeLibrary.getLabFrameCounts()`:
 non-resetting system-frame and game-frame counts since the current emulated
-title began. This does **not** yet provide per-game-frame timestamps, display
-cadence, shader timing, or actual on-device benchmark evidence. The read-only
-lab probe exercises the JNI path and reports zeros when emulation is idle.
+title began. `NativeLibrary.getLabRendererCounters()` also exposes existing
+low-overhead, cumulative Xclipse diagnostic counters and latency-histogram
+p95 *bucket upper bounds* when an active Vulkan renderer is available. The
+lab probe returns an explicit `available=false` when no such renderer exists.
+
+**Important limitations:** The counters are not a per-frame timestamp stream;
+shader compilation histograms are CPU-side timings, **not GPU execution time**.
+A physical-device run is still required to verify the JNI mapping and Vulkan
+counter behavior, and the instrumentation bridge intentionally rejects
+launching during an active emulator session. Live recording/presentation
+cadence, game route replay and performance attribution remain future work.
 
 The `--aggregate-telemetry` parameter above is **sandbox test data** and
 does not change runtime native telemetry. A successful sandbox roundtrip
@@ -145,15 +168,16 @@ the comparator does not independently authenticate submitted measurements.
 | --- | --- | --- |
 | Fork AI/Codex policy | Complete | AGENTS.md, CLAUDE.md, docs/policies/AI.md |
 | Host strict protocol/lease | Implemented, not device-tested | tools/eden_lab.py |
-| Instrumentation-only bridge | Implemented, build pending | EdenLabBridgeTest |
+| Instrumentation-only bridge | Corrected after first build failure; rebuild pending | First APK compiled, androidTest had `InstrumentationRegistry.arguments` Kotlin error; changed to `getArguments()` |
 | Journaled private sandbox roundtrip | Implemented, hardware validation pending | EdenLabSessionManager |
 | Host unit tests | Passing in fast CI | tools/tests/test_eden_lab*.py |
 | APK identity preflight | Implemented, fast tests passed | aapt2/apksigner read-only attestation; real artifacts pending |
-| APK and instrumentation build | Not verified | Manually dispatched RelWithDebInfo workflow must build both |
+| APK and instrumentation build | Optimized app compiled; instrumentation Kotlin failed on 2026-10-14 | Run 38521913613; fixed `InstrumentationRegistry.getArguments()`; full latest-source rebuild pending |
 | Physical device acceptance | Not started | Requires authorization and connected device |
 | Native session frame counters | Implemented, build pending | Non-resetting JNI; not yet live-workload sampled |
-| Frame timestamps/Xclipse aggregate snapshot | Not started | Required for valid gameplay comparison |
-| Cold/warm offline comparator | Implemented, host tests pending | Strict provenance and no automatic promotion |
+| Passive Xclipse aggregate snapshots | Implemented, native build pending | RendererBase virtual optional; Vulkan adapter; versioned JNI/Kotlin schema |
+| Game frame timestamps and display cadence | Not implemented | Required for valid gameplay comparison |
+| Cold/warm offline comparator | Implemented, fast CI passing | Strict provenance and no automatic promotion |
 | Automated gameplay and tuning | Not started | Requires isolation/metrics first |
 
 A test cannot be marked complete based on source presence alone. Track
