@@ -140,7 +140,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run host-only lab safety tests
-        run: python3 -m unittest discover -s tools/tests -p 'test_eden_lab.py' -v
+        run: python3 -m unittest discover -s tools/tests -p 'test_eden_lab*.py' -v
 
   policy-tests:
     name: Xclipse policy verification gate
