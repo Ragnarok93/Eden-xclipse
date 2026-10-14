@@ -27,7 +27,9 @@ RUN_KEYS = {
     "run_id", "cache_state", "native_game_frames", "elapsed_ns",
     "game_frametime_p95_ns", "game_frametime_p99_ns", "correctness_errors",
     "crashed", "thermal_start_c", "thermal_end_c", "evidence_sha256",
-    "frametime_source", "measurement_origin",
+    "frametime_source", "measurement_origin", "device_fingerprint",
+    "vulkan_driver_version", "title_id", "checkpoint_sha256",
+    "binary_sha256", "effective_policy_sha256",
 }
 
 
@@ -50,7 +52,7 @@ def number(value: object, name: str, low: float, high: float) -> None:
           "Out of range: " + name)
 
 
-def run_valid(run: object, seen: set[str]) -> None:
+def run_valid(run: object, seen: set[str], variant: dict, common: dict) -> None:
     check(type(run) is dict and set(run) == RUN_KEYS, "Invalid trial schema")
     key = run["run_id"]
     check(type(key) is str and RUN_ID.fullmatch(key) is not None and key not in seen,
@@ -74,6 +76,17 @@ def run_valid(run: object, seen: set[str]) -> None:
     for key in ("thermal_start_c", "thermal_end_c"):
         number(run[key], key, -30, 130)
     sha(run["evidence_sha256"], "evidence_sha256")
+    attested = {
+        "device_fingerprint": common["android_fingerprint"],
+        "vulkan_driver_version": common["vulkan_driver_version"],
+        "title_id": common["title_id"],
+        "checkpoint_sha256": common["checkpoint_sha256"],
+        "binary_sha256": variant["binary_sha256"],
+        "effective_policy_sha256": variant["effective_policy_sha256"],
+    }
+    for key, expected in attested.items():
+        check(type(run[key]) is str and run[key] == expected,
+              "Runtime attestation mismatch: " + key)
 
 
 def validate(campaign: object) -> dict:
@@ -110,7 +123,7 @@ def validate(campaign: object) -> dict:
         runs = variant["runs"]
         check(type(runs) is list and len(runs) <= 100, "Invalid trial list")
         for run in runs:
-            run_valid(run, seen)
+            run_valid(run, seen, variant, common)
         for cache_state in ("cold", "warm"):
             check(sum(r["cache_state"] == cache_state for r in runs) >= MIN_TRIALS,
                   "Insufficient " + cache_state + " trials for " + kind)
