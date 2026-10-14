@@ -206,6 +206,13 @@ object NativeLibrary {
     external fun getPerfStats(): DoubleArray
 
     /**
+     * Monotonic system-frame and game-frame counts for the current emulation session.
+     * Unlike getPerfStats(), this does not reset the overlay's measurement window.
+     * Returns [systemFrames, gameFrames], or zeros when no game is running.
+     */
+    external fun getLabFrameCounts(): LongArray
+
+    /**
      * Returns the number of shaders being built
      */
     external fun getShadersBuilding(): Int
