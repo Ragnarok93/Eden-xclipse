@@ -78,6 +78,7 @@ void PerfStats::EndSystemFrame() {
     }
     accumulated_frametime += frame_time;
     system_frames += 1;
+    cumulative_system_frames.fetch_add(1, std::memory_order_relaxed);
 
     previous_frame_length = frame_end - previous_frame_end;
     previous_frame_end = frame_end;
@@ -85,6 +86,14 @@ void PerfStats::EndSystemFrame() {
 
 void PerfStats::EndGameFrame() {
     game_frames.fetch_add(1, std::memory_order_relaxed);
+    cumulative_game_frames.fetch_add(1, std::memory_order_relaxed);
+}
+
+PerfStatsFrameCounts PerfStats::GetCumulativeFrameCounts() const noexcept {
+    return {
+        .system_frames = cumulative_system_frames.load(std::memory_order_relaxed),
+        .game_frames = cumulative_game_frames.load(std::memory_order_relaxed),
+    };
 }
 
 double PerfStats::GetMeanFrametime() const {
