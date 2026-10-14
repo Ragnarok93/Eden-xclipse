@@ -83,6 +83,7 @@ object EdenLabSessionManager {
                         .put("recovery_pending", pending.exists())
                         .put("read_only", true)
                         .put("session_frame_counts", JSONArray(NativeLibrary.getLabFrameCounts().toList()))
+                        .put("renderer_telemetry", EdenLabRendererSnapshot.sample())
                     "sandbox-roundtrip" -> sandboxRoundtrip(root, request.getJSONObject("config"))
                     "recover" -> recover(root)
                     else -> error("Unsupported operation")
