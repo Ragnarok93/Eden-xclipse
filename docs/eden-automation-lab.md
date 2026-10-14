@@ -5,7 +5,7 @@ Samsung SPAL 25.3.3, Vulkan 1.3.304. These are **reference conditions**:
 read the actual device and Vulkan driver before making compatibility claims.
 
 Source inspiration: the separately maintained GameNative
-\`Codex-Automated-Testing\` branch. This first slice implements only an
+`Codex-Automated-Testing` branch. This first slice implements only an
 instrumentation request bridge, sandbox-only configuration transaction,
 host-side ADB isolation/lease, and mockable unit tests. It does **not**
 launch games, tune Xclipse policies, alter production emulator settings,
@@ -13,26 +13,26 @@ install APKs, capture frame metrics, or establish performance improvements.
 
 ## Source locations
 
-- \`tools/eden_lab.py\`: standard-library-only host CLI, strict protocol,
+- `tools/eden_lab.py`: standard-library-only host CLI, strict protocol,
   explicit device selection, idle guard, host lease, private request staging.
-- \`tools/tests/test_eden_lab.py\`: host request/transport/authorization tests.
-- \`src/android/app/src/relWithDebInfo/java/org/yuzu/yuzu_emu/benchmark/\`:
-  debug-only \`EdenLabSessionManager\`; changes only
-  \`files/eden-lab/sandbox.json\`.
-- \`src/android/app/src/androidTest/java/org/yuzu/yuzu_emu/benchmark/\`:
+- `tools/tests/test_eden_lab.py`: host request/transport/authorization tests.
+- `src/android/app/src/relWithDebInfo/java/org/yuzu/yuzu_emu/benchmark/`:
+  debug-only `EdenLabSessionManager`; changes only
+  `files/eden-lab/sandbox.json`.
+- `src/android/app/src/androidTest/java/org/yuzu/yuzu_emu/benchmark/`:
   Android instrumentation entry; no exported production API.
-- \`src/android/app/build.gradle.kts\`: RelWithDebInfo test build selection
+- `src/android/app/build.gradle.kts`: RelWithDebInfo test build selection
   and matching instrumentation runner/dependencies.
 
 ## Host validation
 
 From the repository root:
 
-\`\`\`bash
+```bash
 python3 -m unittest discover -s tools/tests -p 'test_eden_lab.py' -v
 python3 tools/eden_lab.py --help
 python3 tools/eden_lab.py --serial SERIAL device-info
-\`\`\`
+```
 
 Do not claim these pass before actually executing them.
 
@@ -40,21 +40,21 @@ Do not claim these pass before actually executing them.
 
 Before installing, obtain authorization, verify the package identity and
 certificate, back up important app data and ensure the device is idle.
-Build \`assembleMainlineRelWithDebInfoAndroidTest\` from exactly the same
+Build `assembleMainlineRelWithDebInfoAndroidTest` from exactly the same
 source tree as the RelWithDebInfo application APK, then install both using
 in-place updates without clearing data. The expected application package
-is \`dev.eden.eden_emulator.debug\`. The instrumentation runner component
-is \`dev.eden.eden_emulator.debug.test/androidx.test.runner.AndroidJUnitRunner\`.
+is `dev.eden.eden_emulator.debug`. The instrumentation runner component
+is `dev.eden.eden_emulator.debug.test/androidx.test.runner.AndroidJUnitRunner`.
 
-\`\`\`bash
+```bash
 python3 tools/eden_lab.py --serial SERIAL device-info
 python3 tools/eden_lab.py --serial SERIAL probe
 python3 tools/eden_lab.py --serial SERIAL sandbox-roundtrip \
   --tag basic --aggregate-telemetry --allow-test-writes
 python3 tools/eden_lab.py --serial SERIAL recover
-\`\`\`
+```
 
-The \`--aggregate-telemetry\` parameter above is **sandbox test data** and
+The `--aggregate-telemetry` parameter above is **sandbox test data** and
 does not change runtime native telemetry. A successful sandbox roundtrip
 proves only the private file readback and exact-byte restoration.
 
