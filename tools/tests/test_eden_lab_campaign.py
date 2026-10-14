@@ -35,6 +35,12 @@ def fixture():
                                                      (100 if is_candidate else 0))),
                     "frametime_source": "game_frame_timestamps",
                     "measurement_origin": "physical_device",
+                    "device_fingerprint": common["android_fingerprint"],
+                    "vulkan_driver_version": common["vulkan_driver_version"],
+                    "title_id": common["title_id"],
+                    "checkpoint_sha256": common["checkpoint_sha256"],
+                    "binary_sha256": "d" * 64 if is_candidate else "c" * 64,
+                    "effective_policy_sha256": "f" * 64 if is_candidate else "e" * 64,
                 })
         return result
 
@@ -112,6 +118,19 @@ class EvidenceValidationTests(unittest.TestCase):
         data["variants"]["candidate"]["effective_policy_sha256"] = "e" * 64
         with self.assertRaises(lab.EvidenceError):
             lab.compare(data)
+
+    def test_reject_runtime_attestation_mismatch(self):
+        for key, value in (
+            ("binary_sha256", "0" * 64),
+            ("device_fingerprint", "another-device"),
+            ("vulkan_driver_version", "older-driver"),
+            ("effective_policy_sha256", "9" * 64),
+            ("checkpoint_sha256", "1" * 64),
+        ):
+            data = fixture()
+            data["variants"]["candidate"]["runs"][0][key] = value
+            with self.subTest(key=key), self.assertRaises(lab.EvidenceError):
+                lab.compare(data)
 
     def test_unknown_controls_not_accepted(self):
         data = fixture()
