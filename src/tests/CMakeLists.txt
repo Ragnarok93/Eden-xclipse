@@ -20,9 +20,11 @@ add_executable(tests
     core/internal_network/network.cpp
     video_core/memory_tracker.cpp
     video_core/vulkan_device_profile.cpp
+    video_core/vulkan_feature_policy.cpp
     video_core/vk_blit_image_policy.cpp
     video_core/vk_image_copy_validation.cpp
     video_core/xclipse_bcn_decode.cpp
+    video_core/xclipse_dref_policy.cpp
     video_core/xclipse_pipeline_policy.cpp
     video_core/xclipse_memory_pressure.cpp
     video_core/xclipse_telemetry.cpp
@@ -46,3 +48,4 @@ if (NOT MSVC)
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-unused-parameter>
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-missing-field-initializers>)
 endif()
+

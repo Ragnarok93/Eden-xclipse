@@ -20,10 +20,15 @@ constexpr u32 NUM_TEXTURE_SCALING_WORDS = 4;
 constexpr u32 NUM_IMAGE_SCALING_WORDS = 2;
 constexpr u32 NUM_TEXTURE_AND_IMAGE_SCALING_WORDS =
     NUM_TEXTURE_SCALING_WORDS + NUM_IMAGE_SCALING_WORDS;
+constexpr u32 DREF_COMPARE_OPS_PER_WORD = 8;
+constexpr u32 NUM_DREF_COMPARE_OP_WORDS =
+    (NUM_TEXTURE_SCALING_WORDS * 32 + DREF_COMPARE_OPS_PER_WORD - 1) /
+    DREF_COMPARE_OPS_PER_WORD;
 
 struct RescalingLayout {
     alignas(16) std::array<u32, NUM_TEXTURE_SCALING_WORDS> rescaling_textures;
     alignas(16) std::array<u32, NUM_IMAGE_SCALING_WORDS> rescaling_images;
+    alignas(16) std::array<u32, NUM_DREF_COMPARE_OP_WORDS> dref_compare_ops;
     u32 down_factor;
 };
 struct RenderAreaLayout {

@@ -49,6 +49,9 @@ public:
 
     void Composite(std::span<const Tegra::FramebufferConfig> framebuffers) override;
 
+    [[nodiscard]] std::optional<VideoCore::BenchmarkRendererCounters>
+    GetBenchmarkRendererCounters() const override;
+
     std::vector<u8> GetAppletCaptureBuffer() override;
 
     VideoCore::RasterizerInterface* ReadRasterizer() override {

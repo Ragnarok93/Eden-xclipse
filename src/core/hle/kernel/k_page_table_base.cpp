@@ -465,7 +465,12 @@ void KPageTableBase::Finalize() {
 
     auto BlockCallback = [&](KProcessAddress addr, u64 size) {
         if (m_impl.fastmem_arena) {
-            m_system.DeviceMemory().buffer.Unmap(GetInteger(addr), size, false);
+            auto& host_memory = m_system.DeviceMemory().buffer;
+            const auto host_range = Common::IntersectHostMemoryVirtualRange(
+                GetInteger(addr), size, host_memory.VirtualSize());
+            if (host_range) {
+                host_memory.Unmap(host_range->offset, host_range->length, false);
+            }
         }
 
         // Get physical pages.

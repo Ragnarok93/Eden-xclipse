@@ -27,6 +27,12 @@ struct PerfStatsResults {
  * Class to manage and query performance/timing statistics. All public functions of this class are
  * thread-safe unless stated otherwise.
  */
+/// Session-lifetime counters are not reset when the UI reads FPS statistics.
+struct PerfStatsFrameCounts {
+    u64 system_frames{};
+    u64 game_frames{};
+};
+
 class PerfStats {
 public:
     explicit PerfStats(u64 title_id_);
@@ -37,6 +43,9 @@ public:
     void BeginSystemFrame();
     void EndSystemFrame();
     void EndGameFrame();
+
+    /// Monotonic within the current emulation session; never resets overlay statistics.
+    [[nodiscard]] PerfStatsFrameCounts GetCumulativeFrameCounts() const noexcept;
 
     PerfStatsResults GetAndResetStats(std::chrono::microseconds current_system_time_us);
 
@@ -73,6 +82,8 @@ private:
     u32 system_frames = 0;
     /// Cumulative number of game frames (GSP frame submissions) since last reset
     std::atomic<u32> game_frames = 0;
+    std::atomic<u64> cumulative_system_frames{0};
+    std::atomic<u64> cumulative_game_frames{0};
 
     /// Point when the previous system frame ended
     Clock::time_point previous_frame_end = reset_point;

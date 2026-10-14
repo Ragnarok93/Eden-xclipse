@@ -58,16 +58,15 @@ public:
 
     /// Submits the device graphics queue, updating the tick as necessary
     VkResult SubmitQueue(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,
-                         bool has_upload, VkSemaphore signal_semaphore,
-                         VkSemaphore wait_semaphore, u64 host_tick);
+                         VkSemaphore signal_semaphore, VkSemaphore wait_semaphore, u64 host_tick);
 
 private:
     VkResult SubmitQueueTimeline(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,
-                                 bool has_upload, VkSemaphore signal_semaphore,
-                                 VkSemaphore wait_semaphore, u64 host_tick);
+                                 VkSemaphore signal_semaphore, VkSemaphore wait_semaphore,
+                                 u64 host_tick);
     VkResult SubmitQueueFence(vk::CommandBuffer& cmdbuf, vk::CommandBuffer& upload_cmdbuf,
-                              bool has_upload, VkSemaphore signal_semaphore,
-                              VkSemaphore wait_semaphore, u64 host_tick);
+                              VkSemaphore signal_semaphore, VkSemaphore wait_semaphore,
+                              u64 host_tick);
 
     void WaitThread(std::stop_token token);
 

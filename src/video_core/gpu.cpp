@@ -16,6 +16,7 @@
 #include "common/settings.h"
 #include "common/settings_enums.h"
 #include "core/core.h"
+#include "core/memory.h"
 #include "core/core_timing.h"
 #include "core/frontend/emu_window.h"
 #include "core/frontend/graphics_context.h"
@@ -538,6 +539,10 @@ bool GPU::OnCPUWrite(DAddr addr, u64 size) {
 
 void GPU::FlushAndInvalidateRegion(DAddr addr, u64 size) {
     impl->FlushAndInvalidateRegion(addr, size);
+}
+
+bool GPU::TrimMemoryForPressure() {
+    return impl->system.ApplicationMemory().TrimHostMemoryForPressure();
 }
 
 } // namespace Tegra

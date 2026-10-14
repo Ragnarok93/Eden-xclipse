@@ -4,12 +4,17 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <bit>
+#include <functional>
+#include <thread>
 
 #include "common/assert.h"
 #include "common/bit_util.h"
+#include "common/correctness_telemetry.h"
 #include "common/fiber.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "core/arm/arm_interface.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -23,6 +28,48 @@
 #include "core/hle/kernel/physical_core.h"
 
 namespace Kernel {
+
+namespace {
+
+// Failure-only diagnostics: no lock probes or allocations on the scheduling fast path.
+// The mutex does not expose its owner; do not present an expected owner as an observed one.
+void LogContextGuardFailure(const char* site, s32 scheduler_core, const KThread* target,
+                            const KThread* current, bool needs_scheduling) {
+    Common::CorrectnessTelemetry::Get().RecordSchedulerContextGuardFailure();
+    static std::atomic<u32> reports{};
+    const u32 report = reports.fetch_add(1, std::memory_order_relaxed);
+    if (report >= 16) {
+        return;
+    }
+    LOG_ERROR(Debug,
+              "SCHEDULER_CONTEXT_GUARD_FAILURE report={} site={} host_thread_hash={} "
+              "scheduler_core={} target_guest_thread={} current_guest_thread={} "
+              "needs_scheduling={} expected_context_locked=true try_lock_succeeded=true "
+              "mutex_owner=unknown detail_limit=16",
+              report + 1, site, std::hash<std::thread::id>{}(std::this_thread::get_id()),
+              scheduler_core, target ? target->GetThreadId() : 0,
+              current ? current->GetThreadId() : 0, needs_scheduling);
+    if (!Settings::values.xclipse_scheduler_diagnostics.GetValue()) {
+        return;
+    }
+    LOG_ERROR(Debug,
+              "SCHEDULER_CONTEXT_GUARD_STATE report={} site={} target_state={} "
+              "target_priority={} target_current_core={} target_active_core={} "
+              "target_disable_dispatch={} target_last_scheduled_tick={} current_state={} "
+              "current_priority={} current_core={} current_disable_dispatch={}",
+              report + 1, site, target ? static_cast<u32>(target->GetState()) : 0,
+              target ? target->GetPriority() : 0, target ? target->GetCurrentCore() : -1,
+              target ? target->GetActiveCore() : -1,
+              target ? target->GetDisableDispatchCount() : 0,
+              target ? target->GetLastScheduledTick() : 0,
+              current ? static_cast<u32>(current->GetState()) : 0,
+              current ? current->GetPriority() : 0,
+              current ? current->GetCurrentCore() : -1,
+              current ? current->GetDisableDispatchCount() : 0);
+}
+
+} // namespace
+
 
 static void IncrementScheduledCount(Kernel::KThread* thread) {
     if (auto process = thread->GetOwnerProcess(); process) {
@@ -178,6 +225,11 @@ void KScheduler::Activate(KernelCore& kernel) {
 
 void KScheduler::OnThreadStart(KernelCore& kernel) {
     GetCurrentThread(kernel).EnableDispatch(kernel);
+}
+
+void KScheduler::LockCurrentThreadContext(KThread* thread) {
+    ASSERT(thread == m_current_thread.load());
+    thread->m_context_guard.lock();
 }
 
 u64 KScheduler::UpdateHighestPriorityThread(KernelCore& kernel, KThread* highest_thread) {
@@ -467,6 +519,11 @@ void KScheduler::ScheduleImplFiber(KernelCore& kernel) {
         if (m_state.needs_scheduling.load(std::memory_order_seq_cst)) {
             // Some libc++ lazily init mutex
             [[maybe_unused]] auto const can_lock = highest_priority_thread->m_context_guard.try_lock();
+            if (can_lock) {
+                LogContextGuardFailure("ScheduleImplFiber/retry", m_core_id,
+                                       highest_priority_thread, cur_thread,
+                                       m_state.needs_scheduling.load(std::memory_order_relaxed));
+            }
             DEBUG_ASSERT(!can_lock);
 
             // Our switch failed.
@@ -502,6 +559,11 @@ void KScheduler::Unload(KernelCore& kernel, KThread* thread) {
     if ((thread->GetStackParameters().dpc_flags & static_cast<u32>(DpcFlag::Terminated)) == 0) {
         // Some libc++ lazily init mutex
         [[maybe_unused]] auto const can_lock = thread->m_context_guard.try_lock();
+        if (can_lock) {
+            LogContextGuardFailure("Unload", m_core_id, thread,
+                                   GetCurrentThreadPointer(kernel),
+                                   m_state.needs_scheduling.load(std::memory_order_relaxed));
+        }
         DEBUG_ASSERT(!can_lock);
 
         // The thread isn't terminated, so we want to unlock it.

@@ -170,6 +170,10 @@ public:
 
     void Deserialize(std::ifstream& file);
 
+    [[nodiscard]] u64 DeserializeDurationNs() const noexcept {
+        return deserialize_duration_ns;
+    }
+
     [[nodiscard]] u64 ReadInstruction(u32 address) override;
 
     [[nodiscard]] u32 ReadCbufValue(u32 cbuf_index, u32 cbuf_offset) override;
@@ -213,6 +217,7 @@ private:
     u32 read_highest{};
     u32 initial_offset{};
     u32 viewport_transform_state = 1;
+    u64 deserialize_duration_ns{};
 };
 
 void SerializePipeline(std::span<const char> key, std::span<const GenericEnvironment* const> envs,

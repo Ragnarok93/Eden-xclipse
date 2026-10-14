@@ -58,6 +58,23 @@ TEST_CASE("Xclipse swap usage requires consistent kernel counters",
     REQUIRE_FALSE(XclipseSwapUsedKiB(8192ULL, 9000ULL));
 }
 
+TEST_CASE("Xclipse shared-memory footprint advances pressure under low RAM",
+          "[video_core][xclipse]") {
+    Vulkan::XclipseMemoryPressureSample sample{};
+    sample.ram_available_percent = 20;
+    sample.process_rss_swap_percent = 25;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Elevated);
+
+    sample.process_rss_swap_percent = 35;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::High);
+
+    sample.ram_available_percent = 30;
+    REQUIRE(Vulkan::XclipseMemoryPressureController::Classify(sample) ==
+            Vulkan::MemoryPressureClass::Normal);
+}
+
 TEST_CASE("Xclipse pressure promotes immediately and demotes slowly",
           "[video_core][xclipse]") {
     Vulkan::XclipseMemoryPressureController controller;
@@ -194,11 +211,11 @@ TEST_CASE("Xclipse staging containment escalates with Android pressure",
 
     REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Normal) == 0);
     REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Elevated) ==
-            384ULL * 1024ULL * 1024ULL);
+            256ULL * 1024ULL * 1024ULL);
     REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::High) ==
-            192ULL * 1024ULL * 1024ULL);
+            128ULL * 1024ULL * 1024ULL);
     REQUIRE(Vulkan::XclipseStagingCacheLimitBytes(MemoryPressureClass::Critical) ==
-            96ULL * 1024ULL * 1024ULL);
+            64ULL * 1024ULL * 1024ULL);
 }
 
 TEST_CASE("Xclipse pressure bounds the persistent staging ring only when enabled",

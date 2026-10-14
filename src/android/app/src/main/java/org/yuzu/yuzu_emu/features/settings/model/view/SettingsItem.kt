@@ -1030,6 +1030,41 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_DIAGNOSTIC_LOGGING,
+                    titleId = R.string.xclipse_diagnostic_logging,
+                    descriptionId = R.string.xclipse_diagnostic_logging_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_DREF_DIAGNOSTICS,
+                    titleId = R.string.xclipse_dref_diagnostics,
+                    descriptionId = R.string.xclipse_dref_diagnostics_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_HOST_MEMORY_DIAGNOSTICS,
+                    titleId = R.string.xclipse_host_memory_diagnostics,
+                    descriptionId = R.string.xclipse_host_memory_diagnostics_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_GPU_MEMORY_DIAGNOSTICS,
+                    titleId = R.string.xclipse_gpu_memory_diagnostics,
+                    descriptionId = R.string.xclipse_gpu_memory_diagnostics_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_SCHEDULER_DIAGNOSTICS,
+                    titleId = R.string.xclipse_scheduler_diagnostics,
+                    descriptionId = R.string.xclipse_scheduler_diagnostics_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_MEMORY_PRESSURE_MONITOR,
                     titleId = R.string.xclipse_memory_pressure_monitor,
                     descriptionId = R.string.xclipse_memory_pressure_monitor_description
@@ -1044,6 +1079,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.XCLIPSE_GPU_BPTC_DECODE,
+                    titleId = R.string.xclipse_gpu_bptc_decode,
+                    descriptionId = R.string.xclipse_gpu_bptc_decode_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.XCLIPSE_PIPELINE_POLICY,
                     titleId = R.string.xclipse_pipeline_policy,
                     descriptionId = R.string.xclipse_pipeline_policy_description
@@ -1054,6 +1096,13 @@ abstract class SettingsItem(
                     BooleanSetting.XCLIPSE_SYNC_POLICY,
                     titleId = R.string.xclipse_sync_policy,
                     descriptionId = R.string.xclipse_sync_policy_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.XCLIPSE_SUBMISSION_BATCHING,
+                    titleId = R.string.xclipse_submission_batching,
+                    descriptionId = R.string.xclipse_submission_batching_description
                 )
             )
             put(

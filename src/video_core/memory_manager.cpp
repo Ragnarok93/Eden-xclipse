@@ -5,10 +5,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
+#include <functional>
+#include <limits>
+#include <optional>
+#include <thread>
 
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/correctness_telemetry.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_page_table.h"
 #include "core/hle/kernel/k_process.h"
@@ -23,6 +30,39 @@
 
 namespace Tegra {
 using Tegra::Memory::GuestMemoryFlags;
+
+namespace {
+void RecordUnmappedGpuAccess(const MemoryManager& manager, GPUVAddr address, std::size_t length,
+                             bool write, const char* operation, bool unsafe) {
+    auto& telemetry = Common::CorrectnessTelemetry::Get();
+    if (write) {
+        telemetry.RecordUnmappedGpuWrite();
+    } else {
+        telemetry.RecordUnmappedGpuRead();
+    }
+
+    if (!Settings::values.xclipse_gpu_memory_diagnostics.GetValue()) {
+        return;
+    }
+    static std::atomic<u32> reports{};
+    const u32 report = reports.fetch_add(1, std::memory_order_relaxed);
+    if (report >= 64) {
+        return;
+    }
+    const auto previous =
+        address != 0 ? manager.GpuToCpuAddress(address - 1) : std::optional<DAddr>{};
+    const GPUVAddr next_address =
+        length <= (std::numeric_limits<GPUVAddr>::max)() - address ? address + length : address;
+    const auto next = manager.GpuToCpuAddress(next_address);
+    LOG_ERROR(HW_GPU,
+              "GPU_UNMAPPED_ACCESS report={} operation={} access={} gpu_va={:#x} length={:#x} "
+              "memory_manager_id={} unsafe={} prev_adjacent_mapped={} prev_dev={:#x} "
+              "next_adjacent_mapped={} next_dev={:#x} host_thread_hash={} detail_limit=64",
+              report + 1, operation, write ? "write" : "read", address, length, manager.GetID(),
+              unsafe, previous.has_value(), previous.value_or(0), next.has_value(),
+              next.value_or(0), std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+} // namespace
 
 std::atomic<size_t> MemoryManager::unique_identifier_generator{};
 
@@ -238,6 +278,7 @@ T MemoryManager::Read(GPUVAddr addr) const {
         return value;
     }
 
+    RecordUnmappedGpuAccess(*this, addr, sizeof(T), false, "scalar", false);
     ASSERT(false);
 
     return {};
@@ -251,6 +292,7 @@ void MemoryManager::Write(GPUVAddr addr, T data) {
         return;
     }
 
+    RecordUnmappedGpuAccess(*this, addr, sizeof(T), true, "scalar", false);
     ASSERT(false);
 }
 
@@ -352,7 +394,16 @@ inline void MemoryManager::MemoryOperation(GPUVAddr gpu_src_addr, std::size_t si
 }
 
 void MemoryManager::ReadBlockImpl(GPUVAddr gpu_src_addr, void* dest_buffer, std::size_t size, [[maybe_unused]] VideoCommon::CacheType which, bool unsafe) const {
-    auto set_to_zero = [&]([[maybe_unused]] std::size_t page_index, [[maybe_unused]] std::size_t offset, std::size_t copy_amount) {
+    auto set_to_zero = [&]([[maybe_unused]] std::size_t page_index,
+                           [[maybe_unused]] std::size_t offset, std::size_t copy_amount) {
+        std::memset(dest_buffer, 0, copy_amount);
+        dest_buffer = static_cast<u8*>(dest_buffer) + copy_amount;
+    };
+    auto set_unmapped_to_zero = [&](std::size_t page_index, std::size_t offset,
+                                    std::size_t copy_amount) {
+        const GPUVAddr address = (static_cast<GPUVAddr>(page_index) << page_bits) + offset;
+        RecordUnmappedGpuAccess(*this, address, copy_amount, false,
+                                unsafe ? "read-block-unsafe" : "read-block", unsafe);
         std::memset(dest_buffer, 0, copy_amount);
         dest_buffer = static_cast<u8*>(dest_buffer) + copy_amount;
     };
@@ -380,7 +431,8 @@ void MemoryManager::ReadBlockImpl(GPUVAddr gpu_src_addr, void* dest_buffer, std:
     };
     auto read_short_pages = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         GPUVAddr base = (page_index << big_page_bits) + offset;
-        MemoryOperation(base, copy_amount, false, mapped_normal, set_to_zero, set_to_zero);
+        MemoryOperation(base, copy_amount, false, mapped_normal, set_to_zero,
+                        set_unmapped_to_zero);
     };
     MemoryOperation(gpu_src_addr, size, true, mapped_big, set_to_zero, read_short_pages);
 }
@@ -394,7 +446,15 @@ void MemoryManager::ReadBlockUnsafe(GPUVAddr gpu_src_addr, void* dest_buffer, co
 }
 
 void MemoryManager::WriteBlockImpl(GPUVAddr gpu_dest_addr, const void* src_buffer, std::size_t size, [[maybe_unused]] VideoCommon::CacheType which, bool unsafe) {
-    auto just_advance = [&]([[maybe_unused]] std::size_t page_index, [[maybe_unused]] std::size_t offset, std::size_t copy_amount) {
+    auto just_advance = [&]([[maybe_unused]] std::size_t page_index,
+                            [[maybe_unused]] std::size_t offset, std::size_t copy_amount) {
+        src_buffer = static_cast<const u8*>(src_buffer) + copy_amount;
+    };
+    auto advance_unmapped = [&](std::size_t page_index, std::size_t offset,
+                                std::size_t copy_amount) {
+        const GPUVAddr address = (static_cast<GPUVAddr>(page_index) << page_bits) + offset;
+        RecordUnmappedGpuAccess(*this, address, copy_amount, true,
+                                unsafe ? "write-block-unsafe" : "write-block", unsafe);
         src_buffer = static_cast<const u8*>(src_buffer) + copy_amount;
     };
     auto mapped_normal = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
@@ -421,7 +481,7 @@ void MemoryManager::WriteBlockImpl(GPUVAddr gpu_dest_addr, const void* src_buffe
     };
     auto write_short_pages = [&](std::size_t page_index, std::size_t offset, std::size_t copy_amount) {
         GPUVAddr base = (page_index << big_page_bits) + offset;
-        MemoryOperation(base, copy_amount, false, mapped_normal, just_advance, just_advance);
+        MemoryOperation(base, copy_amount, false, mapped_normal, just_advance, advance_unmapped);
     };
     MemoryOperation(gpu_dest_addr, size, true, mapped_big, just_advance, write_short_pages);
 }

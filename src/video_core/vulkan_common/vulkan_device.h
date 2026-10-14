@@ -288,6 +288,14 @@ public:
         return device_policy.xclipse.detected;
     }
 
+    bool XclipseDetailedDiagnosticsEnabled() const noexcept {
+        return IsXclipse() && Settings::values.xclipse_diagnostic_logging.GetValue();
+    }
+
+    bool XclipseDrefDiagnosticsEnabled() const noexcept {
+        return IsXclipse() && Settings::values.xclipse_dref_diagnostics.GetValue();
+    }
+
     bool UseXclipseSyncPolicy() const noexcept {
         return device_policy.xclipse.detected && device_policy.use_xclipse_sync_policy;
     }
@@ -295,6 +303,29 @@ public:
     bool UseXclipseBcnGpuDecode() const noexcept {
         return device_policy.xclipse.detected && device_policy.use_xclipse_bcn_gpu_decode;
     }
+
+    bool UseXclipseBptcGpuDecode() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bptc_gpu_decode;
+    }
+
+    bool UseXclipseBc6GpuDecode() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bc6_gpu_decode;
+    }
+
+    bool UseXclipseBc7GpuDecode() const noexcept {
+        return device_policy.xclipse.detected && device_policy.use_xclipse_bc7_gpu_decode;
+    }
+
+    bool UseXclipseDescriptorBuffer() const noexcept {
+        return device_policy.xclipse.detected &&
+               device_policy.xclipse.descriptor_buffer_validated &&
+               device_policy.xclipse.descriptor_buffer_image_validated;
+    }
+
+    bool UseXclipseR32DrefEmulation() const noexcept {
+        return CanUseXclipseR32DrefEmulation(device_policy);
+    }
+
 
     XclipseTelemetry& GetXclipseTelemetry() const noexcept {
         return xclipse_telemetry;
@@ -411,9 +442,10 @@ FN_MAX_LIMIT_LIST
         return is_optimal_astc_supported;
     }
 
-    /// Returns true if the host can use the requested BC format on Eden's native sampled path.
+    /// Returns true if the host can use the requested BC format for the requested native usage.
     /// Xclipse requires operation-level validation; other devices preserve the upstream feature gate.
-    bool IsOptimalBcnSupported(VkFormat format) const;
+    bool IsOptimalBcnSupported(VkFormat format, bool require_transfer_src = true,
+                               bool require_transfer_dst = true) const;
 
     /// Coarse compatibility query retained for non-format-specific callers.
     bool IsOptimalBcnSupported() const {
@@ -1152,6 +1184,8 @@ private:
 
     /// Executes output-checked Wave32/Wave64 and subgroup operation probes.
     void RunXclipseSubgroupValidationProbes();
+    void RunXclipseDescriptorBufferValidationProbe();
+    void RunXclipseDescriptorBufferImageValidationProbe();
 
     /// Recomputes family-level BCn native readiness from exact per-format state.
     void UpdateXclipseBcnProfile();
@@ -1304,7 +1338,8 @@ private:
     // Telemetry parameters
     std::set<std::string, std::less<>> supported_extensions; ///< Reported Vulkan extensions.
     std::set<std::string, std::less<>> loaded_extensions;    ///< Loaded Vulkan extensions.
-    std::vector<size_t> valid_heap_memory;                   ///< Heaps used.
+    std::vector<size_t> valid_heap_memory;                   ///< Heaps used for shared/device memory telemetry.
+    std::vector<size_t> valid_device_local_heap_memory;     ///< Device-local heaps used for GPU budget accounting.
 
     /// Format properties dictionary.
     ::Common::unordered_map<VkFormat, VkFormatProperties> format_properties;

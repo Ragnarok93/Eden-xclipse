@@ -201,6 +201,46 @@ RendererVulkan::~RendererVulkan() {
     void(device.GetLogical().WaitIdle());
 }
 
+std::optional<VideoCore::BenchmarkRendererCounters>
+RendererVulkan::GetBenchmarkRendererCounters() const {
+    // All fields are existing, low-overhead aggregate counters. This read
+    // never waits for Vulkan queues, mutates caches or resets the FPS overlay.
+    const auto snapshot = device.GetXclipseTelemetry().Snapshot();
+    u64 cpu_decode_fallbacks = 0;
+    for (const u64 count : snapshot.bcn_cpu_fallbacks) {
+        cpu_decode_fallbacks += count;
+    }
+    const auto p95 = [](const XclipseLatencySnapshot& latency) -> u64 {
+        return latency.count == 0 ? 0 : latency.PercentileUpperBoundNs(95);
+    };
+    return VideoCore::BenchmarkRendererCounters{
+        .frame_count = snapshot.frame_count,
+        .pipeline_creates = snapshot.pipeline_creates,
+        .pipeline_failures = snapshot.pipeline_failures,
+        .runtime_pipeline_map_hits = snapshot.runtime_pipeline_map_hits,
+        .runtime_pipeline_map_misses = snapshot.runtime_pipeline_map_misses,
+        .pipeline_create_count = snapshot.vulkan_pipeline_create_latency.count,
+        .pipeline_create_p95_upper_ns = p95(snapshot.vulkan_pipeline_create_latency),
+        .pipeline_block_count = snapshot.pipeline_blocking_latency.count,
+        .pipeline_block_p95_upper_ns = p95(snapshot.pipeline_blocking_latency),
+        .pipeline_queue_residence_count = snapshot.pipeline_queue_residence_latency.count,
+        .pipeline_queue_residence_p95_upper_ns = p95(snapshot.pipeline_queue_residence_latency),
+        .shader_decode_count = snapshot.shader_decode_latency.count,
+        .shader_decode_p95_upper_ns = p95(snapshot.shader_decode_latency),
+        .spirv_generation_count = snapshot.spirv_generation_latency.count,
+        .spirv_generation_p95_upper_ns = p95(snapshot.spirv_generation_latency),
+        .queue_submits = snapshot.queue_submits,
+        .host_waits = snapshot.host_waits,
+        .timeline_waits = snapshot.timeline_waits,
+        .bcn_gpu_decode_dispatches = snapshot.bcn_gpu_decode_dispatches,
+        .bcn_cpu_fallbacks = cpu_decode_fallbacks,
+        .descriptor_stalls = snapshot.descriptor_stalls,
+        .image_native_copies = snapshot.native_image_copies,
+        .dref_unresolved_bindings = snapshot.dref_unresolved_bindings,
+        .aggregate_telemetry_enabled = snapshot.enabled,
+    };
+}
+
 void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebuffers) {
     SCOPE_EXIT {
         render_window.OnFrameDisplayed();

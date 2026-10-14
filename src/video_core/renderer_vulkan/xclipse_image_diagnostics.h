@@ -18,7 +18,53 @@ enum class XclipseImageDiagnosticCategory : std::size_t {
     ReinterpretCopy,
     SamplerViewCapability,
     SamplerDepthComparison,
+    DrefBinding,
+    UndefinedSampleRead,
+    DepthBias,
     Count,
+};
+
+enum class XclipseImageWriter : std::uint8_t {
+    None,
+    GpuModification,
+    Upload,
+    Copy,
+    Reinterpret,
+    Blit,
+    Convert,
+    GpuDecode,
+};
+
+[[nodiscard]] constexpr const char* XclipseImageWriterName(XclipseImageWriter writer) noexcept {
+    switch (writer) {
+    case XclipseImageWriter::None:
+        return "none";
+    case XclipseImageWriter::GpuModification:
+        return "gpu-modification";
+    case XclipseImageWriter::Upload:
+        return "upload";
+    case XclipseImageWriter::Copy:
+        return "copy";
+    case XclipseImageWriter::Reinterpret:
+        return "reinterpret";
+    case XclipseImageWriter::Blit:
+        return "blit";
+    case XclipseImageWriter::Convert:
+        return "convert";
+    case XclipseImageWriter::GpuDecode:
+        return "gpu-decode";
+    }
+    return "invalid";
+}
+
+struct XclipseImageProvenance {
+    bool contents_defined{};
+    bool gpu_write_pending{};
+    bool saw_undefined_transition{};
+    XclipseImageWriter last_writer{XclipseImageWriter::None};
+    std::uint64_t last_writer_tick{};
+    std::uint64_t last_transition_tick{};
+    std::uint32_t last_layout{};
 };
 
 inline constexpr std::size_t XCLIPSE_IMAGE_DIAGNOSTIC_BINDING_LIMIT = 64;
@@ -73,5 +119,7 @@ private:
         static_cast<std::size_t>(XclipseImageDiagnosticCategory::Count);
     std::array<std::atomic<std::uint64_t>, CategoryCount> counters{};
 };
+
+inline XclipseImageDiagnosticBudget xclipse_dref_binding_diagnostic_budget;
 
 } // namespace Vulkan

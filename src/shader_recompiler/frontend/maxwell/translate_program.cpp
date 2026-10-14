@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <queue>
@@ -235,7 +236,10 @@ void LowerGeometryPassthrough(const IR::Program& program, const HostTranslateInf
 } // Anonymous namespace
 
 IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Block>& block_pool,
-                             Environment& env, Flow::CFG& cfg, const HostTranslateInfo& host_info) {
+                             Environment& env, Flow::CFG& cfg, const HostTranslateInfo& host_info,
+                             TranslateProgramTiming* timing) {
+    const auto decode_start =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     HostTranslateInfo normalized_host_info{host_info};
     normalized_host_info.ApplyDescriptorLimitPolicy();
 
@@ -279,6 +283,15 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
     }
     RemoveUnreachableBlocks(program);
 
+    if (timing) {
+        timing->decode_ns += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - decode_start)
+                .count());
+    }
+    const auto optimization_start =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+
     // Replace instructions before the SSA rewrite
     if (!normalized_host_info.support_float64) {
         Optimization::LowerFp64ToFp32(program);
@@ -314,6 +327,12 @@ IR::Program TranslateProgram(ObjectPool<IR::Inst>& inst_pool, ObjectPool<IR::Blo
 
     CollectInterpolationInfo(env, program);
     AddNVNStorageBuffers(program);
+    if (timing) {
+        timing->optimization_ns += static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - optimization_start)
+                .count());
+    }
     return program;
 }
 

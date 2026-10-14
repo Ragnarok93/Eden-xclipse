@@ -349,8 +349,9 @@ MemoryCommit MemoryAllocator::Commit(const VkMemoryRequirements &reqs, MemoryUsa
 
     VkResult res = vmaAllocateMemory(allocator, &reqs, &ci, &a, &info);
 
-    if (res != VK_SUCCESS) {
-        // Relax 1: drop budget constraint
+    if (res != VK_SUCCESS && !device.IsXclipse()) {
+        // Preserve the legacy fallback on other drivers. Xclipse must never bypass the
+        // driver-reported Vulkan memory budget on a unified-memory Android device.
         auto ci2 = ci;
         ci2.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
         res = vmaAllocateMemory(allocator, &reqs, &ci2, &a, &info);
@@ -388,7 +389,10 @@ MemoryCommit MemoryAllocator::Commit(const vk::Buffer &buffer, MemoryUsage usage
     // Let VMA infer memory requirements from the buffer
     VkResult res = vmaAllocateMemoryForBuffer(allocator, raw, &ci, &a, &info);
 
-    if (res != VK_SUCCESS) {
+    if (res != VK_SUCCESS && !device.IsXclipse()) {
+        // Keep the budget escape hatch for non-Xclipse drivers where the existing allocator
+        // behavior is required for compatibility. Xclipse remains fail-closed at its Vulkan
+        // device-local budget instead of allocating beyond the driver's advertised ceiling.
         auto ci2 = ci;
         ci2.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
         res = vmaAllocateMemoryForBuffer(allocator, raw, &ci2, &a, &info);

@@ -9,6 +9,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "common/common_funcs.h"
 #include "common/common_types.h"
@@ -32,6 +33,34 @@ struct RendererSettings {
     Service::Nvnflinger::LayerStackId screenshot_layer_stack{Service::Nvnflinger::LayerStackId::Default};
 };
 
+/// Copy-only, bounded diagnostic snapshot. Not a GPU-duration measurement.
+struct BenchmarkRendererCounters {
+    u64 frame_count{};
+    u64 pipeline_creates{};
+    u64 pipeline_failures{};
+    u64 runtime_pipeline_map_hits{};
+    u64 runtime_pipeline_map_misses{};
+    u64 pipeline_create_count{};
+    u64 pipeline_create_p95_upper_ns{};
+    u64 pipeline_block_count{};
+    u64 pipeline_block_p95_upper_ns{};
+    u64 pipeline_queue_residence_count{};
+    u64 pipeline_queue_residence_p95_upper_ns{};
+    u64 shader_decode_count{};
+    u64 shader_decode_p95_upper_ns{};
+    u64 spirv_generation_count{};
+    u64 spirv_generation_p95_upper_ns{};
+    u64 queue_submits{};
+    u64 host_waits{};
+    u64 timeline_waits{};
+    u64 bcn_gpu_decode_dispatches{};
+    u64 bcn_cpu_fallbacks{};
+    u64 descriptor_stalls{};
+    u64 image_native_copies{};
+    u64 dref_unresolved_bindings{};
+    bool aggregate_telemetry_enabled{};
+};
+
 class RendererBase {
 public:
     YUZU_NON_COPYABLE(RendererBase);
@@ -50,6 +79,12 @@ public:
     [[nodiscard]] virtual RasterizerInterface* ReadRasterizer() = 0;
 
     [[nodiscard]] virtual std::string GetDeviceVendor() const = 0;
+
+    /// Optional, read-only renderer stats. Never submits GPU work or resets counters.
+    [[nodiscard]] virtual std::optional<BenchmarkRendererCounters>
+    GetBenchmarkRendererCounters() const {
+        return std::nullopt;
+    }
 
     // Getter/setter functions:
     // ------------------------

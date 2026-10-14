@@ -12,17 +12,18 @@
 #include <boost/container/small_vector.hpp>
 
 #include "common/common_types.h"
+#include "common/logging.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/shader_info.h"
+#include "video_core/renderer_vulkan/vk_rescaling_push_constant.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
 #include "video_core/surface.h"
 #include "video_core/texture_cache/types.h"
 #include "video_core/vulkan_common/vulkan_device.h"
+#include "video_core/vulkan_common/vulkan_feature_policy.h"
 
 namespace Vulkan {
-
-using Shader::Backend::SPIRV::NUM_TEXTURE_AND_IMAGE_SCALING_WORDS;
 
 [[nodiscard]] inline std::optional<PixelFormat> PixelFormatFromImageFormat(
     Shader::ImageFormat format) {
@@ -49,26 +50,8 @@ using Shader::Backend::SPIRV::NUM_TEXTURE_AND_IMAGE_SCALING_WORDS;
 
 [[nodiscard]] inline VkDeviceSize DescriptorSizeForType(const Device& device,
                                                         VkDescriptorType type) {
-    const auto& props = device.DescriptorBufferProperties();
-    const bool robust = device.IsRobustBufferAccessEnabled();
-    switch (type) {
-    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-        return robust ? props.robustUniformBufferDescriptorSize : props.uniformBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-        return robust ? props.robustStorageBufferDescriptorSize : props.storageBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-        return robust ? props.robustUniformTexelBufferDescriptorSize
-                      : props.uniformTexelBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-        return robust ? props.robustStorageTexelBufferDescriptorSize
-                      : props.storageTexelBufferDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-        return props.combinedImageSamplerDescriptorSize;
-    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-        return props.storageImageDescriptorSize;
-    default:
-        return 0;
-    }
+    return SelectDescriptorSize(device.DescriptorBufferProperties(), type,
+                                device.IsRobustBufferAccessEnabled());
 }
 
 struct DescriptorBufferBinding {
@@ -160,6 +143,9 @@ public:
         const auto& props = device->DescriptorBufferProperties();
         if (!device->IsExtDescriptorBufferSupported() || bindings.empty() ||
             !props.combinedImageSamplerDescriptorSingleArray) {
+            return false;
+        }
+        if (device->IsXclipse() && !device->UseXclipseDescriptorBuffer()) {
             return false;
         }
         return !props.bufferlessPushDescriptors || !CanUsePushDescriptor();
@@ -310,55 +296,30 @@ private:
     size_t offset{};
 };
 
-class RescalingPushConstant {
-public:
-    explicit RescalingPushConstant() noexcept {}
-
-    void PushTexture(bool is_rescaled) noexcept {
-        *texture_ptr |= is_rescaled ? texture_bit : 0u;
-        texture_bit <<= 1u;
-        if (texture_bit == 0u) {
-            texture_bit = 1u;
-            ++texture_ptr;
-        }
-    }
-
-    void PushImage(bool is_rescaled) noexcept {
-        *image_ptr |= is_rescaled ? image_bit : 0u;
-        image_bit <<= 1u;
-        if (image_bit == 0u) {
-            image_bit = 1u;
-            ++image_ptr;
-        }
-    }
-
-    const std::array<u32, NUM_TEXTURE_AND_IMAGE_SCALING_WORDS>& Data() const noexcept {
-        return words;
-    }
-
-private:
-    std::array<u32, NUM_TEXTURE_AND_IMAGE_SCALING_WORDS> words{};
-    u32* texture_ptr{words.data()};
-    u32* image_ptr{words.data() + Shader::Backend::SPIRV::NUM_TEXTURE_SCALING_WORDS};
-    u32 texture_bit{1u};
-    u32 image_bit{1u};
-};
-
 class RenderAreaPushConstant {
 public:
     bool uses_render_area{};
     std::array<f32, 4> words{};
 };
 
-inline void PushImageDescriptors(TextureCache& texture_cache,
+struct DrefDiagnosticContext {
+    u64 pipeline_hash{};
+    u64 shader_hash{};
+    u32 stage{};
+};
+
+[[nodiscard]] inline bool PushImageDescriptors(const Device& device,
+                                 TextureCache& texture_cache,
                                  GuestDescriptorQueue& guest_descriptor_queue,
                                  const Shader::Info& info, RescalingPushConstant& rescaling,
                                  const VideoCommon::SamplerId*& samplers,
-                                 const VideoCommon::ImageViewInOut*& views) {
+                                 const VideoCommon::ImageViewInOut*& views,
+                                 DrefDiagnosticContext diagnostic_context = {}) {
     const u32 num_texture_buffers = Shader::NumDescriptors(info.texture_buffer_descriptors);
     const u32 num_image_buffers = Shader::NumDescriptors(info.image_buffer_descriptors);
     views += num_texture_buffers;
     views += num_image_buffers;
+    u32 descriptor_index{};
     for (const auto& desc : info.texture_descriptors) {
         bool is_rescaled{};
         for (u32 index = 0; index < desc.count; ++index) {
@@ -371,13 +332,74 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
                 if (null_image_view != VK_NULL_HANDLE) vk_image_view = null_image_view;
             }
             Sampler& sampler{texture_cache.GetSampler(sampler_id)};
+            if (desc.dref_mode == Shader::DrefExecutionMode::SoftwareDref) {
+                rescaling.SetDrefCompareOp(static_cast<u32>(sampler.CompareOp()));
+            }
+            const bool is_dref{Shader::IsDref(desc.dref_mode)};
+            const Image* const source_image{image_view.SourceImage()};
+            const XclipseImageProvenance provenance =
+                source_image ? source_image->Provenance() : XclipseImageProvenance{};
+            if (is_dref && device.XclipseDrefDiagnosticsEnabled() &&
+                xclipse_dref_binding_diagnostic_budget.TryConsume(
+                    XclipseImageDiagnosticCategory::DrefBinding)) {
+                LOG_INFO(Render_Vulkan,
+                         "XCLIPSE DREF binding [diag=dref-binding] frame={} pipeline={:016x} "
+                         "shader={:016x} stage={} descriptor={} element={} dynamic={} mode={} "
+                         "image_id={} gpu={:#x} guest_fmt={} view_type={} "
+                         "mip={} levels={} layer={} layers={} aspect=0x{:x} "
+                         "compare_requested={} compare_op={} depth_compare_feature={} "
+                         "contents_defined={} gpu_write_pending={} initialized={} "
+                         "last_writer={} writer_tick={} "
+                         "last_layout={} transition_tick={} saw_undefined_transition={}",
+                         device.GetXclipseTelemetry().FrameCount(),
+                         diagnostic_context.pipeline_hash, diagnostic_context.shader_hash,
+                         diagnostic_context.stage, descriptor_index, index, desc.count > 1,
+                         static_cast<u32>(desc.dref_mode), image_view.image_id.Value(),
+                         image_view.GpuAddr(), static_cast<u32>(image_view.format),
+                         static_cast<u32>(image_view.type), image_view.range.base.level,
+                         image_view.range.extent.levels, image_view.range.base.layer,
+                         image_view.range.extent.layers,
+                         source_image ? static_cast<u32>(source_image->AspectMask()) : 0u,
+                         sampler.CompareEnabled(), static_cast<u32>(sampler.CompareOp()),
+                         image_view.SupportsDepthComparison(), provenance.contents_defined,
+                         provenance.gpu_write_pending,
+                         source_image ? source_image->IsInitialized() : false,
+                         XclipseImageWriterName(provenance.last_writer),
+                         provenance.last_writer_tick, provenance.last_layout,
+                         provenance.last_transition_tick, provenance.saw_undefined_transition);
+            }
+            if (is_dref && source_image && !provenance.contents_defined &&
+                device.XclipseDrefDiagnosticsEnabled() &&
+                xclipse_dref_binding_diagnostic_budget.TryConsume(
+                    XclipseImageDiagnosticCategory::UndefinedSampleRead)) {
+                LOG_WARNING(Render_Vulkan,
+                            "XCLIPSE DREF undefined-read candidate [diag=undefined-sample] "
+                            "frame={} pipeline={:016x} shader={:016x} stage={} descriptor={} "
+                            "element={} image_id={} gpu={:#x} fmt={} mip={} layer={} "
+                            "last_writer={} writer_tick={} gpu_write_pending={} "
+                            "last_layout={} transition_tick={}",
+                            device.GetXclipseTelemetry().FrameCount(),
+                            diagnostic_context.pipeline_hash, diagnostic_context.shader_hash,
+                            diagnostic_context.stage, descriptor_index, index,
+                            image_view.image_id.Value(), image_view.GpuAddr(),
+                            static_cast<u32>(image_view.format), image_view.range.base.level,
+                            image_view.range.base.layer,
+                            XclipseImageWriterName(provenance.last_writer),
+                            provenance.last_writer_tick, provenance.gpu_write_pending,
+                            provenance.last_layout,
+                            provenance.last_transition_tick);
+            }
             const VkSampler vk_sampler =
-                sampler.HandleFor(image_view, desc.is_depth, vk_image_view);
+                sampler.HandleFor(image_view, desc.dref_mode, vk_image_view);
+            if (vk_sampler == VK_NULL_HANDLE) {
+                return false;
+            }
             guest_descriptor_queue.AddSampledImage(vk_image_view, vk_sampler);
             const bool element_rescaled{texture_cache.IsRescaling(image_view)};
             is_rescaled |= element_rescaled;
         }
         rescaling.PushTexture(is_rescaled);
+        ++descriptor_index;
     }
     for (const auto& desc : info.image_descriptors) {
         bool is_rescaled{};
@@ -393,6 +415,7 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
         }
         rescaling.PushImage(is_rescaled);
     }
+    return true;
 }
 
 } // namespace Vulkan

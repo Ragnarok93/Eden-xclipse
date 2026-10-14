@@ -27,7 +27,9 @@ plugins {
  * This lets us upload a new build at most every 10 seconds for the
  * next 680 years.
  */
-val autoVersion = (((System.currentTimeMillis() / 1000) - 1451606400) / 10).toInt()
+// CI pins one versionCode across optimized application and instrumentation tasks.
+val autoVersion = System.getenv("EDEN_LAB_VERSION_CODE")?.toIntOrNull()
+    ?: (((System.currentTimeMillis() / 1000) - 1451606400) / 10).toInt()
 
 val edenDir = project(":Eden").projectDir
 
@@ -65,6 +67,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.eden.eden_emulator"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 24
         targetSdk = 36
         versionName = getGitVersion()
@@ -126,6 +129,8 @@ android {
     // suffix is used for build type--remember to include a space beforehand
 
     // Define build types, which are orthogonal to product flavors.
+    // The instrumentation APK must target the upgradeable optimized diagnostic build.
+    testBuildType = "relWithDebInfo"
     buildTypes {
         // Signed by release key, allowing for upload to Play Store.
         release {
@@ -333,6 +338,9 @@ play {
 }
 
 dependencies {
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")

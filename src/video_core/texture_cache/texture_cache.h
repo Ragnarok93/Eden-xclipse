@@ -2452,9 +2452,12 @@ void TextureCache<P>::RemoveFramebuffers(std::span<const ImageViewId> removed_vi
 }
 
 template <class P>
-void TextureCache<P>::MarkModification(ImageBase& image) noexcept {
+void TextureCache<P>::MarkModification(Image& image) noexcept {
     image.flags |= ImageFlagBits::GpuModified;
     image.modification_tick = ++modification_tick;
+    if constexpr (requires(Image& candidate) { candidate.RecordGpuModification(); }) {
+        image.RecordGpuModification();
+    }
 }
 
 template <class P>

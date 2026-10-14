@@ -206,6 +206,20 @@ object NativeLibrary {
     external fun getPerfStats(): DoubleArray
 
     /**
+     * Monotonic system-frame and game-frame counts for the current emulation session.
+     * Unlike getPerfStats(), this does not reset the overlay's measurement window.
+     * Returns [systemFrames, gameFrames], or zeros when no game is running.
+     */
+    external fun getLabFrameCounts(): LongArray
+
+    /**
+     * A bounded, passive Vulkan/Xclipse aggregate snapshot in the documented
+     * EdenLabRendererSnapshot v1 field order. Empty = no active Vulkan renderer.
+     * Does not reset the FPS overlay or wait for GPU completion.
+     */
+    external fun getLabRendererCounters(): LongArray
+
+    /**
      * Returns the number of shaders being built
      */
     external fun getShadersBuilding(): Int

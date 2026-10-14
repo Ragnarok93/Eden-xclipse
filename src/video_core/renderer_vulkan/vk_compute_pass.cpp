@@ -243,6 +243,35 @@ std::span<const u32> BptcDecoderCode(BPTCDecoderPass::Kind kind) {
     return {};
 }
 
+XclipseBcnFormat BcnTelemetryFormat(VideoCore::Surface::PixelFormat format) noexcept {
+    using VideoCore::Surface::PixelFormat;
+    switch (format) {
+    case PixelFormat::BC1_RGBA_UNORM:
+    case PixelFormat::BC1_RGBA_SRGB:
+        return XclipseBcnFormat::BC1;
+    case PixelFormat::BC2_UNORM:
+    case PixelFormat::BC2_SRGB:
+        return XclipseBcnFormat::BC2;
+    case PixelFormat::BC3_UNORM:
+    case PixelFormat::BC3_SRGB:
+        return XclipseBcnFormat::BC3;
+    case PixelFormat::BC4_UNORM:
+    case PixelFormat::BC4_SNORM:
+        return XclipseBcnFormat::BC4;
+    case PixelFormat::BC5_UNORM:
+    case PixelFormat::BC5_SNORM:
+        return XclipseBcnFormat::BC5;
+    case PixelFormat::BC6H_UFLOAT:
+    case PixelFormat::BC6H_SFLOAT:
+        return XclipseBcnFormat::BC6H;
+    case PixelFormat::BC7_UNORM:
+    case PixelFormat::BC7_SRGB:
+        return XclipseBcnFormat::BC7;
+    default:
+        return XclipseBcnFormat::Count;
+    }
+}
+
 u32 BptcDecoderFormat(VideoCore::Surface::PixelFormat format) {
     using VideoCore::Surface::PixelFormat;
     switch (format) {
@@ -320,12 +349,16 @@ ComputePass::ComputePass(const Device& device_, Scheduler& scheduler, Descriptor
         .pCode = code.data(),
     });
     device.SaveShader(code);
+    const u32 selected_subgroup_size =
+        optional_subgroup_size.value_or(device.GetDevicePolicy().xclipse.preferred_compute_wave);
     const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
         .pNext = nullptr,
-        .requiredSubgroupSize = optional_subgroup_size ? *optional_subgroup_size : 32U,
+        .requiredSubgroupSize = selected_subgroup_size,
     };
-    bool use_setup_size = device.IsExtSubgroupSizeControlSupported() && optional_subgroup_size;
+    bool use_setup_size =
+        device.IsExtSubgroupSizeControlSupported() && selected_subgroup_size != 0 &&
+        IsXclipseSubgroupSizeValidated(device.GetDevicePolicy(), selected_subgroup_size);
     pipeline = device.GetLogical().CreateComputePipeline(VkComputePipelineCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
@@ -726,7 +759,8 @@ void BCDecoderPass::Assemble(Image& image, const StagingBufferRef& map,
     const auto decoder_format = BcnDecoderFormat(format);
     ASSERT(decoder_format.has_value());
 
-    device.GetXclipseTelemetry().RecordBcnGpuDecode(image.guest_size_bytes);
+    device.GetXclipseTelemetry().RecordBcnGpuDecode(BcnTelemetryFormat(format),
+                                                    image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
     const VkPipeline vk_pipeline = *pipeline;
     const VkImageAspectFlags aspect_mask = image.AspectMask();
@@ -852,7 +886,8 @@ void BPTCDecoderPass::Assemble(
     using namespace VideoCommon::Accelerated;
     ASSERT(Supports(image.info.format));
 
-    device.GetXclipseTelemetry().RecordBcnGpuDecode(image.guest_size_bytes);
+    device.GetXclipseTelemetry().RecordBptcGpuDecode(
+        BcnTelemetryFormat(image.info.format), image.guest_size_bytes);
     scheduler.RequestOutsideRenderPassOperationContext();
 
     const VkPipeline vk_pipeline = *pipeline;

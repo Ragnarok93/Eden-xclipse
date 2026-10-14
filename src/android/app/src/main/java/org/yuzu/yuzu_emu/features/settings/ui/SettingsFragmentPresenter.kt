@@ -58,7 +58,10 @@ class SettingsFragmentPresenter(
 
     // Extension for altering settings list based on each setting's properties
     fun ArrayList<SettingsItem>.add(key: String) {
-        val item = SettingsItem.settingsItems[key]!!
+        // A missing registry entry must never crash the settings screen. Keep this null-safe even
+        // though every exposed key should have a SettingsItem below; it makes future debug-setting
+        // additions fail closed instead of taking down the Activity.
+        val item = SettingsItem.settingsItems[key] ?: return
         if (settingsViewModel.game != null && !item.setting.isSwitchable) {
             return
         }
@@ -1545,14 +1548,27 @@ class SettingsFragmentPresenter(
             add(IntSetting.RENDERER_BACKEND.key)
             add(BooleanSetting.RENDERER_DEBUG.key)
             add(BooleanSetting.RENDERER_PATCH_OLD_QCOM_DRIVERS.key)
-            add(BooleanSetting.XCLIPSE_VALIDATION_PROBES.key)
-            add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
+            add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
+
+            add(HeaderSetting(R.string.xclipse_runtime_header))
             add(BooleanSetting.XCLIPSE_MEMORY_PRESSURE_MONITOR.key)
             add(BooleanSetting.XCLIPSE_GPU_BCN_DECODE.key)
-            add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
+            add(BooleanSetting.XCLIPSE_GPU_BPTC_DECODE.key)
             add(BooleanSetting.XCLIPSE_SYNC_POLICY.key)
+            add(BooleanSetting.XCLIPSE_SUBMISSION_BATCHING.key)
             add(BooleanSetting.XCLIPSE_SUBGROUP_SIZE_CONTROL.key)
-            add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
+
+            add(HeaderSetting(R.string.xclipse_validation_header))
+            add(BooleanSetting.XCLIPSE_VALIDATION_PROBES.key)
+            add(BooleanSetting.XCLIPSE_PIPELINE_POLICY.key)
+
+            add(HeaderSetting(R.string.xclipse_diagnostics_header))
+            add(BooleanSetting.XCLIPSE_RUNTIME_TELEMETRY.key)
+            add(BooleanSetting.XCLIPSE_DIAGNOSTIC_LOGGING.key)
+            add(BooleanSetting.XCLIPSE_DREF_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_HOST_MEMORY_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_GPU_MEMORY_DIAGNOSTICS.key)
+            add(BooleanSetting.XCLIPSE_SCHEDULER_DIAGNOSTICS.key)
 
             add(HeaderSetting(R.string.cpu))
 

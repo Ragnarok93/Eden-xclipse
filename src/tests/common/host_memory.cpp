@@ -17,6 +17,22 @@ static constexpr size_t BACKING_SIZE = 4_GiB;
 static constexpr auto PERMS = Common::MemoryPermission::ReadWrite;
 static constexpr auto HEAP = false;
 
+TEST_CASE("HostMemory: teardown range respects the fastmem arena", "[common]") {
+    constexpr size_t arena_size = 1ULL << 38;
+    constexpr size_t guest_size = 1ULL << 39;
+    constexpr size_t tail_start = arena_size - 0x2000;
+
+    const auto tail = Common::IntersectHostMemoryVirtualRange(
+        tail_start, guest_size - tail_start, arena_size);
+    REQUIRE(tail.has_value());
+    REQUIRE(tail->offset == tail_start);
+    REQUIRE(tail->length == 0x2000);
+
+    const auto outside = Common::IntersectHostMemoryVirtualRange(
+        arena_size, guest_size - arena_size, arena_size);
+    REQUIRE_FALSE(outside.has_value());
+}
+
 TEST_CASE("HostMemory: Initialize and deinitialize", "[common]") {
     {
         HostMemory mem(BACKING_SIZE, VIRTUAL_SIZE);
