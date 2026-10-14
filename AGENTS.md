@@ -3,9 +3,8 @@
 These instructions govern AI-assisted development, Codex automation, and human-assisted
 engineering **in this fork**. The fork maintainer authorizes AI tools for code review,
 implementation, debugging, research, testing, documentation, and experiment orchestration.
-The inherited AI prohibition in `CLAUDE.md` and `docs/policies/AI.md` is not the policy
-for work confined to this fork. Those files are inherited upstream material and have
-not been rewritten here. **Do not infer permission to submit AI-assisted contributions
+The fork-specific guidance in `CLAUDE.md` and `docs/policies/AI.md` aligns with
+these instructions. **Do not infer permission to submit AI-assisted contributions
 to upstream Eden or its community**; respect upstream rules when interacting with them.
 
 The primary objective is a correct, stable, high-performance Eden Android emulator on
