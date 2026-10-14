@@ -30,6 +30,11 @@ performance improvements.
   crash/correctness/thermal requirements. Never automatically promotes code.
 - `tools/tests/test_eden_lab_campaign.py`: synthetic *validator* fixtures,
   not device-derived benchmarking evidence.
+- `tools/eden_lab_device_metrics.py`: shell-only, read-only process status,
+  Android thermal severity, battery temperature and memory snapshots; no GPU
+  die-temperature guess or cross-domain clock conflation.
+- `tools/tests/test_eden_lab_device_metrics.py`: collector parsing, missing
+  data and safety tests.
 - `src/android/app/src/relWithDebInfo/java/org/yuzu/yuzu_emu/benchmark/`:
   debug-only `EdenLabSessionManager`; changes only
   `files/eden-lab/sandbox.json`.
@@ -59,13 +64,30 @@ From the repository root:
 python3 -m unittest discover -s tools/tests -p 'test_eden_lab*.py' -v
 python3 tools/eden_lab.py --help
 python3 tools/eden_lab.py --serial SERIAL device-info
+python3 tools/eden_lab.py --serial SERIAL device-metrics
 ```
 
 Do not claim these pass before actually executing them.
 
+## Read-only host health collection
+
+`python3 tools/eden_lab.py --serial SERIAL device-metrics` can be run on an
+authorized ADB device regardless of whether Eden is currently running.
+Unlike instrumentation, it does not enter or modify app-private storage and
+does not kill/stop apps. It captures approximate process PSS/RSS where
+Android makes them available, battery temperature (**not GPU temperature**),
+thermal-service severity, package process presence and Android uptime.
+
+The raw dump contents are not included in the result; their hashes and
+collection windows are recorded to identify missing evidence. Device
+`/proc/uptime`, Android `elapsedRealtimeNanos`, and host
+`time.monotonic_ns` are different time bases until explicitly correlated.
+This collector is supporting context, **not a game-FPS or GPU-timing source**.
+
 ## APK signing and package acceptance
 
-The manually dispatched `xclipse-android-debug.yml` workflow now generates
+The full `xclipse-android-debug.yml` workflow (manual dispatch or an
+explicit single-use build-trigger file) generates
 both optimized app and matching instrumentation APKs and fails closed if
 `tools/eden_lab_artifacts.py` detects different signatures, version codes,
 package IDs or instrumented package targets. The signed artifact manifest is
@@ -85,7 +107,8 @@ manifest are claims supplied by CI; package metadata alone cannot
 cryptographically attest to the source commit. Installing and running these
 APKs on an S25 FE remains a separate, authorized acceptance gate.
 
-**Build cadence:** full optimized APK build is `workflow_dispatch` only;
+**Build cadence:** full optimized APK build is `workflow_dispatch` or
+explicitly triggered by changing `docs/eden-lab-build-trigger.txt` only;
 `xclipse-lab-fast-checks.yml` runs fast Python and Vulkan-policy gates after
 source changes. This prevents repeated CI cancellations during iteration.
 
@@ -168,6 +191,7 @@ the comparator does not independently authenticate submitted measurements.
 | --- | --- | --- |
 | Fork AI/Codex policy | Complete | AGENTS.md, CLAUDE.md, docs/policies/AI.md |
 | Host strict protocol/lease | Implemented, not device-tested | tools/eden_lab.py |
+| Android health collector | Implemented, device validation pending | Read-only dumpsys, missing sensor data explicit |
 | Instrumentation-only bridge | Corrected after first build failure; rebuild pending | First APK compiled, androidTest had `InstrumentationRegistry.arguments` Kotlin error; changed to `getArguments()` |
 | Journaled private sandbox roundtrip | Implemented, hardware validation pending | EdenLabSessionManager |
 | Host unit tests | Passing in fast CI | tools/tests/test_eden_lab*.py |
