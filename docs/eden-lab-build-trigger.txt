@@ -1,0 +1,11 @@
+# Eden-Xclipse deliberately gated optimized Android build
+#
+# A change to this exact file triggers the expensive full RelWithDebInfo
+# application + matching instrumentation package build. Ordinary source
+# commits run the separate fast regression gate, not this full build.
+#
+# Intended source checkpoint:
+06d3305695925e7cdbcf0f7fe96179a07b5ce103
+#
+# Verify compilation, instrumentation Kotlin tests, APK identity attestation,
+# and uploaded artifacts before attempting any on-device installation.
