@@ -16,6 +16,12 @@ install APKs, capture frame metrics, or establish performance improvements.
 - `tools/eden_lab.py`: standard-library-only host CLI, strict protocol,
   explicit device selection, idle guard, host lease, private request staging.
 - `tools/tests/test_eden_lab.py`: host request/transport/authorization tests.
+- `tools/eden_lab_artifacts.py`: read-only `aapt2` + `apksigner`
+  inspection of the optimized application and matching instrumentation APK.
+  Enforces package/runner target, versionCode and signing-certificate identity,
+  emits local SHA256 provenance, and never installs or wipes data.
+- `tools/tests/test_eden_lab_artifacts.py`: synthetic APK metadata
+  validation/negative tests without a device or SDK.
 - `tools/eden_lab_campaign.py`: offline fail-closed repeated cold/warm trial
   comparison. Validates driver and title identity, per-trial pinned binary and
   effective-policy hashes, independent game-frame timestamp provenance, and
@@ -41,6 +47,32 @@ python3 tools/eden_lab.py --serial SERIAL device-info
 ```
 
 Do not claim these pass before actually executing them.
+
+## APK signing and package acceptance
+
+The manually dispatched `xclipse-android-debug.yml` workflow now generates
+both optimized app and matching instrumentation APKs and fails closed if
+`tools/eden_lab_artifacts.py` detects different signatures, version codes,
+package IDs or instrumented package targets. The signed artifact manifest is
+saved as `artifacts/eden-lab-artifact-attestation.json`.
+
+For local validation, use the Android SDK's `aapt2` and `apksigner`:
+
+```bash
+python3 tools/eden_lab_artifacts.py APP.apk INSTRUMENTATION.apk \
+  --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt2" \
+  --apksigner "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+```
+
+An `--expected-cert-sha256` should be supplied against the **already trusted**
+local debug certificate when it is known. Source-commit labels in this
+manifest are claims supplied by CI; package metadata alone cannot
+cryptographically attest to the source commit. Installing and running these
+APKs on an S25 FE remains a separate, authorized acceptance gate.
+
+**Build cadence:** full optimized APK build is `workflow_dispatch` only;
+`xclipse-lab-fast-checks.yml` runs fast Python and Vulkan-policy gates after
+source changes. This prevents repeated CI cancellations during iteration.
 
 ## Physical device acceptance (not yet done)
 
@@ -115,8 +147,9 @@ the comparator does not independently authenticate submitted measurements.
 | Host strict protocol/lease | Implemented, not device-tested | tools/eden_lab.py |
 | Instrumentation-only bridge | Implemented, build pending | EdenLabBridgeTest |
 | Journaled private sandbox roundtrip | Implemented, hardware validation pending | EdenLabSessionManager |
-| Host unit tests | Added, execution pending | tools/tests/test_eden_lab.py |
-| APK and instrumentation build | Not verified | RelWithDebInfo workflow must build both |
+| Host unit tests | Passing in fast CI | tools/tests/test_eden_lab*.py |
+| APK identity preflight | Implemented, fast tests passed | aapt2/apksigner read-only attestation; real artifacts pending |
+| APK and instrumentation build | Not verified | Manually dispatched RelWithDebInfo workflow must build both |
 | Physical device acceptance | Not started | Requires authorization and connected device |
 | Native session frame counters | Implemented, build pending | Non-resetting JNI; not yet live-workload sampled |
 | Frame timestamps/Xclipse aggregate snapshot | Not started | Required for valid gameplay comparison |
