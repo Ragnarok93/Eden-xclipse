@@ -80,6 +80,24 @@ jobs:
           chmod +x .ci/android/build.sh
           .ci/android/build.sh --target standard --build-type RelWithDebInfo
 
+      - name: Build matched Eden lab instrumentation APK
+        shell: bash
+        env:
+          CCACHE: "false"
+        run: |
+          set -euo pipefail
+          cd src/android
+          ./gradlew ':app:assembleMainlineRelWithDebInfoAndroidTest' \
+            -PYUZU_ANDROID_ARGS="-DUSE_CCACHE=false" --stacktrace
+          cd ../..
+          mapfile -t TEST_APKS < <(find src/android/app/build/outputs/apk/androidTest \
+            -type f -name '*.apk' | sort)
+          if [ "${#TEST_APKS[@]}" -ne 1 ]; then
+            echo "Expected exactly one matching instrumentation APK" >&2
+            exit 1
+          fi
+          cp "${TEST_APKS[0]}" "artifacts/eden-lab-instrumentation-${GITHUB_SHA}.apk"
+
       - name: Upload optimized diagnostic artifacts
         if: success()
         uses: actions/upload-artifact@v4
@@ -108,6 +126,15 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -d "{\"state\":\"${STATE}\",\"context\":\"xclipse/android-debug\",\"description\":\"Xclipse optimized diagnostic build ${STATE}\",\"target_url\":\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"
+
+  eden-lab-host-tests:
+    name: Eden lab request/transport contract tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run host-only lab safety tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_eden_lab.py' -v
 
   policy-tests:
     name: Xclipse policy verification gate
