@@ -213,6 +213,13 @@ object NativeLibrary {
     external fun getLabFrameCounts(): LongArray
 
     /**
+     * A bounded, passive Vulkan/Xclipse aggregate snapshot in the documented
+     * EdenLabRendererSnapshot v1 field order. Empty = no active Vulkan renderer.
+     * Does not reset the FPS overlay or wait for GPU completion.
+     */
+    external fun getLabRendererCounters(): LongArray
+
+    /**
      * Returns the number of shaders being built
      */
     external fun getShadersBuilding(): Int
