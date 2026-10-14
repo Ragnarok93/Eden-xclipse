@@ -25,8 +25,8 @@ class EdenLabBridgeTest {
         values[0] = 1
         values[1] = 1
         values[2] = 90
-        values[8] = 9
-        values[9] = 1_024_000
+        values[7] = 9
+        values[8] = 1_024_000
         val decoded = EdenLabRendererSnapshot.decode(values, 456L)
         assertTrue(decoded.getBoolean("available"))
         assertEquals(90L, decoded.getLong("frame_count"))
