@@ -1023,6 +1023,53 @@ jlongArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getLabFrameCounts(JNIEnv* env, 
     return result;
 }
 
+// Schema v1. Empty array means the emulator renderer is not available.
+// This is a bounded, passive snapshot: no GPU fences, submissions, or reset.
+jlongArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getLabRendererCounters(JNIEnv* env,
+                                                                        jclass clazz) {
+    auto& emulation = EmulationSession::GetInstance();
+    if (!emulation.IsRunning() || !emulation.System().IsPoweredOn()) {
+        return env->NewLongArray(0);
+    }
+    const auto counters = emulation.System().Renderer().GetBenchmarkRendererCounters();
+    if (!counters) {
+        return env->NewLongArray(0);
+    }
+    const jlong values[] = {
+        1,
+        static_cast<jlong>(counters->aggregate_telemetry_enabled),
+        static_cast<jlong>(counters->frame_count),
+        static_cast<jlong>(counters->pipeline_creates),
+        static_cast<jlong>(counters->pipeline_failures),
+        static_cast<jlong>(counters->runtime_pipeline_map_hits),
+        static_cast<jlong>(counters->runtime_pipeline_map_misses),
+        static_cast<jlong>(counters->pipeline_create_count),
+        static_cast<jlong>(counters->pipeline_create_p95_upper_ns),
+        static_cast<jlong>(counters->pipeline_block_count),
+        static_cast<jlong>(counters->pipeline_block_p95_upper_ns),
+        static_cast<jlong>(counters->pipeline_queue_residence_count),
+        static_cast<jlong>(counters->pipeline_queue_residence_p95_upper_ns),
+        static_cast<jlong>(counters->shader_decode_count),
+        static_cast<jlong>(counters->shader_decode_p95_upper_ns),
+        static_cast<jlong>(counters->spirv_generation_count),
+        static_cast<jlong>(counters->spirv_generation_p95_upper_ns),
+        static_cast<jlong>(counters->queue_submits),
+        static_cast<jlong>(counters->host_waits),
+        static_cast<jlong>(counters->timeline_waits),
+        static_cast<jlong>(counters->bcn_gpu_decode_dispatches),
+        static_cast<jlong>(counters->bcn_cpu_fallbacks),
+        static_cast<jlong>(counters->descriptor_stalls),
+        static_cast<jlong>(counters->image_native_copies),
+        static_cast<jlong>(counters->dref_unresolved_bindings),
+    };
+    constexpr jsize count = static_cast<jsize>(sizeof(values) / sizeof(values[0]));
+    auto* result = env->NewLongArray(count);
+    if (result) {
+        env->SetLongArrayRegion(result, 0, count, values);
+    }
+    return result;
+}
+
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_getShadersBuilding(JNIEnv* env, jclass clazz) {
     jint j_shaders = 0;
 
