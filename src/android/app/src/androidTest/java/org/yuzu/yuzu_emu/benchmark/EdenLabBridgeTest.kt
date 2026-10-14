@@ -13,7 +13,7 @@ class EdenLabBridgeTest {
     @Test
     fun executeAuthorizedRequest() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val relativePath = instrumentation.arguments.getString("lab_request")
+        val relativePath = InstrumentationRegistry.getArguments().getString("lab_request")
             ?: error("Missing lab request")
         require(Regex("cache/eden-lab-[a-f0-9]{32}[.]json").matches(relativePath))
         val target = instrumentation.targetContext
