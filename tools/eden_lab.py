@@ -158,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adb", default="adb")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("device-info")
+    sub.add_parser("device-metrics")
     sub.add_parser("probe")
     sub.add_parser("recover")
     validate = sub.add_parser("validate-request")
@@ -177,6 +178,9 @@ def main(argv: list[str] | None = None) -> int:
             with device.lease():
                 if args.command == "device-info":
                     result = device.info()
+                elif args.command == "device-metrics":
+                    from eden_lab_device_metrics import capture
+                    result = capture(device)
                 else:
                     if args.command == "sandbox-roundtrip":
                         require(args.allow_test_writes,
