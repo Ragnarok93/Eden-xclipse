@@ -103,6 +103,24 @@ jobs:
           fi
           cp "${TEST_APKS[0]}" "artifacts/eden-lab-instrumentation-${GITHUB_SHA}.apk"
 
+      - name: Verify matched signed APK identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t APP_APKS < <(find artifacts -maxdepth 1 -type f -name '*.apk' \
+            ! -name 'eden-lab-instrumentation-*.apk' | sort)
+          if [ "${#APP_APKS[@]}" -ne 1 ]; then
+            echo "Expected exactly one optimized application APK" >&2
+            exit 1
+          fi
+          python3 tools/eden_lab_artifacts.py \
+            "${APP_APKS[0]}" "artifacts/eden-lab-instrumentation-${GITHUB_SHA}.apk" \
+            --aapt "${ANDROID_HOME}/build-tools/36.0.0/aapt2" \
+            --apksigner "${ANDROID_HOME}/build-tools/36.0.0/apksigner" \
+            --source-commit "${GITHUB_SHA}" \
+            --expected-version-code "${EDEN_LAB_VERSION_CODE}" \
+            --output artifacts/eden-lab-artifact-attestation.json
+
       - name: Upload optimized diagnostic artifacts
         if: success()
         uses: actions/upload-artifact@v4
