@@ -16,6 +16,12 @@ install APKs, capture frame metrics, or establish performance improvements.
 - `tools/eden_lab.py`: standard-library-only host CLI, strict protocol,
   explicit device selection, idle guard, host lease, private request staging.
 - `tools/tests/test_eden_lab.py`: host request/transport/authorization tests.
+- `tools/eden_lab_campaign.py`: offline fail-closed repeated cold/warm trial
+  comparison. Validates driver and title identity, per-trial pinned binary and
+  effective-policy hashes, independent game-frame timestamp provenance, and
+  crash/correctness/thermal requirements. Never automatically promotes code.
+- `tools/tests/test_eden_lab_campaign.py`: synthetic *validator* fixtures,
+  not device-derived benchmarking evidence.
 - `src/android/app/src/relWithDebInfo/java/org/yuzu/yuzu_emu/benchmark/`:
   debug-only `EdenLabSessionManager`; changes only
   `files/eden-lab/sandbox.json`.
@@ -29,7 +35,7 @@ install APKs, capture frame metrics, or establish performance improvements.
 From the repository root:
 
 ```bash
-python3 -m unittest discover -s tools/tests -p 'test_eden_lab.py' -v
+python3 -m unittest discover -s tools/tests -p 'test_eden_lab*.py' -v
 python3 tools/eden_lab.py --help
 python3 tools/eden_lab.py --serial SERIAL device-info
 ```
@@ -54,6 +60,12 @@ python3 tools/eden_lab.py --serial SERIAL sandbox-roundtrip \
 python3 tools/eden_lab.py --serial SERIAL recover
 ```
 
+The Phase 2 native groundwork exposes `NativeLibrary.getLabFrameCounts()`:
+non-resetting system-frame and game-frame counts since the current emulated
+title began. This does **not** yet provide per-game-frame timestamps, display
+cadence, shader timing, or actual on-device benchmark evidence. The read-only
+lab probe exercises the JNI path and reports zeros when emulation is idle.
+
 The `--aggregate-telemetry` parameter above is **sandbox test data** and
 does not change runtime native telemetry. A successful sandbox roundtrip
 proves only the private file readback and exact-byte restoration.
@@ -63,6 +75,22 @@ active emulator refusal, a second host lease, interrupted write/recovery,
 corrupt recovery snapshot refusal, non-debug/release build refusal, and
 preservation of production user data. Device-wide changes, installed game
 launch, workload control and metrics are not authorized by this first slice.
+
+## Strict offline performance evidence comparator
+
+Run `python3 tools/eden_lab_campaign.py CAMPAIGN.json` once a future
+gameplay collector has produced a complete schema-v1 JSON campaign. The
+comparison requires at least three **cold and three warm** physical-device
+trials for each variant, matching live driver, title, checkpoint and Android
+fingerprint, matching per-trial effective-policy and artifact identities, and
+actual game-frame timestamp distributions. It rejects crashes, correctness
+faults and missing metrics, and marks even apparent improvements as
+`candidate_improvement_needs_review`, never automatically promotable.
+
+The existing Phase 1 tools **cannot yet generate qualifying evidence**. The
+test fixtures are deliberately synthetic and test only validation logic.
+The report field `measurement_claim=unverified_external_evidence` warns that
+the comparator does not independently authenticate submitted measurements.
 
 ## Next implementation gates
 
@@ -90,7 +118,9 @@ launch, workload control and metrics are not authorized by this first slice.
 | Host unit tests | Added, execution pending | tools/tests/test_eden_lab.py |
 | APK and instrumentation build | Not verified | RelWithDebInfo workflow must build both |
 | Physical device acceptance | Not started | Requires authorization and connected device |
-| Native metric bridge | Not started | No fabricated performance claims |
+| Native session frame counters | Implemented, build pending | Non-resetting JNI; not yet live-workload sampled |
+| Frame timestamps/Xclipse aggregate snapshot | Not started | Required for valid gameplay comparison |
+| Cold/warm offline comparator | Implemented, host tests pending | Strict provenance and no automatic promotion |
 | Automated gameplay and tuning | Not started | Requires isolation/metrics first |
 
 A test cannot be marked complete based on source presence alone. Track
