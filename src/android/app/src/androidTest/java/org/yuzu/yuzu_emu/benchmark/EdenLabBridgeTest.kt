@@ -5,11 +5,36 @@ import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /** Not an exported Activity or production intent. Launched using adb instrumentation. */
 class EdenLabBridgeTest {
+    @Test
+    fun rendererSnapshotReportsNoRendererWithoutInventingCounters() {
+        val decoded = EdenLabRendererSnapshot.decode(longArrayOf(), 123L)
+        assertFalse(decoded.getBoolean("available"))
+        assertEquals("no_running_vulkan_renderer", decoded.getString("reason"))
+    }
+
+    @Test
+    fun rendererSnapshotDecodesVersionAndLatencyProvenance() {
+        val values = LongArray(25)
+        values[0] = 1
+        values[1] = 1
+        values[2] = 90
+        values[8] = 9
+        values[9] = 1_024_000
+        val decoded = EdenLabRendererSnapshot.decode(values, 456L)
+        assertTrue(decoded.getBoolean("available"))
+        assertEquals(90L, decoded.getLong("frame_count"))
+        assertEquals(9L, decoded.getLong("pipeline_create_count"))
+        assertEquals(1_024_000L, decoded.getLong("pipeline_create_p95_upper_ns"))
+        assertFalse(decoded.getBoolean("gpu_execution_timing_available"))
+    }
+
     @Test
     fun executeAuthorizedRequest() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
