@@ -38,6 +38,12 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Pin shared upgradeable APK version
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "EDEN_LAB_VERSION_CODE=$(( ($(date +%s) - 1451606400) / 10 ))" >> "$GITHUB_ENV"
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
