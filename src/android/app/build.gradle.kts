@@ -27,7 +27,9 @@ plugins {
  * This lets us upload a new build at most every 10 seconds for the
  * next 680 years.
  */
-val autoVersion = (((System.currentTimeMillis() / 1000) - 1451606400) / 10).toInt()
+// CI pins one versionCode across optimized application and instrumentation tasks.
+val autoVersion = System.getenv("EDEN_LAB_VERSION_CODE")?.toIntOrNull()
+    ?: (((System.currentTimeMillis() / 1000) - 1451606400) / 10).toInt()
 
 val edenDir = project(":Eden").projectDir
 
