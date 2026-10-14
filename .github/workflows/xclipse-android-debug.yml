@@ -1,9 +1,15 @@
 name: Xclipse Android Optimized Diagnostics
 
-# Full native/Android builds are intentionally manual. Fast host/policy checks
-# run on each source push in xclipse-lab-fast-checks.yml.
+# Full native/Android builds run on manual dispatch or an explicit
+# build-trigger file change, never on every source checkpoint.
+# Fast host/policy checks run on source pushes in xclipse-lab-fast-checks.yml.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "feature/xclipse-full-optimization-20261005"
+    paths:
+      - "docs/eden-lab-build-trigger.txt"
 
 concurrency:
   group: xclipse-android-debug-${{ github.ref }}
